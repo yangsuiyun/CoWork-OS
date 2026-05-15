@@ -123,23 +123,23 @@ CoWork OS macOS DMGs are currently unsigned, so the first launch needs a one-tim
 
 1. Open the downloaded `.dmg` and drag **CoWork OS** into **Applications**.
 
-   <img src="screenshots/macos-install/01-drag-to-applications.png" alt="CoWork OS DMG showing the app icon being dragged into Applications" width="720">
+   <img src="screenshots/macos-install/01-drag-to-applications.png" alt="CoWork OS DMG showing the app icon being dragged into Applications" width="480">
 
 2. Open **CoWork OS** from Applications. If macOS says `"CoWork OS" Not Opened`, click **Done**.
 
-   <img src="screenshots/macos-install/02-not-opened-warning.png" alt="macOS warning saying CoWork OS was not opened because Apple could not verify it" width="360">
+   <img src="screenshots/macos-install/02-not-opened-warning.png" alt="macOS warning saying CoWork OS was not opened because Apple could not verify it" width="260">
 
 3. Open **System Settings > Privacy & Security**, scroll to **Security**, and click **Open Anyway** next to `"CoWork OS" was blocked to protect your Mac`.
 
-   <img src="screenshots/macos-install/03-privacy-security-open-anyway.png" alt="macOS Privacy and Security settings with the CoWork OS Open Anyway button highlighted" width="720">
+   <img src="screenshots/macos-install/03-privacy-security-open-anyway.png" alt="macOS Privacy and Security settings with the CoWork OS Open Anyway button highlighted" width="480">
 
 4. In the confirmation dialog, click **Open Anyway**.
 
-   <img src="screenshots/macos-install/04-confirm-open-anyway.png" alt="macOS confirmation dialog asking whether to open CoWork OS anyway" width="360">
+   <img src="screenshots/macos-install/04-confirm-open-anyway.png" alt="macOS confirmation dialog asking whether to open CoWork OS anyway" width="260">
 
 5. On first startup, macOS may ask for access to the `cowork-os Safe Storage` keychain item. Enter your Mac login password and click **Always Allow** so CoWork OS can store local credentials securely.
 
-   <img src="screenshots/macos-install/05-keychain-safe-storage.png" alt="macOS keychain prompt asking to allow CoWork OS safe storage access" width="720">
+   <img src="screenshots/macos-install/05-keychain-safe-storage.png" alt="macOS keychain prompt asking to allow CoWork OS safe storage access" width="480">
 
 Release maintainers can create this unsigned DMG/ZIP with `npm run package:mac:unsigned`.
 
