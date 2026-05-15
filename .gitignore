@@ -83,7 +83,6 @@ CLAUDE.md
 # Runtime-generated outputs
 artifacts/
 output/
-/resources/branding/images/
 
 # VM artifacts
 vm-bundle/
