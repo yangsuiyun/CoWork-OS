@@ -5,8 +5,9 @@ import { PersonalityTraitsTab } from "./personality/PersonalityTraitsTab";
 import { PersonalityInstructionsTab } from "./personality/PersonalityInstructionsTab";
 import { PersonalityStyleTab } from "./personality/PersonalityStyleTab";
 import { PersonalityAdvancedTab } from "./personality/PersonalityAdvancedTab";
+import { PersonalityMemoryTab } from "./personality/PersonalityMemoryTab";
 
-type TabId = "identity" | "personality" | "instructions" | "style" | "advanced";
+type TabId = "identity" | "memory" | "personality" | "instructions" | "style" | "advanced";
 
 interface PersonalitySettingsProps {
   onSettingsChanged?: () => void;
@@ -123,6 +124,7 @@ export function PersonalitySettings({ onSettingsChanged }: PersonalitySettingsPr
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "identity", label: "Identity" },
+    { id: "memory", label: "Memory" },
     { id: "personality", label: "Personality" },
     { id: "instructions", label: "Instructions" },
     { id: "style", label: "Style" },
@@ -153,6 +155,7 @@ export function PersonalitySettings({ onSettingsChanged }: PersonalitySettingsPr
           saving={saving}
         />
       )}
+      {activeTab === "memory" && <PersonalityMemoryTab onChanged={onSettingsChanged} />}
       {activeTab === "personality" && (
         <PersonalityTraitsTab
           config={config}
