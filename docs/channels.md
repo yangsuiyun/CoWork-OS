@@ -15,6 +15,11 @@ CoWork OS supports 17 messaging channels. All channels share these common featur
 
 See [Gateway Message Lifecycle](gateway-message-lifecycle.md) for the shared routing, command, active-task, skill-slash, delivery, and scheduled-output behavior. For day-to-day usage examples, see [Using CoWork from WhatsApp and Other Channels](gateway-user-guide.md). For per-channel feature and best-practice guides, see [Channel User Guides](channel-user-guides.md) and the [dedicated channel guide index](channel-guides/).
 
+<p align="center">
+  <img src="../resources/branding/images/cowork-os-12.webp" alt="Messaging channel setup" width="700">
+  <br><em>Channel settings support provider setup plus per-channel routing, prompts, and security behavior.</em>
+</p>
+
 ### Common Remote Commands
 
 These commands are available across all channels:
