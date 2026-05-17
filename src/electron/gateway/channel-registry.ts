@@ -1219,34 +1219,34 @@ export class ChannelRegistry extends EventEmitter {
             },
             authMethod: {
               type: "string",
-              description: 'IMAP/SMTP auth method: "password" (default) or "oauth"',
+              description: 'Email auth method: "password" (default) or "oauth"',
               default: "password",
             },
             oauthProvider: {
               type: "string",
-              description: 'OAuth provider for IMAP/SMTP mode (currently "microsoft")',
+              description: 'OAuth provider for email mode (currently "microsoft")',
             },
             oauthClientId: {
               type: "string",
-              description: "OAuth client ID for IMAP/SMTP OAuth mode",
+              description: "OAuth client ID for email OAuth mode",
             },
             oauthClientSecret: {
               type: "string",
-              description: "OAuth client secret for IMAP/SMTP OAuth mode",
+              description: "OAuth client secret for email OAuth mode",
               secret: true,
             },
             oauthTenant: {
               type: "string",
-              description: "OAuth tenant/authority for IMAP/SMTP OAuth mode",
+              description: "OAuth tenant/authority for email OAuth mode",
             },
             accessToken: {
               type: "string",
-              description: "OAuth access token for IMAP/SMTP OAuth mode",
+              description: "OAuth access token for email OAuth mode",
               secret: true,
             },
             refreshToken: {
               type: "string",
-              description: "OAuth refresh token for IMAP/SMTP OAuth mode",
+              description: "OAuth refresh token for email OAuth mode",
               secret: true,
             },
             tokenExpiresAt: {
@@ -1255,11 +1255,11 @@ export class ChannelRegistry extends EventEmitter {
             },
             scopes: {
               type: "array",
-              description: "OAuth scopes granted for IMAP/SMTP OAuth mode",
+              description: "OAuth scopes granted for email OAuth mode",
             },
             imapHost: {
               type: "string",
-              description: "IMAP server host (required for IMAP/SMTP mode)",
+              description: "IMAP server host (required for password-based IMAP/SMTP mode)",
             },
             imapPort: {
               type: "number",
@@ -1584,6 +1584,9 @@ export class ChannelRegistry extends EventEmitter {
           typeof config.authMethod === "string" && config.authMethod.trim()
             ? config.authMethod.trim().toLowerCase()
             : "password";
+        const oauthProvider =
+          typeof config.oauthProvider === "string" ? config.oauthProvider.trim().toLowerCase() : "";
+        const isMicrosoftOAuth = authMethod === "oauth" && oauthProvider === "microsoft";
         if (!config.email) {
           errors.push("Missing required field: email");
         }
@@ -1600,11 +1603,13 @@ export class ChannelRegistry extends EventEmitter {
         } else if (!config.password) {
           errors.push("Missing required field: password");
         }
-        if (!config.imapHost) {
-          errors.push("Missing required field: imapHost");
-        }
-        if (!config.smtpHost) {
-          errors.push("Missing required field: smtpHost");
+        if (!isMicrosoftOAuth) {
+          if (!config.imapHost) {
+            errors.push("Missing required field: imapHost");
+          }
+          if (!config.smtpHost) {
+            errors.push("Missing required field: smtpHost");
+          }
         }
         if (authMethod !== "oauth") {
           const unsupportedSetupMessage = getUnsupportedManualEmailSetupMessage({
