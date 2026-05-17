@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, Fragment, useDeferredValue } from "react";
-import { ChevronDown, ChevronRight, SlidersHorizontal, EyeOff, AppWindow, Bell, HardDrive, Rows3, Search, Server, Workflow, HeartPulse, Lightbulb, Inbox, Users, UsersRound, ListFilter, EllipsisVertical, Shapes, Plus, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronRight, SlidersHorizontal, EyeOff, AppWindow, Bell, HardDrive, Rows3, Search, Server, Workflow, HeartPulse, Lightbulb, Inbox, Users, UsersRound, ListFilter, EllipsisVertical, Shapes, Plus, Sparkles, Repeat2 } from "lucide-react";
 import { resolveTwinIcon } from "../utils/twin-icons";
 import { stripAllEmojis } from "../utils/emoji-replacer";
 import { Task, Workspace, UiDensity, InfraStatus, UpdateInfo } from "../../shared/types";
@@ -1354,6 +1354,7 @@ export function Sidebar({
       selectedTaskId !== task.id &&
       completionAttentionSet.has(task.id);
     const isAwaitingSession = isAwaitingSessionStatus(task.status);
+    const isAutomatedTask = isAutomatedSession(task);
     const sessionTitle = getSidebarSessionTitle(node);
     const sessionActions = !node.synthetic ? (
       <div
@@ -1585,6 +1586,15 @@ export function Sidebar({
                   <span className="cli-task-time-wrap">
                     {showCompletionAttention && (
                       <span className="task-completion-unread-dot" aria-hidden="true" />
+                    )}
+                    {isAutomatedTask && (
+                      <span
+                        className="cli-task-automation-icon"
+                        title="Automated task"
+                        aria-label="Automated task"
+                      >
+                        <Repeat2 size={13} strokeWidth={2} />
+                      </span>
                     )}
                     <span className="cli-task-time" aria-hidden="true">
                       {formatRelativeShort(task.updatedAt || task.createdAt)}
