@@ -14,7 +14,11 @@
 import * as fs from "fs";
 import * as path from "path";
 import { getUserDataDir } from "../utils/user-data-dir";
-import type { PermissionMode } from "../../shared/types";
+import {
+  EVERYDAY_AGENT_CAPABILITY_BUNDLES,
+  type EverydayCapabilityBundle,
+  type PermissionMode,
+} from "../../shared/types";
 
 export type AdminSandboxType = "macos" | "docker" | "none";
 export type AdminNetworkDefault = "allow" | "deny";
@@ -51,6 +55,30 @@ export interface AdminPolicies {
     maxHeartbeatFrequencySec: number;
     /** Maximum concurrent agents per workspace */
     maxConcurrentAgents: number;
+  };
+
+  /** Everyday Agent policy gates */
+  everydayAgent: {
+    /** Block the Everyday Agent product surface and background work entirely. */
+    blocked: boolean;
+    /** Specific capability bundle IDs blocked by policy. */
+    blockedBundles: EverydayCapabilityBundle[];
+    /** Force all Everyday Agent actions into explicit review mode. */
+    forceReviewOnly: boolean;
+    /** Maximum heartbeat cadence in minutes. Profile values are clamped to this. */
+    maxHeartbeatCadenceMinutes: number;
+    /** Maximum concurrent Everyday Agent background jobs. */
+    maxConcurrentBackgroundWork: number;
+    /** Optional active-hours ceiling. Empty windows means no org override. */
+    activeHours: {
+      enabled: boolean;
+      timezone?: string;
+      windows: Array<{
+        days: number[];
+        start: string;
+        end: string;
+      }>;
+    };
   };
 
   /** Runtime safety requirements */
@@ -113,6 +141,17 @@ const DEFAULT_POLICIES: AdminPolicies = {
     maxHeartbeatFrequencySec: 60,
     maxConcurrentAgents: 10,
   },
+  everydayAgent: {
+    blocked: false,
+    blockedBundles: [],
+    forceReviewOnly: false,
+    maxHeartbeatCadenceMinutes: 60,
+    maxConcurrentBackgroundWork: 1,
+    activeHours: {
+      enabled: false,
+      windows: [],
+    },
+  },
   runtime: {
     allowedPermissionModes: [],
     allowedSandboxTypes: ["macos", "docker"],
@@ -138,12 +177,138 @@ const DEFAULT_POLICIES: AdminPolicies = {
   },
 };
 
+let lastValidPolicies: AdminPolicies | null = null;
+
 /**
  * Get the path to the admin policies file
  */
 function getPoliciesPath(): string {
   const userDataPath = getUserDataDir();
   return path.join(userDataPath, "policies.json");
+}
+
+function clonePolicies(policies: AdminPolicies): AdminPolicies {
+  return JSON.parse(JSON.stringify(policies)) as AdminPolicies;
+}
+
+function normalizePolicies(parsed: any): AdminPolicies {
+  return {
+    version: parsed.version || 1,
+    updatedAt: parsed.updatedAt || new Date().toISOString(),
+    packs: {
+      allowed: Array.isArray(parsed.packs?.allowed) ? parsed.packs.allowed : [],
+      blocked: Array.isArray(parsed.packs?.blocked) ? parsed.packs.blocked : [],
+      required: Array.isArray(parsed.packs?.required) ? parsed.packs.required : [],
+    },
+    connectors: {
+      blocked: Array.isArray(parsed.connectors?.blocked) ? parsed.connectors.blocked : [],
+    },
+    agents: {
+      maxHeartbeatFrequencySec: Math.max(60, parsed.agents?.maxHeartbeatFrequencySec || 60),
+      maxConcurrentAgents: Math.max(1, parsed.agents?.maxConcurrentAgents || 10),
+    },
+    everydayAgent: {
+      blocked: parsed.everydayAgent?.blocked === true,
+      blockedBundles: normalizeEverydayBundles(parsed.everydayAgent?.blockedBundles),
+      forceReviewOnly: parsed.everydayAgent?.forceReviewOnly === true,
+      maxHeartbeatCadenceMinutes: Math.max(
+        5,
+        Number(parsed.everydayAgent?.maxHeartbeatCadenceMinutes) ||
+          DEFAULT_POLICIES.everydayAgent.maxHeartbeatCadenceMinutes,
+      ),
+      maxConcurrentBackgroundWork: Math.max(
+        1,
+        Number(parsed.everydayAgent?.maxConcurrentBackgroundWork) ||
+          DEFAULT_POLICIES.everydayAgent.maxConcurrentBackgroundWork,
+      ),
+      activeHours: {
+        enabled: parsed.everydayAgent?.activeHours?.enabled === true,
+        timezone:
+          typeof parsed.everydayAgent?.activeHours?.timezone === "string"
+            ? parsed.everydayAgent.activeHours.timezone
+            : undefined,
+        windows: normalizeActiveHourWindows(parsed.everydayAgent?.activeHours?.windows),
+      },
+    },
+    runtime: {
+      allowedPermissionModes: normalizePermissionModes(parsed.runtime?.allowedPermissionModes),
+      allowedSandboxTypes: normalizeSandboxTypes(parsed.runtime?.allowedSandboxTypes),
+      requireSandboxForShell:
+        typeof parsed.runtime?.requireSandboxForShell === "boolean"
+          ? parsed.runtime.requireSandboxForShell
+          : DEFAULT_POLICIES.runtime.requireSandboxForShell,
+      allowUnsandboxedShell:
+        typeof parsed.runtime?.allowUnsandboxedShell === "boolean"
+          ? parsed.runtime.allowUnsandboxedShell
+          : DEFAULT_POLICIES.runtime.allowUnsandboxedShell,
+      network: {
+        defaultAction: parsed.runtime?.network?.defaultAction === "deny" ? "deny" : "allow",
+        allowedDomains: normalizeStringList(parsed.runtime?.network?.allowedDomains),
+        blockedDomains: normalizeStringList(parsed.runtime?.network?.blockedDomains),
+        allowShellNetwork: parsed.runtime?.network?.allowShellNetwork === true,
+      },
+      autoReview: {
+        enabled: parsed.runtime?.autoReview?.enabled !== false,
+      },
+      telemetry: {
+        enabled: parsed.runtime?.telemetry?.enabled === true,
+        otlpEndpoint:
+          typeof parsed.runtime?.telemetry?.otlpEndpoint === "string"
+            ? parsed.runtime.telemetry.otlpEndpoint
+            : undefined,
+      },
+    },
+    general: {
+      allowCustomPacks: parsed.general?.allowCustomPacks !== false,
+      allowGitInstall: parsed.general?.allowGitInstall !== false,
+      allowUrlInstall: parsed.general?.allowUrlInstall !== false,
+      orgName: parsed.general?.orgName,
+      orgPluginDir: parsed.general?.orgPluginDir,
+    },
+  };
+}
+
+/**
+ * Watch policies.json for manual edits and invoke a debounced callback.
+ */
+export function watchPolicies(onChange: () => void, debounceMs = 250): () => void {
+  const policiesPath = getPoliciesPath();
+  const policiesDir = path.dirname(policiesPath);
+  const policiesFile = path.basename(policiesPath);
+  if (!fs.existsSync(policiesDir)) {
+    fs.mkdirSync(policiesDir, { recursive: true });
+  }
+
+  let timer: NodeJS.Timeout | null = null;
+  const schedule = (): void => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+    timer = setTimeout(() => {
+      timer = null;
+      onChange();
+    }, debounceMs);
+    timer.unref?.();
+  };
+
+  let watcher: fs.FSWatcher | null = null;
+  try {
+    watcher = fs.watch(policiesDir, (_event, filename) => {
+      if (!filename || filename.toString() === policiesFile) {
+        schedule();
+      }
+    });
+  } catch (error) {
+    console.warn("[AdminPolicies] Failed to watch policies file:", error);
+  }
+
+  return () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    watcher?.close();
+  };
 }
 
 /**
@@ -163,75 +328,43 @@ export function getOrgPluginDir(policies?: AdminPolicies): string | null {
 }
 
 /**
- * Load admin policies from disk
+ * Load admin policies from disk without falling back to permissive defaults for an invalid file.
+ * Missing file is still treated as first-run default policy.
  */
-export function loadPolicies(): AdminPolicies {
+export function loadPoliciesStrict(): AdminPolicies | null {
   const policiesPath = getPoliciesPath();
 
   if (!fs.existsSync(policiesPath)) {
-    return { ...DEFAULT_POLICIES };
+    const defaults = clonePolicies(DEFAULT_POLICIES);
+    lastValidPolicies = defaults;
+    return clonePolicies(defaults);
   }
 
   try {
     const raw = fs.readFileSync(policiesPath, "utf-8");
     const parsed = JSON.parse(raw);
-
-    // Merge with defaults to ensure all fields exist
-    return {
-      version: parsed.version || 1,
-      updatedAt: parsed.updatedAt || new Date().toISOString(),
-      packs: {
-        allowed: Array.isArray(parsed.packs?.allowed) ? parsed.packs.allowed : [],
-        blocked: Array.isArray(parsed.packs?.blocked) ? parsed.packs.blocked : [],
-        required: Array.isArray(parsed.packs?.required) ? parsed.packs.required : [],
-      },
-      connectors: {
-        blocked: Array.isArray(parsed.connectors?.blocked) ? parsed.connectors.blocked : [],
-      },
-      agents: {
-        maxHeartbeatFrequencySec: Math.max(60, parsed.agents?.maxHeartbeatFrequencySec || 60),
-        maxConcurrentAgents: Math.max(1, parsed.agents?.maxConcurrentAgents || 10),
-      },
-      runtime: {
-        allowedPermissionModes: normalizePermissionModes(parsed.runtime?.allowedPermissionModes),
-        allowedSandboxTypes: normalizeSandboxTypes(parsed.runtime?.allowedSandboxTypes),
-        requireSandboxForShell:
-          typeof parsed.runtime?.requireSandboxForShell === "boolean"
-            ? parsed.runtime.requireSandboxForShell
-            : DEFAULT_POLICIES.runtime.requireSandboxForShell,
-        allowUnsandboxedShell:
-          typeof parsed.runtime?.allowUnsandboxedShell === "boolean"
-            ? parsed.runtime.allowUnsandboxedShell
-            : DEFAULT_POLICIES.runtime.allowUnsandboxedShell,
-        network: {
-          defaultAction: parsed.runtime?.network?.defaultAction === "deny" ? "deny" : "allow",
-          allowedDomains: normalizeStringList(parsed.runtime?.network?.allowedDomains),
-          blockedDomains: normalizeStringList(parsed.runtime?.network?.blockedDomains),
-          allowShellNetwork: parsed.runtime?.network?.allowShellNetwork === true,
-        },
-        autoReview: {
-          enabled: parsed.runtime?.autoReview?.enabled !== false,
-        },
-        telemetry: {
-          enabled: parsed.runtime?.telemetry?.enabled === true,
-          otlpEndpoint:
-            typeof parsed.runtime?.telemetry?.otlpEndpoint === "string"
-              ? parsed.runtime.telemetry.otlpEndpoint
-              : undefined,
-        },
-      },
-      general: {
-        allowCustomPacks: parsed.general?.allowCustomPacks !== false,
-        allowGitInstall: parsed.general?.allowGitInstall !== false,
-        allowUrlInstall: parsed.general?.allowUrlInstall !== false,
-        orgName: parsed.general?.orgName,
-        orgPluginDir: parsed.general?.orgPluginDir,
-      },
-    };
+    const rawValidationError = validatePolicies(parsed);
+    if (rawValidationError) {
+      throw new Error(rawValidationError);
+    }
+    const normalized = normalizePolicies(parsed);
+    const validationError = validatePolicies(normalized);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+    lastValidPolicies = normalized;
+    return clonePolicies(normalized);
   } catch (error) {
     console.error("[AdminPolicies] Failed to load policies:", error);
-    return { ...DEFAULT_POLICIES };
+    return lastValidPolicies ? clonePolicies(lastValidPolicies) : null;
   }
+}
+
+/**
+ * Load admin policies from disk.
+ */
+export function loadPolicies(): AdminPolicies {
+  return loadPoliciesStrict() || clonePolicies(DEFAULT_POLICIES);
 }
 
 /**
@@ -248,6 +381,7 @@ export function savePolicies(policies: AdminPolicies): void {
 
   policies.updatedAt = new Date().toISOString();
   fs.writeFileSync(policiesPath, JSON.stringify(policies, null, 2), "utf-8");
+  lastValidPolicies = clonePolicies(policies);
 }
 
 /**
@@ -286,12 +420,49 @@ export function isConnectorBlocked(connectorId: string, policies?: AdminPolicies
   return p.connectors.blocked.includes(connectorId);
 }
 
+export function getEverydayAgentPolicy(
+  policies?: AdminPolicies,
+): AdminPolicies["everydayAgent"] {
+  return (policies || loadPolicies()).everydayAgent;
+}
+
 function normalizeStringList(value: unknown): string[] {
   return Array.isArray(value)
     ? value
         .map((item) => String(item || "").trim())
         .filter(Boolean)
     : [];
+}
+
+const VALID_EVERYDAY_BUNDLES = new Set<EverydayCapabilityBundle>(
+  EVERYDAY_AGENT_CAPABILITY_BUNDLES.map((bundle) => bundle.id),
+);
+
+function normalizeEverydayBundles(value: unknown): EverydayCapabilityBundle[] {
+  return normalizeStringList(value).filter((bundle): bundle is EverydayCapabilityBundle =>
+    VALID_EVERYDAY_BUNDLES.has(bundle as EverydayCapabilityBundle),
+  );
+}
+
+function normalizeActiveHourWindows(value: unknown): AdminPolicies["everydayAgent"]["activeHours"]["windows"] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((window) => {
+      if (!window || typeof window !== "object") return null;
+      const record = window as Record<string, unknown>;
+      const days = Array.isArray(record.days)
+        ? record.days
+            .map((day) => Number(day))
+            .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+        : [];
+      const start = typeof record.start === "string" ? record.start : "";
+      const end = typeof record.end === "string" ? record.end : "";
+      if (!days.length || !/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)) {
+        return null;
+      }
+      return { days, start, end };
+    })
+    .filter(Boolean) as AdminPolicies["everydayAgent"]["activeHours"]["windows"];
 }
 
 const VALID_PERMISSION_MODES = new Set<PermissionMode>([
@@ -366,6 +537,54 @@ export function validatePolicies(policies: unknown): string | null {
       (typeof agents.maxConcurrentAgents !== "number" || agents.maxConcurrentAgents < 1)
     ) {
       return "agents.maxConcurrentAgents must be a number >= 1";
+    }
+  }
+
+  if (p.everydayAgent && typeof p.everydayAgent === "object") {
+    const everyday = p.everydayAgent as Record<string, unknown>;
+    if (everyday.blocked !== undefined && typeof everyday.blocked !== "boolean") {
+      return "everydayAgent.blocked must be a boolean";
+    }
+    if (
+      everyday.blockedBundles !== undefined &&
+      (!Array.isArray(everyday.blockedBundles) ||
+        everyday.blockedBundles.some(
+          (bundle) => !VALID_EVERYDAY_BUNDLES.has(bundle as EverydayCapabilityBundle),
+        ))
+    ) {
+      return "everydayAgent.blockedBundles contains an invalid bundle";
+    }
+    if (
+      everyday.forceReviewOnly !== undefined &&
+      typeof everyday.forceReviewOnly !== "boolean"
+    ) {
+      return "everydayAgent.forceReviewOnly must be a boolean";
+    }
+    if (
+      everyday.maxHeartbeatCadenceMinutes !== undefined &&
+      (typeof everyday.maxHeartbeatCadenceMinutes !== "number" ||
+        everyday.maxHeartbeatCadenceMinutes < 5)
+    ) {
+      return "everydayAgent.maxHeartbeatCadenceMinutes must be a number >= 5";
+    }
+    if (
+      everyday.maxConcurrentBackgroundWork !== undefined &&
+      (typeof everyday.maxConcurrentBackgroundWork !== "number" ||
+        everyday.maxConcurrentBackgroundWork < 1)
+    ) {
+      return "everydayAgent.maxConcurrentBackgroundWork must be a number >= 1";
+    }
+    const activeHours = everyday.activeHours as Record<string, unknown> | undefined;
+    if (activeHours) {
+      if (activeHours.enabled !== undefined && typeof activeHours.enabled !== "boolean") {
+        return "everydayAgent.activeHours.enabled must be a boolean";
+      }
+      if (activeHours.timezone !== undefined && typeof activeHours.timezone !== "string") {
+        return "everydayAgent.activeHours.timezone must be a string";
+      }
+      if (activeHours.windows !== undefined && !Array.isArray(activeHours.windows)) {
+        return "everydayAgent.activeHours.windows must be an array";
+      }
     }
   }
 
