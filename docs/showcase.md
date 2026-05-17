@@ -2,9 +2,11 @@
 
 A comprehensive guide to what you can build, automate, and manage with CoWork OS. Each section includes the capabilities involved, example prompts, and which skills/connectors/packs power the workflow.
 
-## Personal Agentic OS And Everything App
+## AI Super App For Everyday Work
 
-CoWork OS is positioned as a local-first personal agentic OS: one place for coding, research, web design, documents, spreadsheets, presentations, automations, channels, devices, and long-running work. The product is broader than an office artifact viewer; artifacts are one part of the larger agentic workspace.
+CoWork OS is positioned as a GUI-first local AI super app and everything app: one place for coding, email, research, web design, documents, spreadsheets, presentations, agent spawning and management, automations, channels, devices, and long-running work. The product is broader than an office artifact viewer; artifacts are one part of the larger agentic workspace.
+
+Unlike CLI-first agent tools, CoWork makes many-agent work visible: users can create reusable agents in Agents Hub, spawn parallel lanes, watch delegated runs in task timelines, assign work through Mission Control, and manage teams from GUI surfaces built for normal daily operation.
 
 ---
 
@@ -12,7 +14,7 @@ CoWork OS is positioned as a local-first personal agentic OS: one place for codi
 
 Inside that broader OS, the Everything Workbench makes generated knowledge-work outputs first-class. Instead of treating docs, sheets, decks, pages, and PDFs as disconnected files, CoWork shows them as task artifacts: open them in the right sidebar, expand them fullscreen, review or lightly edit them, and ask the agent for follow-up changes in the same context. See [Everything Workbench](everything-workbench.md).
 
-This reduces the need to jump between Word, Excel, PowerPoint, browser previews, Finder, and chat for generated work. External app actions remain available when the task needs advanced native functionality.
+This makes CoWork the default workspace instead of jumping between Word, Excel, PowerPoint, browser previews, Finder, mail, and chat for generated work. External app actions remain available when the task needs advanced native functionality.
 
 ---
 
