@@ -4,5 +4,10 @@ export const MICROSOFT_EMAIL_OAUTH_DEFAULT_SCOPES = [
   "offline_access",
 ] as const;
 
+export const MICROSOFT_EMAIL_GRAPH_READWRITE_SCOPES = [
+  "https://graph.microsoft.com/Mail.ReadWrite",
+  "offline_access",
+] as const;
+
 export const MICROSOFT_EMAIL_DEFAULT_TENANT = "consumers";
 export const MICROSOFT_EMAIL_OAUTH_PROVIDER = "microsoft";
