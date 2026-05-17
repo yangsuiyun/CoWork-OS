@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Play } from "lucide-react";
+import { RemoteDeviceControlVisual } from "./RemoteDeviceControlVisual";
 import type {
   ControlPlaneSettingsData,
   ControlPlaneStatus,
@@ -747,6 +748,8 @@ export function ControlPlaneSettings() {
               Connect to a Control Plane server running on another machine via SSH tunnel or
               Tailscale.
             </p>
+
+            <RemoteDeviceControlVisual />
 
             <div className="settings-row">
               <label>Gateway URL:</label>
