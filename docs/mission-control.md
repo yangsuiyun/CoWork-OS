@@ -1,6 +1,6 @@
 # Mission Control
 
-Mission Control is a centralized agent orchestration and monitoring dashboard. It provides the main cockpit for managing agents, tracking tasks across a Kanban board, monitoring real-time activity, and overseeing team-based collaboration.
+Mission Control is a centralized, GUI-first agent orchestration and monitoring dashboard. It provides the main cockpit for managing many agents, tracking tasks across a Kanban board, monitoring real-time activity, reviewing approvals, and overseeing team-based collaboration without reducing agent operations to terminal output.
 
 Heartbeat v3 is the default background automation model exposed here. Mission Control should be read as pulse/defer/dispatch truth, not as a wake-queue monitor. Mission Control also surfaces the `Core Harness` and should eventually surface Dreaming runs/candidates as the reviewable memory-curation lane. See [Heartbeat v3](heartbeat-v3.md), [Dreaming](dreaming.md), and [Core Automation](core-automation.md) for the runtime model.
 
