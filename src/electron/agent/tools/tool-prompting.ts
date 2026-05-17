@@ -105,9 +105,15 @@ const TOOL_PROMPT_METADATA_BY_NAME: Record<string, LLMToolPromptMetadata> = {
   })),
   run_command: createPromptMetadata(() => ({
     appendDescription:
-      "Use for shell, test, build, packaging, git, and local CLI work. Prefer this over browser or web tools for local execution. Do not use this for native desktop GUI control when screenshot/click/type_text/keypress and related computer-use tools are available. If a test or build fails, inspect the output, fix the cause, then rerun.",
+      "Use for shell, test, build, packaging, git, and local CLI work. Prefer this over browser or web tools for local execution. Do not use this for simple workspace file creation or overwrite when write_file can do it. Do not use this for native desktop GUI control when screenshot/click/type_text/keypress and related computer-use tools are available. If a test or build fails, inspect the output, fix the cause, then rerun.",
     compactDescription:
-      "Use for shell, test, build, git, and local CLI execution. Do not use it for native GUI control when computer-use tools fit.",
+      "Use for shell, test, build, git, and local CLI execution. For simple file writes, prefer write_file.",
+  })),
+  write_file: createPromptMetadata(() => ({
+    appendDescription:
+      "Preferred for simple workspace file creation or overwrite, including Markdown, text, JSON, CSV, and YAML files. Use this instead of run_command with cat, printf, heredocs, or shell redirection when the task is just writing file contents.",
+    compactDescription:
+      "Preferred for simple workspace file creation or overwrite; use instead of shell redirection.",
   })),
   screenshot: createPromptMetadata(() => ({
     appendDescription:
@@ -199,10 +205,14 @@ const TOOL_PROMPT_METADATA_BY_NAME: Record<string, LLMToolPromptMetadata> = {
     appendDescription:
       context.allowUserInput === false
         ? "This tool requires user interaction and should not be used when the current task cannot pause for user input."
+        : context.humanInputPolicy === "none" || context.humanInputPolicy === "hard_blockers"
+          ? "Structured human input is disabled for this task. Prefer safe defaults when reasonable, or report a concrete blocker in your final response."
         : "Use only when a required user choice blocks the plan or execution. Prefer safe defaults when reasonable. Ask 1-3 concise questions with 2-3 options each.",
     compactDescription:
       context.allowUserInput === false
         ? "Requires user interaction; unavailable for autonomous no-input tasks."
+        : context.humanInputPolicy === "none" || context.humanInputPolicy === "hard_blockers"
+          ? "Structured human input is disabled; prefer safe defaults or report blockers."
         : "Use only for required user choices that block progress. Keep the question set short and structured.",
   })),
   task_list_create: createPromptMetadata(() => ({
