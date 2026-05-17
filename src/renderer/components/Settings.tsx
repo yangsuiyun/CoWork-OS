@@ -7967,7 +7967,7 @@ export function Settings({
                     />
                   )}
                   {activeAutomationsSubTab === "scheduled" && (
-                    <ScheduledTasksSettings />
+                    <ScheduledTasksSettings onOpenTask={onOpenTask} />
                   )}
                   {activeAutomationsSubTab === "hooks" && <HooksSettings />}
                   {activeAutomationsSubTab === "triggers" && (
