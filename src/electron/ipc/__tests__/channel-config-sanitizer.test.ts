@@ -68,7 +68,7 @@ describe("channel-config-sanitizer", () => {
       status: "connected",
       botUsername: "bot",
       configReadError: "Secure storage unavailable",
-      securityMode: "pairing",
+      securityMode: "open",
       createdAt: 1700000000000,
       updatedAt: 1700000000001,
       config: {
