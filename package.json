@@ -122,6 +122,7 @@
     "qa:eval:build": "node scripts/qa/build_eval_corpus.cjs",
     "qa:eval:run": "node scripts/qa/run_eval_suite.cjs",
     "qa:eval:enforce-regressions": "node scripts/qa/enforce_eval_regression_policy.cjs",
+    "qa:security:harness": "node scripts/qa/security-harness.cjs",
     "qa:renderer-perf": "node scripts/qa/run_renderer_perf_fixture.mjs",
     "qa:timeline:backfill": "node scripts/qa/backfill_timeline_completion_telemetry.cjs",
     "qa:timeline:enforce": "node scripts/qa/enforce_timeline_reliability.cjs",
@@ -254,6 +255,14 @@
         ]
       },
       {
+        "from": "build",
+        "to": "build",
+        "filter": [
+          "icon.png",
+          "icon.icns"
+        ]
+      },
+      {
         "from": "resources/computer-use",
         "to": "computer-use"
       },
@@ -280,7 +289,7 @@
       "gatekeeperAssess": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "icon": "build/icon.png",
+      "icon": "build/icon.icns",
       "notarize": true
     },
     "win": {
