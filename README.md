@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-  <strong>CoWork OS is a local-first personal agentic OS and everything app for getting real work done.</strong><br>
-  Code, research, design web pages, create documents, work with spreadsheets and decks, run automations, and ask your agent for changes without switching context.
+  <strong>CoWork OS is the GUI-first local AI super app and everything app for getting real work done.</strong><br>
+  Code, email, research, design web pages, create documents, work with spreadsheets and decks, spawn and manage agents, run automations, and ask for changes without jumping between separate coding, mail, browser, Word, Excel, or PowerPoint apps.
 </p>
 
 <p align="center">
@@ -41,11 +41,12 @@
 
 ### Why CoWork OS?
 
-- **Personal Agentic OS** — CoWork OS is still a local-first operating system for personal AI agents: tasks, memory, skills, providers, approvals, channels, devices, and automations are governed in one workspace.
-- **Everything Workbench** — Chat, tasks, documents, spreadsheets, presentations, web pages, PDFs, and file outputs live in one local-first workspace. Generate an artifact, open it in the app, review or edit it, and ask for follow-up changes with fewer switches into separate office apps. [Learn more](docs/everything-workbench.md)
+- **AI Super App / Everything App** — CoWork OS is the one local-first app for everyday AI work: coding, email, research, web design, documents, spreadsheets, presentations, PDFs, channels, devices, automations, memory, providers, and approvals all live in one governed workspace.
+- **GUI-first agent management** — Create reusable agents, spawn parallel work, inspect delegated runs, assign tasks, review approvals, and monitor many agents from Agents Hub, Mission Control, task timelines, and visual boards instead of managing everything from a terminal.
+- **Everything Workbench** — Chat, tasks, documents, spreadsheets, presentations, web pages, PDFs, and file outputs live beside the agent. Generate an artifact, open it in CoWork, review or edit it, and ask for follow-up changes without defaulting to separate office apps. [Learn more](docs/everything-workbench.md)
 - **Agents Hub** — Build reusable managed agents from prompts or templates, inspect their tools, skills, files, memory, channels, schedules, and approvals, then run tests or starter prompts as normal main-window tasks. The agent detail screen is configuration-first, not a separate sidebar chat. [Learn more](docs/managed-agents.md)
 - **Browser Workbench / Browser V2** — Test live websites and local apps in a visible in-app browser by default. The agent uses the same right-sidebar/fullscreen browser the user can see, with CDP-backed Browser V2 automation, responsive viewport testing through `browser_emulate`, accessibility snapshot refs, tabs, downloads/uploads, diagnostics, screenshots, annotation, and explicit opt-in for real signed-in Chrome/Edge control. [Learn more](docs/browser-workbench.md) · [Architecture](docs/browser-v2-architecture.md)
-- **Coding, web design, and knowledge work** — Use the same agentic workspace for repository work, frontend/product design, research, docs, spreadsheets, presentations, web pages, PDFs, and long-running operational tasks.
+- **Coding, web design, email, and knowledge work** — Use the same app for repository work, frontend/product design, inbox triage, research, docs, spreadsheets, presentations, web pages, PDFs, and long-running operational tasks.
 - **Inbox Agent** — local-first email workspace with Classic and Today modes, AI triage, an Ask Inbox sidebar with live mailbox-agent steps and hybrid evidence search, `@Inbox` main-composer routing, manual reply/reply-all/forward, editable AI drafts, sender cleanup, commitments, and background sync.
 - **Workflow Intelligence** — Always-on cognition is now framed as one reviewable loop: Memory is the source of truth, Heartbeat schedules reflection, Reflection evaluates evidence internally, Dreaming curates memory candidates in the background, and Suggestions are the user-facing output.
 - **Digital Twin Personas** — Pre-built opt-in persona presets for every role. Twins stay visible and activatable, but they no longer own heartbeat, workflow-intelligence, or memory runtime state.
@@ -57,7 +58,7 @@
 - **44 MCP connectors** — Pre-built enterprise integrations across CRM, support, productivity, analytics, and payments, with native connector support for the most common internal surfaces.
 - **Composer @ mentions** — Type `@` in the message box to pick Agents, configured Integrations, or Files. Integration chips keep icon+name rendering in the prompt and task history while sending soft routing metadata to the runtime. [Learn more](docs/composer-mentions.md)
 - **35 bundled packs** — including Mobile Development, Game Development, finance packs, Claude-for-Legal practice packs, and the CoWork Shortcuts pack for message-box workflow aliases, with 100+ pack skills/shortcuts, in-app Plugin Store for installing community packs, remote registry, and enterprise admin policies for organization-wide control.
-- **147 built-in skills** — Documents, code review, web search, image generation, cloud integrations, game development, mobile development, financial analysis, infrastructure-as-code, React/Next.js performance guidance, and more, including bundled workflows such as `llm-wiki` for persistent research vaults, `manim-video` for programmatic technical animation, `kami` for editorial PDFs and slide decks, `react-best-practices` for React workspace changes, and `taste-skill` for high-agency frontend design.
+- **150 built-in skills** — Documents, code review, web search, image generation, cloud integrations, game development, mobile development, financial analysis, infrastructure-as-code, React/Next.js performance guidance, and more, including bundled workflows such as `llm-wiki` for persistent research vaults, `manim-video` for programmatic technical animation, `kami` for editorial PDFs and slide decks, `react-best-practices` for React workspace changes, and `taste-skill` for high-agency frontend design.
 - **Profiles & portability** — run separate CoWork profiles with isolated app data, export/import complete profile bundles, and keep credentials, channels, skills, and sessions separated by profile.
 - **Active Context sidebar** — Always-visible panel showing 44 available MCP connectors with branded Lucide icons and enabled skills, auto-refreshed every 30 seconds.
 - **Agent teams** — Multi-agent collaboration with shared checklists, graph-backed runs, collaborative mode, `/multitask` lane fan-out, multi-LLM synthesis, persistent teams, and ACP-targeted delegation for local or remote specialists.
@@ -85,7 +86,7 @@ Stable workflow entry points for the newest high-impact capabilities.
 
 - **Ideas panel** — curated launchpad of pre-written workflow prompts and capability-aware starting points, with deep links into common tasks.
 - **Research vaults (`llm-wiki`)** — first-class workspace-local knowledge bases inspired by Andrej Karpathy's LLM Wiki concept, with deterministic raw-source capture, Obsidian-friendly notes, filed-back outputs, vault search, and vault-health analysis. [Learn more](docs/llm-wiki.md)
-- **Everything Workbench** — generated documents, spreadsheets, decks, web pages, PDFs, and previews share the same artifact model: task-feed card, sidebar open, fullscreen workspace, follow-up composer, and refresh after the agent finishes the requested edit. [Learn more](docs/everything-workbench.md)
+- **Everything Workbench** — generated documents, spreadsheets, decks, web pages, PDFs, and previews share the same artifact model: task-feed card, sidebar open, fullscreen workspace, follow-up composer, and refresh after the agent finishes the requested edit. It makes CoWork the default place to create, inspect, and revise everyday Word/Excel/PowerPoint-style work. [Learn more](docs/everything-workbench.md)
 - **Document artifacts** — task-created Word-style files render as compact artifact cards. `.docx` opens directly in an editable right-sidebar document surface with Google Docs-style controls, save, copy, external-open, fullscreen mode, and the same functional follow-up composer used by spreadsheet artifacts. `.doc`, `.rtf`, `.odt`, `.ott`, `.pages`, and related Word-style formats are recognized with best-effort preview or external-app/folder actions. [Learn more](docs/document-artifacts.md)
 - **Designed editorial documents** — bundled `kami` skill for resumes, one-pagers, white papers, letters, portfolios, diagrams, and slide decks with workspace-local source scaffolding and PDF/PPTX export helpers. [Learn more](docs/skills/kami.md)
 - **Format-aware file preview popup** — clicking any file link in chat opens a unified preview modal that adapts to the format. Built-in support for HTML, Markdown, code (with `highlight.js` syntax colors), JSON / JSONL / GeoJSON (collapsible tree + raw toggle), CSV / TSV (RFC-4180 table), XLSX, DOCX, PDF (with page/OCR summary), images (fit / actual-size toggle, dimensions, alpha checkerboard), video, audio (with duration), LaTeX, and PPTX. Each format gets its own width profile, a header subtitle showing format-specific metadata, and a unified action bar with Copy path, Show in Finder, Open externally, and Close.
@@ -232,7 +233,7 @@ Workflow Intelligence reflections now use the same runtime with stricter safegua
 
 Completion state and file availability are now explicit:
 
-- **Everything Workbench**: generated knowledge-work outputs share one artifact model across docs, sheets, decks, pages, PDFs, and previews, reducing the need to jump into separate office apps for review, light editing, and follow-up changes
+- **Everything Workbench**: generated knowledge-work outputs share one artifact model across docs, sheets, decks, pages, PDFs, and previews, making CoWork the everyday place to create, review, edit, and revise office-style work with the agent beside it
 - **High-signal completion toast**: finished tasks with outputs show `Task complete` with filename/count and actions for **Open file**, **Show in Finder**, and **View in Files**
 - **Right-sidebar focus**: if you are viewing the completed task and the panel is collapsed, the Files panel auto-opens and highlights the primary output
 - **Unseen-output badge**: if completion happens in another task/view, the collapsed right-panel toggle shows a numeric badge until you open Files
@@ -433,7 +434,7 @@ These are the workflows where approval gates, local data control, and measurable
 
 ### Extensibility
 
-- **147 built-in skills** across developer, productivity, communication, documents, frontend, game development, mobile development, financial analysis, infrastructure-as-code, and more
+- **150 built-in skills** across developer, productivity, communication, documents, frontend, game development, mobile development, financial analysis, infrastructure-as-code, and more
 - **Custom skills** in `~/Library/Application Support/cowork-os/skills/` (macOS) or `%APPDATA%\cowork-os\skills\` (Windows)
 - **35 bundled plugin packs** with 100+ pack skills/shortcuts, message-box slash aliases, Claude-for-Legal workflow cards, and Digital Twin integration where applicable
 - **Plugin Store** — browse, install from Git/URL, scaffold custom packs, and review quarantine/report state for imported packs
