@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useState } from "react";
 import { Cable, Clock3, Link2, Pencil, Play, Plus, Save, Trash2, Workflow } from "lucide-react";
 
 type CronSchedule =
@@ -223,6 +223,92 @@ const chipStyle = {
   fontSize: 12,
 } as const;
 
+const checkboxRowStyle = {
+  display: "inline-flex",
+  alignItems: "flex-start",
+  gap: 10,
+  width: "fit-content",
+  maxWidth: "100%",
+  color: "var(--color-text-primary)",
+  lineHeight: 1.35,
+} satisfies CSSProperties;
+
+const checkboxInputStyle = {
+  flex: "0 0 auto",
+  width: 18,
+  height: 18,
+  marginTop: 1,
+  accentColor: "var(--color-accent)",
+} satisfies CSSProperties;
+
+const nestedOptionsStyle = {
+  display: "grid",
+  gap: 12,
+  marginLeft: 28,
+  paddingLeft: 14,
+  borderLeft: "1px solid var(--color-border, rgba(127, 127, 127, 0.2))",
+} satisfies CSSProperties;
+
+const compactInputGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 240px))",
+  gap: 12,
+  alignItems: "center",
+} satisfies CSSProperties;
+
+const compactCheckboxGroupStyle = {
+  display: "flex",
+  gap: 16,
+  flexWrap: "wrap",
+  alignItems: "center",
+} satisfies CSSProperties;
+
+type RoutineButtonTone = "primary" | "secondary" | "danger";
+
+function routineButtonStyle(tone: RoutineButtonTone, disabled = false): CSSProperties {
+  const toneStyle: Record<RoutineButtonTone, CSSProperties> = {
+    primary: {
+      background: "var(--color-accent)",
+      borderColor: "var(--color-accent)",
+      color: "#0f172a",
+    },
+    secondary: {
+      background: "var(--color-bg-secondary, rgba(127, 127, 127, 0.08))",
+      borderColor: "var(--color-border, rgba(127, 127, 127, 0.2))",
+      color: "var(--color-text-primary)",
+    },
+    danger: {
+      background: "var(--color-error-subtle, rgba(248, 113, 113, 0.12))",
+      borderColor: "color-mix(in srgb, var(--color-error) 45%, transparent)",
+      color: "var(--color-error)",
+    },
+  };
+
+  return {
+    appearance: "none",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    minHeight: 36,
+    width: "fit-content",
+    maxWidth: "100%",
+    padding: "8px 14px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderRadius: 999,
+    font: "inherit",
+    fontSize: 14,
+    fontWeight: 600,
+    lineHeight: 1,
+    whiteSpace: "nowrap",
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.55 : 1,
+    transition: "background-color 120ms ease, border-color 120ms ease, opacity 120ms ease",
+    ...toneStyle[tone],
+  };
+}
+
 function createDefaultFormState(workspaceId = ""): RoutineFormState {
   return {
     enabled: true,
@@ -278,7 +364,7 @@ function createDefaultFormState(workspaceId = ""): RoutineFormState {
   };
 }
 
-export function RoutineSettingsPanel() {
+export function RoutineSettingsPanel({ onOpenTask }: { onOpenTask?: (taskId: string) => void }) {
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [runs, setRuns] = useState<RoutineRun[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -574,7 +660,12 @@ export function RoutineSettingsPanel() {
     setSaving(true);
     setError(null);
     try {
-      await window.electronAPI.runRoutineNow?.(routineId);
+      const run = (await window.electronAPI.runRoutineNow?.(routineId)) as RoutineRun | null | undefined;
+      if (run?.backingTaskId && onOpenTask) {
+        setSaving(false);
+        onOpenTask(run.backingTaskId);
+        return;
+      }
       await loadAll();
     } catch (err: Any) {
       setError(err.message || "Failed to run routine");
@@ -616,7 +707,7 @@ export function RoutineSettingsPanel() {
               CoWork&apos;s local-first runtime.
             </p>
           </div>
-          <button className="settings-button primary" onClick={startCreate}>
+          <button style={routineButtonStyle("primary")} onClick={startCreate}>
             <Plus size={16} />
             New Routine
           </button>
@@ -648,7 +739,7 @@ export function RoutineSettingsPanel() {
         <div className="settings-section" style={{ display: "grid", gap: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h4 style={{ margin: 0 }}>{editingRoutineId ? "Edit Routine" : "Create Routine"}</h4>
-            <button className="settings-button secondary" onClick={resetForm}>
+            <button style={routineButtonStyle("secondary")} onClick={resetForm}>
               Cancel
             </button>
           </div>
@@ -805,117 +896,91 @@ export function RoutineSettingsPanel() {
           <div className="settings-field">
             <span>Outputs</span>
             <div style={{ display: "grid", gap: 12 }}>
-              <label className="settings-checkbox">
-                <input
-                  type="checkbox"
-                  checked={form.outputTaskOnly}
-                  onChange={(event) => setForm({ ...form, outputTaskOnly: event.target.checked })}
-                />
-                <span>Create a task and keep results in CoWork</span>
-              </label>
-              <label className="settings-checkbox">
-                <input
-                  type="checkbox"
-                  checked={form.outputChannelMessage}
-                  onChange={(event) =>
-                    setForm({ ...form, outputChannelMessage: event.target.checked })
-                  }
-                />
-                <span>Deliver a channel summary</span>
-              </label>
+              <RoutineCheckbox
+                checked={form.outputTaskOnly}
+                label="Create a task and keep results in CoWork"
+                onChange={(checked) => setForm({ ...form, outputTaskOnly: checked })}
+              />
+              <RoutineCheckbox
+                checked={form.outputChannelMessage}
+                label="Deliver a channel summary"
+                onChange={(checked) => setForm({ ...form, outputChannelMessage: checked })}
+              />
               {form.outputChannelMessage && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-                  <input
-                    className="settings-input"
-                    value={form.outputChannelType}
-                    onChange={(event) => setForm({ ...form, outputChannelType: event.target.value })}
-                    placeholder="slack"
-                  />
-                  <input
-                    className="settings-input"
-                    value={form.outputChannelId}
-                    onChange={(event) => setForm({ ...form, outputChannelId: event.target.value })}
-                    placeholder="C123456"
-                  />
-                  <label className="settings-checkbox">
+                <div style={nestedOptionsStyle}>
+                  <div style={compactInputGridStyle}>
                     <input
-                      type="checkbox"
+                      className="settings-input"
+                      value={form.outputChannelType}
+                      onChange={(event) => setForm({ ...form, outputChannelType: event.target.value })}
+                      placeholder="slack"
+                    />
+                    <input
+                      className="settings-input"
+                      value={form.outputChannelId}
+                      onChange={(event) => setForm({ ...form, outputChannelId: event.target.value })}
+                      placeholder="C123456"
+                    />
+                  </div>
+                  <div style={compactCheckboxGroupStyle}>
+                    <RoutineCheckbox
                       checked={form.outputSummaryOnly}
-                      onChange={(event) =>
-                        setForm({ ...form, outputSummaryOnly: event.target.checked })
-                      }
+                      label="Summary only"
+                      onChange={(checked) => setForm({ ...form, outputSummaryOnly: checked })}
                     />
-                    <span>Summary only</span>
-                  </label>
-                  <label className="settings-checkbox">
-                    <input
-                      type="checkbox"
+                    <RoutineCheckbox
                       checked={form.outputDeliverOnSuccess}
-                      onChange={(event) =>
-                        setForm({ ...form, outputDeliverOnSuccess: event.target.checked })
+                      label="Send on success"
+                      onChange={(checked) =>
+                        setForm({ ...form, outputDeliverOnSuccess: checked })
                       }
                     />
-                    <span>Send on success</span>
-                  </label>
-                  <label className="settings-checkbox">
-                    <input
-                      type="checkbox"
+                    <RoutineCheckbox
                       checked={form.outputDeliverOnError}
-                      onChange={(event) =>
-                        setForm({ ...form, outputDeliverOnError: event.target.checked })
-                      }
+                      label="Send on error"
+                      onChange={(checked) => setForm({ ...form, outputDeliverOnError: checked })}
                     />
-                    <span>Send on error</span>
-                  </label>
+                  </div>
                 </div>
               )}
 
-              <label className="settings-checkbox">
-                <input
-                  type="checkbox"
-                  checked={form.outputWebhookResponse}
-                  onChange={(event) =>
-                    setForm({ ...form, outputWebhookResponse: event.target.checked })
-                  }
-                />
-                <span>Return a webhook response body for API-triggered runs</span>
-              </label>
+              <RoutineCheckbox
+                checked={form.outputWebhookResponse}
+                label="Return a webhook response body for API-triggered runs"
+                onChange={(checked) => setForm({ ...form, outputWebhookResponse: checked })}
+              />
               {form.outputWebhookResponse && (
-                <div style={{ display: "grid", gridTemplateColumns: "140px 1fr auto", gap: 12 }}>
-                  <input
-                    className="settings-input"
-                    type="number"
-                    min={100}
-                    max={599}
-                    value={form.outputWebhookStatusCode}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        outputWebhookStatusCode: Number(event.target.value || 202),
-                      })
-                    }
-                  />
-                  <input
-                    className="settings-input"
-                    value={form.outputWebhookMessage}
-                    onChange={(event) =>
-                      setForm({ ...form, outputWebhookMessage: event.target.value })
-                    }
-                    placeholder="Routine accepted"
-                  />
-                  <label className="settings-checkbox">
+                <div style={nestedOptionsStyle}>
+                  <div style={{ ...compactInputGridStyle, gridTemplateColumns: "140px minmax(220px, 360px)" }}>
                     <input
-                      type="checkbox"
-                      checked={form.outputWebhookIncludeTaskId}
+                      className="settings-input"
+                      type="number"
+                      min={100}
+                      max={599}
+                      value={form.outputWebhookStatusCode}
                       onChange={(event) =>
                         setForm({
                           ...form,
-                          outputWebhookIncludeTaskId: event.target.checked,
+                          outputWebhookStatusCode: Number(event.target.value || 202),
                         })
                       }
                     />
-                    <span>Include task ID</span>
-                  </label>
+                    <input
+                      className="settings-input"
+                      value={form.outputWebhookMessage}
+                      onChange={(event) =>
+                        setForm({ ...form, outputWebhookMessage: event.target.value })
+                      }
+                      placeholder="Routine accepted"
+                    />
+                  </div>
+                  <RoutineCheckbox
+                    checked={form.outputWebhookIncludeTaskId}
+                    label="Include task ID"
+                    onChange={(checked) =>
+                      setForm({ ...form, outputWebhookIncludeTaskId: checked })
+                    }
+                  />
                 </div>
               )}
             </div>
@@ -1181,7 +1246,7 @@ export function RoutineSettingsPanel() {
           </div>
 
           <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
-            <button className="settings-button primary" onClick={saveRoutine} disabled={saving}>
+            <button style={routineButtonStyle("primary", saving)} onClick={saveRoutine} disabled={saving}>
               <Save size={16} />
               {saving ? "Saving..." : "Save Routine"}
             </button>
@@ -1227,15 +1292,23 @@ export function RoutineSettingsPanel() {
                   </div>
 
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button className="settings-button secondary" onClick={() => runRoutineNow(routine.id)} disabled={saving}>
+                    <button
+                      style={routineButtonStyle("secondary", saving)}
+                      onClick={() => runRoutineNow(routine.id)}
+                      disabled={saving}
+                    >
                       <Play size={16} />
                       Run Now
                     </button>
-                    <button className="settings-button secondary" onClick={() => startEdit(routine)}>
+                    <button style={routineButtonStyle("secondary")} onClick={() => startEdit(routine)}>
                       <Pencil size={16} />
                       Edit
                     </button>
-                    <button className="settings-button danger" onClick={() => deleteRoutine(routine.id)} disabled={saving}>
+                    <button
+                      style={routineButtonStyle("danger", saving)}
+                      onClick={() => deleteRoutine(routine.id)}
+                      disabled={saving}
+                    >
                       <Trash2 size={16} />
                       Delete
                     </button>
@@ -1279,7 +1352,7 @@ export function RoutineSettingsPanel() {
                     </code>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <button
-                        className="settings-button secondary"
+                        style={routineButtonStyle("secondary")}
                         onClick={() =>
                           copyText(`${apiBaseUrl}/${apiTrigger.path || `routines/${routine.id}/${apiTrigger.id}`}`)
                         }
@@ -1289,13 +1362,13 @@ export function RoutineSettingsPanel() {
                       {apiTrigger.token && (
                         <>
                           <button
-                            className="settings-button secondary"
+                            style={routineButtonStyle("secondary")}
                             onClick={() => copyText(apiTrigger.token || "")}
                           >
                             Copy Token
                           </button>
                           <button
-                            className="settings-button secondary"
+                            style={routineButtonStyle("secondary", saving)}
                             onClick={() => regenerateApiToken(routine, apiTrigger.id)}
                             disabled={saving}
                           >
@@ -1366,11 +1439,36 @@ function TriggerToggle(props: {
 }) {
   return (
     <label className="settings-checkbox" style={{ display: "grid", gap: 4 }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <input type="checkbox" checked={props.checked} onChange={(event) => props.onChange(event.target.checked)} />
+      <span style={checkboxRowStyle}>
+        <input
+          type="checkbox"
+          checked={props.checked}
+          onChange={(event) => props.onChange(event.target.checked)}
+          style={checkboxInputStyle}
+        />
         <span>{props.label}</span>
-      </div>
-      <span className="settings-help">{props.description}</span>
+      </span>
+      <span className="settings-help" style={{ marginLeft: 28 }}>
+        {props.description}
+      </span>
+    </label>
+  );
+}
+
+function RoutineCheckbox(props: {
+  checked: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="settings-checkbox" style={checkboxRowStyle}>
+      <input
+        type="checkbox"
+        checked={props.checked}
+        onChange={(event) => props.onChange(event.target.checked)}
+        style={checkboxInputStyle}
+      />
+      <span style={{ minWidth: 0 }}>{props.label}</span>
     </label>
   );
 }
