@@ -1,12 +1,17 @@
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { autolinkBareDomains } from "../../utils/markdown-autolink";
+import {
+  autolinkBareDomains,
+  autolinkBareUrls,
+  autolinkUrlsInBrackets,
+} from "../../utils/markdown-autolink";
 import {
   buildMarkdownComponents,
-  createQuotedAssistantMessage,
-  autolinkUrlsInBrackets,
-  isXComLink,
   normalizeCodeBlockTextForDisplay,
+} from "../markdown-components";
+import {
+  createQuotedAssistantMessage,
+  isXComLink,
   normalizeSourcesSection,
   resolveSafeCollapsedBubbleHeight,
   shouldCreateFreshTaskForSend,
@@ -114,6 +119,12 @@ describe("MainContent markdown normalization helpers", () => {
     );
     expect(autolinkBareDomains("Examples include e.g. and i.e. but not no.op.")).toBe(
       "Examples include e.g. and i.e. but not no.op.",
+    );
+  });
+
+  it("autolinks bare domain URLs from the markdown utility module", () => {
+    expect(autolinkBareUrls("Read spectrum.ieee.org/quantum for context.")).toBe(
+      "Read [spectrum.ieee.org/quantum](https://spectrum.ieee.org/quantum) for context.",
     );
   });
 
