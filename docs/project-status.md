@@ -13,7 +13,7 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - **Renderer Performance**: Sidebar and timeline virtualization in the `CoWork-OS/CoWork-OS` repo use `@chenglou/pretext` for text measurement and keep long task feeds responsive
 - **Security-First Design**: 4,932 automated tests across 390 test files, configurable guardrails, layered permission rules, workspace-local policy files, and approval workflows
 - **Imported Capability Security**: managed skill and pack imports are staged, scanned, reported, and quarantined when blocked instead of being activated directly
-- **Multi-Provider Support**: 30+ LLM providers including free local models via Ollama and OpenRouter coding routers
+- **Multi-Provider Support**: 35 LLM provider options including free local models via Ollama, OpenRouter coding routers, and Grok through xAI API key or SuperGrok OAuth
 - **Local-First Architecture**: Your data stays on your machine, BYOK model
 
 ## What's Built and Working
@@ -574,7 +574,7 @@ Expected behavior:
 ### Core Strengths
 - **Security**: 4,932 automated tests across 390 test files, configurable guardrails, layered permission rules, approval workflows, and brute-force protection
 - **Multi-Channel**: WhatsApp, Telegram, Discord, Slack, iMessage integration
-- **Multi-Provider**: 30+ LLM providers and compatible gateways, including Claude, GPT, Gemini, Bedrock, OpenRouter Pareto Code routing, and Ollama
+- **Multi-Provider**: 35 LLM provider options and compatible gateways, including Claude, GPT, Gemini, Bedrock, OpenRouter Pareto Code routing, Ollama, and Grok through xAI API key or SuperGrok OAuth
 - **Local-First**: Your data stays on your machine, BYOK model
 - **Extensible**: MCP support (Client, Host, Registry), 147 built-in skills, and plugin packs
 
