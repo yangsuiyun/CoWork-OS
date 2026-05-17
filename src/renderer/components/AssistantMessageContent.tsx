@@ -24,6 +24,15 @@ type HtmlDirective = {
   title?: string;
 };
 
+type FrameDirective = {
+  path?: string;
+  title?: string;
+  height?: string;
+  aspectRatio?: string;
+  kind?: string;
+  chrome?: boolean;
+};
+
 type MessageSegment =
   | { type: "markdown"; content: string }
   | { type: "command_excerpt"; text: string; label: string; raw: string }
@@ -31,6 +40,8 @@ type MessageSegment =
   | { type: "video_error"; raw: string; error: string }
   | { type: "html"; directive: HtmlDirective; raw: string }
   | { type: "html_source"; html: string; title?: string; raw: string }
+  | { type: "frame"; directive: FrameDirective; raw: string }
+  | { type: "frame_source"; html: string; directive: FrameDirective; raw: string }
   | { type: "html_error"; raw: string; error: string };
 
 const LazyMarkdownRenderer = lazy(() =>
@@ -53,9 +64,14 @@ function DeferredMarkdown({
 
 const VIDEO_DIRECTIVE_LINE_REGEX = /^\s*::video\{(.+)\}\s*$/;
 const HTML_DIRECTIVE_LINE_REGEX = /^\s*::html\{(.+)\}\s*$/;
+const FRAME_DIRECTIVE_LINE_REGEX = /^\s*::frame\{(.+)\}\s*$/;
+const RICH_FRAME_TAG_LINE_REGEX = /^\s*<rich-frame\b([^>]*)>(?:\s*<\/rich-frame>)?\s*$/i;
+const RICH_FRAME_CLOSE_LINE_REGEX = /^\s*<\/rich-frame>\s*$/i;
 const HTML_FENCE_START_REGEX = /^\s*```(?:html|HTML)\s*$/;
 const FENCE_END_REGEX = /^\s*```\s*$/;
 const DIRECTIVE_ATTR_REGEX = /(\w+)\s*=\s*("(?:[^"\\]|\\.)*"|true|false)/g;
+const HTML_ATTR_REGEX = /([a-z][a-z0-9_-]*)\s*=\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s"'=<>`]+)/gi;
+const FRAME_KIND_REGEX = /^[a-z][a-z0-9_-]{0,32}$/i;
 const LONG_OSASCRIPT_MIN_CHARS = 220;
 const OSASCRIPT_START_REGEX = /\b(?:Command failed:\s*)?osascript\b/i;
 
@@ -144,6 +160,98 @@ export function OsascriptCommandExcerpt({
 function decodeQuotedValue(value: string): string {
   if (!value.startsWith("\"") || !value.endsWith("\"")) return value;
   return value.slice(1, -1).replace(/\\"/g, "\"").replace(/\\\\/g, "\\");
+}
+
+function decodeHtmlAttrValue(value: string): string {
+  const trimmed = value.trim();
+  const quote = trimmed[0];
+  const unquoted =
+    (quote === "\"" || quote === "'") && trimmed.endsWith(quote)
+      ? trimmed.slice(1, -1)
+      : trimmed;
+  return unquoted
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
+function normalizeFrameKind(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  return FRAME_KIND_REGEX.test(normalized) ? normalized : undefined;
+}
+
+function parseRichFrameTagDirective(line: string): MessageSegment {
+  const match = line.match(RICH_FRAME_TAG_LINE_REGEX);
+  if (!match) return { type: "markdown", content: line };
+
+  const attrs = match[1] || "";
+  const parsed: Record<string, string> = {};
+  let attrMatch: RegExpExecArray | null;
+
+  HTML_ATTR_REGEX.lastIndex = 0;
+  while ((attrMatch = HTML_ATTR_REGEX.exec(attrs)) !== null) {
+    parsed[attrMatch[1].toLowerCase()] = decodeHtmlAttrValue(attrMatch[2]);
+  }
+
+  const unmatched = attrs.replace(HTML_ATTR_REGEX, "").trim();
+  if (unmatched.length > 0) {
+    return {
+      type: "html_error",
+      raw: line,
+      error: "Invalid rich frame syntax",
+    };
+  }
+
+  const rawPath = parsed.path || parsed.src;
+  if (!rawPath || rawPath.trim().length === 0) {
+    return {
+      type: "html_error",
+      raw: line,
+      error: "Rich frame embed requires a path or src",
+    };
+  }
+
+  return {
+    type: "frame",
+    raw: line,
+    directive: {
+      path: rawPath.trim(),
+      title: parsed.title?.trim() || undefined,
+      height: parsed.height?.trim() || undefined,
+      aspectRatio: parsed.aspectratio?.trim() || parsed["aspect-ratio"]?.trim() || undefined,
+      kind: normalizeFrameKind(parsed.kind),
+      chrome: parsed.chrome === "true",
+    },
+  };
+}
+
+function collectHtmlFence(
+  lines: string[],
+  startIndex: number,
+): { html: string; raw: string; endIndex: number } | null {
+  let fenceIndex = startIndex;
+  while (fenceIndex < lines.length && lines[fenceIndex].trim().length === 0) {
+    fenceIndex += 1;
+  }
+  if (fenceIndex >= lines.length || !HTML_FENCE_START_REGEX.test(lines[fenceIndex])) return null;
+
+  const htmlLines: string[] = [];
+  let endIndex = fenceIndex + 1;
+  while (endIndex < lines.length && !FENCE_END_REGEX.test(lines[endIndex])) {
+    htmlLines.push(lines[endIndex]);
+    endIndex += 1;
+  }
+  if (endIndex >= lines.length) return null;
+
+  return {
+    html: htmlLines.join("\n"),
+    raw: lines.slice(startIndex, endIndex + 1).join("\n"),
+    endIndex,
+  };
 }
 
 function parseVideoDirective(line: string): MessageSegment {
@@ -256,6 +364,76 @@ function parseHtmlDirective(line: string): MessageSegment {
   };
 }
 
+function parseFrameDirective(
+  line: string,
+  options: { requirePath?: boolean } = {},
+): MessageSegment {
+  const match = line.match(FRAME_DIRECTIVE_LINE_REGEX);
+  if (!match) {
+    return { type: "markdown", content: line };
+  }
+
+  const requirePath = options.requirePath !== false;
+  const attrs = match[1];
+  const parsed: Partial<FrameDirective> = {};
+  const seenKeys = new Set<string>();
+  let attrMatch: RegExpExecArray | null;
+
+  DIRECTIVE_ATTR_REGEX.lastIndex = 0;
+  while ((attrMatch = DIRECTIVE_ATTR_REGEX.exec(attrs)) !== null) {
+    const key = attrMatch[1];
+    const rawValue = attrMatch[2];
+    seenKeys.add(key);
+
+    if (rawValue === "true" || rawValue === "false") {
+      if (key === "chrome") {
+        parsed.chrome = rawValue === "true";
+        continue;
+      }
+      return {
+        type: "html_error",
+        raw: line,
+        error: `Frame embed boolean attribute is not supported: ${key}`,
+      };
+    }
+
+    (parsed as Record<string, unknown>)[key] = decodeQuotedValue(rawValue);
+  }
+
+  const unmatched = attrs.replace(DIRECTIVE_ATTR_REGEX, "").trim();
+  if (unmatched.length > 0) {
+    return {
+      type: "html_error",
+      raw: line,
+      error: "Invalid frame directive syntax",
+    };
+  }
+
+  if (
+    requirePath &&
+    (!seenKeys.has("path") || typeof parsed.path !== "string" || parsed.path.trim().length === 0)
+  ) {
+    return {
+      type: "html_error",
+      raw: line,
+      error: "Frame embed requires a path",
+    };
+  }
+
+  return {
+    type: "frame",
+    raw: line,
+    directive: {
+      path: typeof parsed.path === "string" ? parsed.path.trim() : undefined,
+      title: typeof parsed.title === "string" ? parsed.title.trim() : undefined,
+      height: typeof parsed.height === "string" ? parsed.height.trim() : undefined,
+      aspectRatio: typeof parsed.aspectRatio === "string" ? parsed.aspectRatio.trim() : undefined,
+      kind: normalizeFrameKind(parsed.kind),
+      chrome: parsed.chrome === true,
+    },
+  };
+}
+
 function getRenderableHtmlTitle(html: string): string | undefined {
   const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
   const title = titleMatch?.[1]
@@ -353,6 +531,43 @@ export function parseAssistantMessageSegments(message: string): MessageSegment[]
       }
       continue;
     }
+    if (line.trimStart().startsWith("::frame{")) {
+      flushMarkdown();
+      const htmlFence = collectHtmlFence(lines, lineIndex + 1);
+      const parsed = parseFrameDirective(line, { requirePath: !htmlFence });
+      if (parsed.type === "markdown") {
+        markdownBuffer.push(line);
+      } else {
+        if (parsed.type === "frame" && htmlFence) {
+          segments.push({
+            type: "frame_source",
+            html: htmlFence.html,
+            directive: {
+              ...parsed.directive,
+              title: parsed.directive.title || getRenderableHtmlTitle(htmlFence.html),
+            },
+            raw: `${line}\n${htmlFence.raw}`,
+          });
+          lineIndex = htmlFence.endIndex;
+        } else {
+          segments.push(parsed);
+        }
+      }
+      continue;
+    }
+    if (line.trimStart().toLowerCase().startsWith("<rich-frame")) {
+      flushMarkdown();
+      const parsed = parseRichFrameTagDirective(line);
+      if (parsed.type === "markdown") {
+        markdownBuffer.push(line);
+      } else {
+        segments.push(parsed);
+        if (lineIndex + 1 < lines.length && RICH_FRAME_CLOSE_LINE_REGEX.test(lines[lineIndex + 1])) {
+          lineIndex += 1;
+        }
+      }
+      continue;
+    }
     markdownBuffer.push(line);
   }
 
@@ -419,15 +634,34 @@ export function AssistantMessageContent({
           );
         }
 
+        if (segment.type === "frame_source") {
+          return (
+            <div
+              key={`frame-source-${index}`}
+              className={`assistant-rich-frame-embed assistant-rich-frame-${segment.directive.kind || "custom"}`}
+            >
+              <InlineHtmlSourcePreview
+                htmlContent={segment.html}
+                title={segment.directive.title}
+                className="inline-html-preview-embedded"
+                variant="frame"
+                frameHeight={segment.directive.height}
+                aspectRatio={segment.directive.aspectRatio}
+                showChrome={segment.directive.chrome}
+              />
+            </div>
+          );
+        }
+
         if (!workspacePath) {
           return (
             <div
               key={`directive-missing-workspace-${index}`}
-              className={segment.type === "html" ? "assistant-html-error" : "assistant-video-error"}
+              className={segment.type === "video" ? "assistant-video-error" : "assistant-html-error"}
             >
-              {segment.type === "html"
-                ? "HTML embeds require a workspace-backed file."
-                : "Video embeds require a workspace-backed file."}
+              {segment.type === "video"
+                ? "Video embeds require a workspace-backed file."
+                : "HTML embeds require a workspace-backed file."}
             </div>
           );
         }
@@ -441,6 +675,35 @@ export function AssistantMessageContent({
                 title={segment.directive.title}
                 onOpenViewer={onOpenViewer}
                 className="inline-html-preview-embedded"
+              />
+            </div>
+          );
+        }
+
+        if (segment.type === "frame") {
+          if (!segment.directive.path) {
+            return (
+              <div key={`frame-missing-path-${index}`} className="assistant-html-error">
+                Frame embeds require a workspace-backed file.
+              </div>
+            );
+          }
+
+          return (
+            <div
+              key={`frame-${index}`}
+              className={`assistant-rich-frame-embed assistant-rich-frame-${segment.directive.kind || "custom"}`}
+            >
+              <InlineHtmlPreview
+                filePath={segment.directive.path}
+                workspacePath={workspacePath}
+                title={segment.directive.title}
+                onOpenViewer={onOpenViewer}
+                className="inline-html-preview-embedded"
+                variant="frame"
+                frameHeight={segment.directive.height}
+                aspectRatio={segment.directive.aspectRatio}
+                showChrome={segment.directive.chrome}
               />
             </div>
           );
