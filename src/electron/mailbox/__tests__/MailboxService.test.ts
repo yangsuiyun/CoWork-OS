@@ -1661,6 +1661,99 @@ describeWithSqlite("MailboxService", () => {
     }
   });
 
+  it("syncs Microsoft Graph mail with read/write scopes instead of send scope", async () => {
+    db.prepare(
+      `INSERT INTO mailbox_accounts
+        (id, provider, address, display_name, status, capabilities_json, sync_cursor, classification_initial_batch_at, last_synced_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "outlook-graph:mfelat@msn.com",
+      "outlook_graph",
+      "mfelat@msn.com",
+      "mfelat@msn.com",
+      "connected",
+      JSON.stringify(["sync", "provider_search", "mark_read", "mark_unread"]),
+      null,
+      now,
+      now,
+      now,
+      now,
+    );
+    db.prepare(
+      `INSERT INTO mailbox_threads
+        (id, account_id, provider_thread_id, provider, subject, snippet, participants_json, labels_json, category, priority_score, urgency_score, needs_reply, stale_followup, cleanup_candidate, handled, unread_count, message_count, last_message_at, last_synced_at, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "outlook-graph-thread:junk-conv",
+      "outlook-graph:mfelat@msn.com",
+      "junk-conv",
+      "outlook_graph",
+      "Junk",
+      "Spam",
+      JSON.stringify([{ email: "spam@example.com", name: "Spam" }]),
+      JSON.stringify([]),
+      "other",
+      5,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      now,
+      now,
+      JSON.stringify({}),
+      now,
+      now,
+    );
+    const graphRequestSpy = vi
+      .spyOn(service as Any, "microsoftGraphRequest")
+      .mockImplementation(async (_channelId: string, options: Any) => {
+        if (options.path === "/me/mailFolders") {
+          return { value: [] };
+        }
+        if (options.path === "/me/mailFolders/inbox/messages") {
+          return { value: [] };
+        }
+        if (options.path === "/me/mailFolders/junkemail/messages") {
+          return { value: [{ id: "junk-message", conversationId: "junk-conv" }] };
+        }
+        throw new Error(`Unexpected Graph path: ${options.path}`);
+      });
+
+    try {
+      await (service as Any).syncMicrosoftGraphEmailChannel(
+        "email-channel",
+        {
+          authMethod: "oauth",
+          oauthProvider: "microsoft",
+          email: "mfelat@msn.com",
+          displayName: "mfelat@msn.com",
+        },
+        25,
+      );
+
+      const syncCalls = graphRequestSpy.mock.calls
+        .map((call) => call[1] as Any)
+        .filter((options) => options.path === "/me/mailFolders/inbox/messages");
+      expect(syncCalls).toHaveLength(2);
+      for (const options of syncCalls) {
+        expect(options.scopes).toEqual(MICROSOFT_EMAIL_GRAPH_READWRITE_SCOPES);
+        expect(options.scopes).not.toContain("https://graph.microsoft.com/Mail.Send");
+      }
+      expect(graphRequestSpy.mock.calls.map((call) => (call[1] as Any).path)).not.toContain(
+        "/me/messages",
+      );
+      const junkRow = db
+        .prepare("SELECT local_inbox_hidden FROM mailbox_threads WHERE id = ?")
+        .get("outlook-graph-thread:junk-conv") as { local_inbox_hidden: number };
+      expect(junkRow.local_inbox_hidden).toBe(1);
+    } finally {
+      graphRequestSpy.mockRestore();
+    }
+  });
+
   it("preserves local read state for the same IMAP message on later sync", async () => {
     db.prepare(
       `INSERT INTO mailbox_accounts
@@ -1991,7 +2084,7 @@ describeWithSqlite("MailboxService", () => {
     }
   });
 
-  it("uses gpt-5.4-mini for ChatGPT subscription mailbox classifications without a cheap profile", async () => {
+  it("uses the configured cheap profile model for ChatGPT subscription mailbox classifications", async () => {
     const factoryModule = await import("../../agent/llm/provider-factory");
     const loadSettingsSpy = vi.spyOn(factoryModule.LLMProviderFactory, "loadSettings").mockReturnValue({
       providerType: "openai",
@@ -2001,6 +2094,9 @@ describeWithSqlite("MailboxService", () => {
         accessToken: "access-token",
         refreshToken: "refresh-token",
         model: "gpt-5.5",
+        profileRoutingEnabled: true,
+        strongModelKey: "gpt-5.5",
+        cheapModelKey: "gpt-5.4-mini",
       },
     } as never);
     const createMessage = vi.fn(async () => ({
@@ -2034,6 +2130,10 @@ describeWithSqlite("MailboxService", () => {
     try {
       const result = await service.reclassifyThread("gmail-thread:alpha");
       expect(result.reclassifiedThreads).toBe(1);
+      expect(createProviderSpy).toHaveBeenCalledWith(expect.objectContaining({
+        type: "openai",
+        model: "gpt-5.4-mini",
+      }));
       expect(createMessage).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-5.4-mini" }));
 
       const row = db
@@ -2324,6 +2424,49 @@ describeWithSqlite("MailboxService", () => {
       syncGmailSpy.mockRestore();
       loadSettingsSpy.mockRestore();
     }
+  });
+
+  it("hides stale IMAP account records when a Microsoft Graph account exists for the same address", async () => {
+    db.prepare(
+      `INSERT INTO mailbox_accounts
+        (id, provider, address, display_name, status, capabilities_json, sync_cursor, last_synced_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "imap:mfelat@msn.com",
+      "imap",
+      "mfelat@msn.com",
+      "mfelat@msn.com",
+      "connected",
+      JSON.stringify(["send", "mark_read"]),
+      null,
+      now - 5 * 24 * 60 * 60 * 1000,
+      now,
+      now - 5 * 24 * 60 * 60 * 1000,
+    );
+    db.prepare(
+      `INSERT INTO mailbox_accounts
+        (id, provider, address, display_name, status, capabilities_json, sync_cursor, last_synced_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "outlook-graph:mfelat@msn.com",
+      "outlook_graph",
+      "mfelat@msn.com",
+      "mfelat@msn.com",
+      "connected",
+      JSON.stringify(["sync", "provider_search", "mark_read", "mark_unread"]),
+      null,
+      now,
+      now,
+      now + 1,
+    );
+
+    const status = await service.getSyncStatus();
+
+    expect(status.accounts.map((account) => account.id)).toEqual([
+      "outlook-graph:mfelat@msn.com",
+      "gmail:test@example.com",
+    ]);
+    expect(status.statusLabel).toContain("2 accounts synced");
   });
 
   it("downgrades transient Gmail fetch failures without throwing mailbox sync", async () => {
