@@ -7,7 +7,6 @@ import {
   useCallback,
   useMemo,
   Fragment,
-  Children,
   lazy,
   Suspense,
   startTransition,
@@ -73,6 +72,7 @@ import {
   type LegalDemandIntakeFormValues,
   type LegalWorkflowInvocation,
 } from "../utils/legal-demand-intake";
+import { deriveSlashCommandTaskTitle } from "../utils/slash-command-title";
 import {
   LLM_WIKI_AUDIT_GUI_PROMPT,
   LLM_WIKI_BRIEF_GUI_PROMPT,
@@ -138,7 +138,12 @@ import {
   measureRendererPerf,
   recordRendererRender,
 } from "../utils/renderer-perf";
-import { autolinkBareDomains } from "../utils/markdown-autolink";
+import {
+  autolinkBareDomains,
+  autolinkBareUrls,
+  autolinkUrlsInBrackets,
+} from "../utils/markdown-autolink";
+import { areIntegrationMentionOptionsEqual } from "../utils/integration-mention-options";
 import {
   ATTACHMENT_CONTENT_END_MARKER,
   ATTACHMENT_CONTENT_START_MARKER,
@@ -172,6 +177,7 @@ import {
   FileText,
   Folder,
   GitFork,
+  Globe,
   Link as LinkIcon,
   Loader2,
   MessageCircle,
@@ -203,7 +209,6 @@ import { SpreadsheetArtifactCard } from "./SpreadsheetArtifactCard";
 import { DocumentArtifactCard } from "./DocumentArtifactCard";
 import { PresentationArtifactCard } from "./PresentationArtifactCard";
 import { WebArtifactCard } from "./WebArtifactCard";
-import { MarkdownImagePreview } from "./MarkdownImagePreview";
 import { ReplayControlsBar } from "./ReplayControls";
 import { DebugSessionPanel } from "./DebugSessionPanel";
 import { TaskPauseBanner } from "./TaskPauseBanner";
@@ -219,6 +224,11 @@ import {
   IntegrationMentionText,
   hasRenderableIntegrationMentions,
 } from "./IntegrationMentionText";
+import {
+  buildMarkdownComponents,
+  MermaidDiagram,
+  normalizeCodeBlockTextForDisplay,
+} from "./markdown-components";
 import type { ReplayControls } from "../hooks/useReplayMode";
 import { useVirtualList } from "../hooks/useVirtualList";
 import { useTaskDuration } from "../hooks/useTaskDuration";
@@ -245,9 +255,6 @@ const COLLAPSED_USER_BUBBLE_MIN_HEIGHT = 96;
 
 const LazyMarkdownRenderer = lazy(() =>
   import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer })),
-);
-const LazyHighlightedCodeBlock = lazy(() =>
-  import("./HighlightedCode").then((module) => ({ default: module.HighlightedCodeBlock })),
 );
 const LazyHighlightedCodePreview = lazy(() =>
   import("./HighlightedCode").then((module) => ({ default: module.HighlightedCodePreview })),
@@ -280,12 +287,18 @@ type WelcomeTaskSuggestionModule =
   | "Inbox"
   | "Project";
 
+type WelcomeTaskSuggestionAction =
+  | { type: "prompt"; prompt: string }
+  | { type: "task"; taskId: string; focus: "input_request" }
+  | { type: "settings"; tab: SettingsTab }
+  | { type: "url"; url: string };
+
 interface WelcomeTaskSuggestion {
   id: string;
   title: string;
   description?: string;
   whyNow: string;
-  prompt: string;
+  action: WelcomeTaskSuggestionAction;
   confidence?: number;
   evidence?: string[];
   source: WelcomeTaskSuggestionSource;
@@ -394,6 +407,67 @@ function buildEvidencePrompt(args: {
   return `${args.opening}\n\nRemembered context:\n${evidenceLines}\n\n${args.instruction}`;
 }
 
+function extractFirstUrl(value: string): string | null {
+  const match = value.match(/\bhttps?:\/\/[^\s<>"')\]]+/i);
+  return match ? match[0] : null;
+}
+
+function resolveSettingsActionFromSuggestionText(value: string): SettingsTab | null {
+  const text = normalizeSuggestionText(value).toLowerCase();
+  if (!text) return null;
+  const setupIntent = /\b(enable|turn on|connect|configure|set up|setup|setting|settings|permission|authorize|login|log in|sign in)\b/.test(
+    text,
+  );
+  if (!setupIntent) return null;
+  if (/\b(model|llm|provider|api key|openai|anthropic|ollama|gemini)\b/.test(text)) return "llm";
+  if (/\b(search|web search|browser search)\b/.test(text)) return "search";
+  if (/\b(skill|skills)\b/.test(text)) return "skills";
+  if (/\b(queue|queued|concurrency)\b/.test(text)) return "queue";
+  if (/\b(schedule|scheduled|automation|automations|recurring|cron)\b/.test(text)) return "scheduled";
+  if (/\b(mcp|connector|connectors|integration|integrations|gmail|calendar|drive|github)\b/.test(text)) {
+    return "integrations";
+  }
+  if (/\b(slack|telegram|whatsapp|teams)\b/.test(text)) return "morechannels";
+  if (/\b(voice|microphone|speech)\b/.test(text)) return "voice";
+  if (/\b(update|updates)\b/.test(text)) return "updates";
+  return /\b(setting|settings|permission|enable|turn on|configure)\b/.test(text) ? "system" : null;
+}
+
+function buildSuggestionAction(args: {
+  title?: string;
+  description?: string;
+  prompt: string;
+}): WelcomeTaskSuggestionAction {
+  const actionText = [args.title, args.description, args.prompt].filter(Boolean).join(" ");
+  const url = extractFirstUrl(actionText);
+  if (url && /\b(click|open|visit|go to|log in|login|sign in|confirm|paste)\b/i.test(actionText)) {
+    return { type: "url", url };
+  }
+  const settingsTab = resolveSettingsActionFromSuggestionText(
+    actionText,
+  );
+  if (settingsTab) return { type: "settings", tab: settingsTab };
+  return { type: "prompt", prompt: args.prompt };
+}
+
+function labelForWelcomeAction(action: WelcomeTaskSuggestionAction): string {
+  if (action.type === "task") return "Needs response";
+  if (action.type === "settings") return "Setting";
+  if (action.type === "url") return "Link";
+  return "Ask CoWork";
+}
+
+function iconForWelcomeAction(
+  suggestion: WelcomeTaskSuggestion,
+): LucideIcon {
+  if (suggestion.action.type === "task") return Clock;
+  if (suggestion.action.type === "settings") return Settings;
+  if (suggestion.action.type === "url") return LinkIcon;
+  if (suggestion.source === "memory") return ListTodo;
+  if (suggestion.source === "insight") return Sparkles;
+  return MessageCircle;
+}
+
 function formatWelcomeModules(modules: WelcomeTaskSuggestionModule[]): WelcomeTaskSuggestionModule[] {
   return Array.from(new Set(modules)).slice(0, 3);
 }
@@ -444,7 +518,7 @@ function buildHeartbeatWelcomeSuggestion(
     title: truncateSuggestionText(title),
     description: truncateSuggestionText(suggestion.description, 120),
     whyNow: whyNowForProactiveSuggestion(suggestion),
-    prompt,
+    action: buildSuggestionAction({ title, description: suggestion.description, prompt }),
     confidence: suggestion.confidence,
     evidence: suggestion.sourceSignals,
     source: "heartbeat",
@@ -486,7 +560,7 @@ function buildCompanionNotificationWelcomeSuggestion(
     whyNow: isNudge
       ? "Workflow Intelligence sent this as a timely nudge."
       : "A recent companion signal is waiting in the automation inbox.",
-    prompt,
+    action: buildSuggestionAction({ title, description: message, prompt }),
     confidence: matchingSuggestion?.confidence ?? (isNudge ? 0.82 : 0.68),
     evidence: message ? [message] : undefined,
     source: "heartbeat",
@@ -521,7 +595,11 @@ function buildMemoryCommitmentSuggestion(
     title: truncateSuggestionText(text),
     description: dueText.trim() || "Open commitment",
     whyNow: dueText.trim() || "Memory has this as an open commitment.",
-    prompt: `Help me make progress on this commitment: ${text}.${dueText} Start by identifying the next concrete action and any message or artifact I should prepare.`,
+    action: buildSuggestionAction({
+      title: text,
+      description: dueText.trim() || "Open commitment",
+      prompt: `Help me make progress on this commitment: ${text}.${dueText} Start by identifying the next concrete action and any message or artifact I should prepare.`,
+    }),
     source: "memory",
     modules: ["Memory"],
     priority: 260 - index,
@@ -562,12 +640,15 @@ function buildProfileWelcomeSuggestion(
     title: "Use memory to choose the next priority",
     description: truncateSuggestionText(evidence[0], 120),
     whyNow: `${evidence.length} remembered signals can narrow what to do next.`,
-    prompt: buildEvidencePrompt({
-      opening: "Use the remembered context below to recommend the best next task for me.",
-      evidence,
-      instruction:
-        "Give me 3 concrete options that directly reference this context, explain the tradeoffs, and recommend one. Do not start the task or ask whether to proceed; end with the recommendation so I can choose in a follow-up. If the context is not enough, ask one focused clarifying question instead of giving generic advice.",
-    }),
+    action: {
+      type: "prompt",
+      prompt: buildEvidencePrompt({
+        opening: "Use the remembered context below to recommend the best next task for me.",
+        evidence,
+        instruction:
+          "Give me 3 concrete options that directly reference this context, explain the tradeoffs, and recommend one. Do not start the task or ask whether to proceed; end with the recommendation so I can choose in a follow-up. If the context is not enough, ask one focused clarifying question instead of giving generic advice.",
+      }),
+    },
     evidence,
     source: "memory",
     modules: recentSignals.length ? ["Memory", "Recent work"] : ["Memory"],
@@ -587,17 +668,44 @@ function buildRecentMemorySuggestion(item: unknown, index: number): WelcomeTaskS
     title: "Pick up a recent thread",
     description: truncateSuggestionText(text, 120),
     whyNow: "Recent work left context that may be worth continuing.",
-    prompt: buildEvidencePrompt({
-      opening: "Pick up from this recent memory and suggest the most useful next step.",
-      evidence,
-      instruction:
-        "Explain why this is the right next step and name any tradeoffs. Do not start the task or ask whether to proceed; end with the recommendation so I can choose in a follow-up.",
-    }),
+    action: {
+      type: "prompt",
+      prompt: buildEvidencePrompt({
+        opening: "Pick up from this recent memory and suggest the most useful next step.",
+        evidence,
+        instruction:
+          "Explain why this is the right next step and name any tradeoffs. Do not start the task or ask whether to proceed; end with the recommendation so I can choose in a follow-up.",
+      }),
+    },
     evidence,
     source: "memory",
     modules: ["Memory", "Recent work"],
     priority: 90 - index,
     createdAt: getRecordNumber(record, ["updatedAt", "createdAt"]),
+  };
+}
+
+function buildInputRequestWelcomeSuggestion(
+  request: InputRequest,
+  index: number,
+): WelcomeTaskSuggestion | null {
+  if (request.status !== "pending") return null;
+  const firstQuestion = request.questions[0];
+  const questionText = normalizeSuggestionText(firstQuestion?.question || firstQuestion?.header);
+  const title = questionText
+    ? truncateSuggestionText(questionText, 96)
+    : "Answer a waiting task";
+  return {
+    id: `input-request:${request.id}`,
+    title,
+    description: `${request.questions.length} question${request.questions.length === 1 ? "" : "s"} waiting`,
+    whyNow: "An automated task is paused until you respond.",
+    action: { type: "task", taskId: request.taskId, focus: "input_request" },
+    evidence: questionText ? [questionText] : undefined,
+    source: "heartbeat",
+    modules: ["Heartbeat", "Recent work"],
+    priority: 390 - index,
+    createdAt: request.requestedAt,
   };
 }
 
@@ -626,6 +734,10 @@ const END_OF_TASK_ARTIFACT_KINDS = new Set<GeneratedInlinePreviewKind>([
   "presentation",
   "document",
 ]);
+const END_OF_TASK_ARTIFACT_COLLAPSED_LIMIT = 5;
+const END_OF_TASK_ARTIFACT_CARD_ESTIMATED_HEIGHT = 86;
+const END_OF_TASK_ARTIFACT_STACK_CHROME_ESTIMATED_HEIGHT = 28;
+const END_OF_TASK_ARTIFACT_SHOW_MORE_ESTIMATED_HEIGHT = 48;
 
 export interface EndOfTaskArtifactCard {
   path: string;
@@ -635,8 +747,37 @@ export interface EndOfTaskArtifactCard {
   lastReferenceTimestamp: number;
 }
 
+export function getVisibleEndOfTaskArtifactCards(
+  artifacts: EndOfTaskArtifactCard[],
+  expanded: boolean,
+): { visibleArtifacts: EndOfTaskArtifactCard[]; hiddenCount: number } {
+  if (expanded || artifacts.length <= END_OF_TASK_ARTIFACT_COLLAPSED_LIMIT) {
+    return { visibleArtifacts: artifacts, hiddenCount: 0 };
+  }
+
+  return {
+    visibleArtifacts: artifacts.slice(0, END_OF_TASK_ARTIFACT_COLLAPSED_LIMIT),
+    hiddenCount: artifacts.length - END_OF_TASK_ARTIFACT_COLLAPSED_LIMIT,
+  };
+}
+
+function estimateEndOfTaskArtifactStackHeight(
+  artifacts: EndOfTaskArtifactCard[],
+  expanded: boolean,
+): number {
+  const { visibleArtifacts, hiddenCount } = getVisibleEndOfTaskArtifactCards(
+    artifacts,
+    expanded,
+  );
+  return (
+    END_OF_TASK_ARTIFACT_STACK_CHROME_ESTIMATED_HEIGHT +
+    visibleArtifacts.length * END_OF_TASK_ARTIFACT_CARD_ESTIMATED_HEIGHT +
+    (hiddenCount > 0 ? END_OF_TASK_ARTIFACT_SHOW_MORE_ESTIMATED_HEIGHT : 0)
+  );
+}
+
 const GENERATED_ARTIFACT_LINK_EXTENSIONS =
-  "html?|xlsx?|xlsm|xlsb|csv|tsv|ods|numbers|gsheet|docx|docm|dotx|dotm|doc|rtf|odt|ott|pages|pptx|pptm?|potx|potm|ppsx|ppsm";
+  "html?|xlsx?|xlsm|xlsb|csv|tsv|ods|numbers|gsheet|md|markdown|docx|docm|dotx|dotm|doc|rtf|odt|ott|pages|pptx|pptm?|potx|potm|ppsx|ppsm";
 
 const GENERATED_ARTIFACT_LINK_RE = new RegExp(
   "`([^`\\r\\n]+\\.(?:" +
@@ -692,6 +833,7 @@ export function getInlinePreviewKindForGeneratedFile(args: {
   if (
     fileType === "document" ||
     fileType === "docx" ||
+    fileType === "markdown" ||
     isWordDocumentMimeType(mimeType) ||
     isWordDocumentArtifactFile(filePath)
   ) {
@@ -1062,12 +1204,55 @@ const getAssistantOrCompletionText = (event: TaskEvent | null | undefined): stri
 };
 
 const buildTaskTitle = (text: string): string => {
-  const trimmed = text.trim();
+  const trimmed = deriveSlashCommandTaskTitle(text) || text.trim();
   if (trimmed.length <= TASK_TITLE_MAX_LENGTH) {
     return trimmed;
   }
   return `${trimmed.slice(0, TASK_TITLE_MAX_LENGTH)}...`;
 };
+
+function normalizeInitialPromptText(text: string): string {
+  return stripStrategyContextBlock(stripPptxBubbleContent(text))
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
+function getUserEventDisplayMessage(event: TaskEvent): string {
+  return typeof event.payload?.message === "string"
+    ? normalizeInitialPromptText(event.payload.message)
+    : "";
+}
+
+export function shouldSuppressInitialPromptUserEvent(params: {
+  event: TaskEvent;
+  initialPromptEventId: string | null;
+  trimmedPrompt: string;
+  taskCreatedAt?: number | null;
+}): boolean {
+  const { event, initialPromptEventId, trimmedPrompt, taskCreatedAt } = params;
+  if (getEffectiveTaskEventType(event) !== "user_message") return false;
+  if (initialPromptEventId && event.id === initialPromptEventId) return true;
+
+  const promptText = normalizeInitialPromptText(trimmedPrompt);
+  if (!promptText) return false;
+
+  const eventText = getUserEventDisplayMessage(event);
+  if (!eventText) return false;
+
+  const matchesPrompt = eventText === promptText || eventText.startsWith(promptText);
+  if (!matchesPrompt) return false;
+
+  if (typeof taskCreatedAt !== "number" || !Number.isFinite(taskCreatedAt) || taskCreatedAt <= 0) {
+    return true;
+  }
+
+  const eventTimestamp =
+    typeof event.timestamp === "number" && Number.isFinite(event.timestamp)
+      ? event.timestamp
+      : taskCreatedAt;
+  return eventTimestamp >= taskCreatedAt - 5_000 && eventTimestamp <= taskCreatedAt + 60_000;
+}
 
 export function deriveTaskHeaderPresentation(task?: {
   title?: string | null;
@@ -1091,7 +1276,7 @@ export function deriveTaskHeaderPresentation(task?: {
           ? task.prompt
           : "";
   const cleanedDisplayPromptValue = displayPromptValue
-    ? stripStrategyContextBlock(stripPptxBubbleContent(displayPromptValue))
+    ? normalizeInitialPromptText(displayPromptValue)
     : "";
   const trimmedPromptValue = cleanedDisplayPromptValue.trim();
   const promptAttachmentNamesValue = displayPromptValue ? extractAttachmentNames(displayPromptValue) : [];
@@ -1284,7 +1469,6 @@ import {
   UsersIcon,
   ZapIcon,
 } from "./LineIcons";
-import { getEmojiIcon } from "../utils/emoji-icon-map";
 
 const INBOX_AGENT_MENTION_ID = "builtin:inbox-agent";
 
@@ -1324,7 +1508,6 @@ function getIntegrationMentionSearchRank(
   return 4;
 }
 import { replaceEmojisInChildren } from "../utils/emoji-replacer";
-import { CitationBadge } from "./CitationPanel";
 import { CommandOutput } from "./CommandOutput";
 import { CanvasPreview } from "./CanvasPreview";
 import { InlineImagePreview } from "./InlineImagePreview";
@@ -1346,181 +1529,6 @@ import {
 } from "../utils/markdown-inline-lists";
 import { resolveDisclosureExpanded } from "../utils/disclosure-state";
 import { findLatexPdfPair } from "../utils/latex-artifacts";
-
-// Mermaid diagram component — theme-aware init for reliable text visibility
-let mermaidLastTheme: boolean | null = null;
-let mermaidApiPromise: Promise<typeof import("mermaid").default> | null = null;
-
-function loadMermaid() {
-  mermaidApiPromise ??= import("mermaid").then((module) => module.default);
-  return mermaidApiPromise;
-}
-
-// Reset when theme changes so next diagram render picks up new theme
-if (typeof document !== "undefined") {
-  const observer = new MutationObserver(() => {
-    const isDark = !document.documentElement.classList.contains("theme-light");
-    if (mermaidLastTheme !== null && mermaidLastTheme !== isDark) {
-      mermaidLastTheme = null;
-    }
-  });
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ["class"],
-  });
-}
-
-function initMermaid(mermaid: typeof import("mermaid").default) {
-  const isDark = !document.documentElement.classList.contains("theme-light");
-  if (mermaidLastTheme === isDark) return;
-  mermaidLastTheme = isDark;
-
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: "strict",
-    htmlLabels: false,
-    theme: "base",
-    themeVariables: {
-      darkMode: isDark,
-      fontFamily: "system-ui, -apple-system, Segoe UI, sans-serif",
-      primaryTextColor: isDark ? "#e8e8e8" : "#333333",
-      primaryColor: isDark ? "#363754" : "#fff4dd",
-      primaryBorderColor: isDark ? "#4a4a6a" : "#e8dcc4",
-      lineColor: isDark ? "#6b6b8a" : "#333333",
-      secondaryColor: isDark ? "#454563" : "#f0e6d4",
-      tertiaryColor: isDark ? "#2d2d3a" : "#f5f5f5",
-      nodeTextColor: isDark ? "#e8e8e8" : "#333333",
-      textColor: isDark ? "#e8e8e8" : "#333333",
-      mainBkg: isDark ? "#363754" : "#fff4dd",
-      nodeBorder: isDark ? "#4a4a6a" : "#e8dcc4",
-      clusterBkg: isDark ? "#2d2d3a" : "#f5f5f5",
-      clusterBorder: isDark ? "#4a4a6a" : "#e0e0e0",
-      titleColor: isDark ? "#e8e8e8" : "#333333",
-      edgeLabelBackground: isDark ? "#363754" : "#fff4dd",
-    },
-  });
-}
-
-function sanitizeMermaidSvg(svgMarkup: string): SVGSVGElement | null {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(svgMarkup, "image/svg+xml");
-  const root = doc.documentElement;
-  if (!root || root.tagName.toLowerCase() !== "svg") {
-    return null;
-  }
-
-  for (const element of Array.from(root.querySelectorAll("*"))) {
-    const tagName = element.tagName.toLowerCase();
-    if (tagName === "script" || tagName === "foreignobject") {
-      element.remove();
-      continue;
-    }
-    for (const attr of Array.from(element.attributes)) {
-      const name = attr.name.toLowerCase();
-      const value = attr.value.trim();
-      if (name.startsWith("on")) {
-        element.removeAttribute(attr.name);
-        continue;
-      }
-      if ((name === "href" || name === "xlink:href") && /^javascript:/i.test(value)) {
-        element.removeAttribute(attr.name);
-      }
-    }
-  }
-
-  return root as unknown as SVGSVGElement;
-}
-
-function MermaidDiagram({ chart }: { chart: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [svg, setSvg] = useState<string | null>(null);
-  const idRef = useRef(`mermaid-${Math.random().toString(36).slice(2)}`);
-  const [themeKey, setThemeKey] = useState(() =>
-    document.documentElement.classList.contains("theme-light") ? "light" : "dark",
-  );
-
-  useLayoutEffect(() => {
-    const observer = new MutationObserver(() => {
-      const next =
-        document.documentElement.classList.contains("theme-light") ? "light" : "dark";
-      setThemeKey((prev) => (prev === next ? prev : next));
-    });
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-    return () => observer.disconnect();
-  }, []);
-
-  useLayoutEffect(() => {
-    let cancelled = false;
-    setError(null);
-    setSvg(null);
-
-    loadMermaid()
-      .then((mermaid) => {
-        if (cancelled) return null;
-        initMermaid(mermaid);
-        return mermaid.render(idRef.current, chart);
-      })
-      .then((result) => {
-        if (!cancelled && result?.svg) setSvg(result.svg);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err?.message || "Failed to render diagram");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [chart, themeKey]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    container.replaceChildren();
-    if (!svg) return;
-    const sanitizedSvg = sanitizeMermaidSvg(svg);
-    if (!sanitizedSvg) {
-      setError("Failed to render diagram");
-      return;
-    }
-    container.appendChild(document.importNode(sanitizedSvg, true));
-  }, [svg]);
-
-  if (error) {
-    return (
-      <div className="mermaid-error">
-        <span>Diagram error: {error}</span>
-      </div>
-    );
-  }
-
-  return (
-    svg ? (
-      <div className="mermaid-diagram" ref={containerRef} />
-    ) : (
-      <div className="mermaid-diagram">
-        <span className="mermaid-loading">Rendering diagram…</span>
-      </div>
-    )
-  );
-}
-
-// Code block component with copy button
-interface CodeBlockProps {
-  children?: React.ReactNode;
-  className?: string;
-  node?: unknown;
-}
-
-export function normalizeCodeBlockTextForDisplay(codeText: string, language?: string): string {
-  const normalizedLanguage = (language || "").toLowerCase();
-  if (normalizedLanguage !== "diff" && normalizedLanguage !== "patch") {
-    return codeText;
-  }
-  return codeText.replace(/(?:\r?\n[ \t]*)+$/g, "");
-}
 
 export function resolveSafeCollapsedBubbleHeight(
   lineBottoms: number[],
@@ -1561,106 +1569,6 @@ function collectTextLineBottoms(root: HTMLElement): number[] {
 
 function getSafeCollapsedUserBubbleHeight(root: HTMLElement): number {
   return resolveSafeCollapsedBubbleHeight(collectTextLineBottoms(root));
-}
-
-function CodeBlock({ children, className, ...props }: CodeBlockProps) {
-  const [copied, setCopied] = useState(false);
-
-  // Check if this is a code block (has language class) vs inline code
-  const languageMatch = /(?:^|\s)language-([^\s]+)/.exec(className || "");
-  const isCodeBlock = Boolean(languageMatch);
-  const language = languageMatch?.[1] || "";
-
-  // Get the text content for copying
-  const getTextContent = (node: React.ReactNode): string => {
-    if (typeof node === "string") return node;
-    if (Array.isArray(node)) return node.map(getTextContent).join("");
-    if (node && typeof node === "object" && "props" in node) {
-      return getTextContent((node as { props: { children?: React.ReactNode } }).props.children);
-    }
-    return "";
-  };
-
-  const rawCodeText = isCodeBlock ? getTextContent(children) : "";
-  const displayCodeText = normalizeCodeBlockTextForDisplay(rawCodeText, language);
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(displayCodeText);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error("Failed to copy:", err);
-    }
-  };
-
-  // For inline code, just render normally
-  if (!isCodeBlock) {
-    return (
-      <code className={className} {...props}>
-        {children}
-      </code>
-    );
-  }
-
-  // Render mermaid diagrams inline
-  if (language === "mermaid") {
-    return <MermaidDiagram chart={rawCodeText} />;
-  }
-
-  // For code blocks, wrap with copy button
-  return (
-    <div className="code-block-wrapper">
-      <div className="code-block-header">
-        {language && <span className="code-block-language">{language}</span>}
-        <button
-          className={`code-block-copy ${copied ? "copied" : ""}`}
-          onClick={handleCopy}
-          title={copied ? "Copied!" : "Copy code"}
-        >
-          {copied ? (
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="M20 6L9 17l-5-5" />
-            </svg>
-          ) : (
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-            </svg>
-          )}
-          <span>{copied ? "Copied!" : "Copy"}</span>
-        </button>
-      </div>
-      <Suspense
-        fallback={
-          <code className={className} {...props}>
-            {displayCodeText}
-          </code>
-        }
-      >
-        <LazyHighlightedCodeBlock
-          code={displayCodeText}
-          language={language}
-          className={className}
-          codeProps={props}
-        />
-      </Suspense>
-    </div>
-  );
 }
 
 function HighlightedCodePreview({ code, language }: { code: string; language?: string }) {
@@ -1993,8 +1901,6 @@ const MessageSpeakButton = memo(function MessageSpeakButton({
   );
 });
 
-const HEADING_EMOJI_REGEX = /^([\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}][\uFE0F\uFE0E]?)(\s+)?/u;
-
 const normalizeCommitmentText = (value: unknown): string | null => {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -2016,37 +1922,6 @@ const normalizeCommitmentText = (value: unknown): string | null => {
   const trimmed = textValue.trim();
   return trimmed.length > 0 ? trimmed : null;
 };
-
-const getHeadingIcon = (emoji: string): React.ReactNode => {
-  const Icon = getEmojiIcon(emoji);
-  return <Icon size={16} strokeWidth={1.8} />;
-};
-
-const renderHeading = (Tag: "h1" | "h2" | "h3") => {
-  return ({ children, ...props }: Any) => {
-    const nodes = Children.toArray(children);
-    if (typeof nodes[0] === "string") {
-      const match = (nodes[0] as string).match(HEADING_EMOJI_REGEX);
-      if (match) {
-        const emoji = match[1];
-        const icon = getHeadingIcon(emoji);
-        if (icon) {
-          nodes[0] = (nodes[0] as string).slice(match[0].length);
-          return (
-            <Tag {...props}>
-              <span className="markdown-heading-icon">{icon}</span>
-              {nodes}
-            </Tag>
-          );
-        }
-      }
-    }
-    return <Tag {...props}>{nodes}</Tag>;
-  };
-};
-
-const isExternalHttpLink = (href: string): boolean =>
-  href.startsWith("http://") || href.startsWith("https://");
 
 const FILE_EXTENSIONS = new Set([
   "txt",
@@ -2118,18 +1993,8 @@ const FILE_EXTENSIONS = new Set([
   "7z",
 ]);
 
-const getTextContent = (node: React.ReactNode): string => {
-  if (typeof node === "string") return node;
-  if (Array.isArray(node)) return node.map(getTextContent).join("");
-  if (node && typeof node === "object" && "props" in node) {
-    return getTextContent((node as { props: { children?: React.ReactNode } }).props.children);
-  }
-  return "";
-};
-
 const stripHttpScheme = (value: string): string => value.replace(/^https?:\/\//, "");
 const HTML_TAG_REGEX = /<[^>]*>/g;
-const URLISH_TEXT_REGEX = /^(?:https?:\/\/|www\.|(?:[a-z0-9-]+\.)+[a-z]{2,}\/)/i;
 const X_LINK_HOSTS = new Set(["x.com", "twitter.com"]);
 
 const stripHtmlTags = (value: string): string =>
@@ -2167,8 +2032,6 @@ export function isXComLink(raw: string): boolean {
   }
 }
 
-const isUrlLikeLabel = (value: string): boolean => URLISH_TEXT_REGEX.test(String(value || "").trim());
-
 const looksLikeLocalFilePath = (value: string): boolean => {
   const trimmed = value.trim();
   if (!trimmed) return false;
@@ -2191,58 +2054,6 @@ const looksLikeLocalFilePath = (value: string): boolean => {
   return FILE_EXTENSIONS.has(extMatch[1].toLowerCase());
 };
 
-const isFileLink = (href: string): boolean => {
-  if (!href) return false;
-  if (href.startsWith("#")) return false;
-  if (isExternalHttpLink(href)) return false;
-  if (href.startsWith("mailto:") || href.startsWith("tel:")) return false;
-  if (href.startsWith("file://")) return true;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) return false;
-  return true;
-};
-
-const normalizeFileHref = (href: string): string => {
-  if (!href) return href;
-  if (href.startsWith("file://")) {
-    const rawPath = href.replace(/^file:\/\//, "");
-    const decoded = (() => {
-      try {
-        return decodeURIComponent(rawPath);
-      } catch {
-        return rawPath;
-      }
-    })();
-    return decoded.replace(/^\/([a-zA-Z]:\/)/, "$1").split(/[?#]/)[0];
-  }
-  return href.split(/[?#]/)[0];
-};
-
-const resolveFileLinkTarget = (href: string, linkText: string): string | null => {
-  const trimmedText = linkText.trim();
-  const trimmedHref = href.trim();
-
-  if (looksLikeLocalFilePath(trimmedText)) {
-    const strippedHref = stripHttpScheme(trimmedHref).replace(/\/$/, "");
-    if (trimmedHref === trimmedText || strippedHref === trimmedText) {
-      return normalizeFileHref(trimmedText);
-    }
-  }
-
-  if (looksLikeLocalFilePath(trimmedHref)) {
-    return normalizeFileHref(trimmedHref);
-  }
-
-  return null;
-};
-
-const CITATION_REF_REGEX = /\[(\d+)\]/g;
-
-/**
- * Matches bare domain URLs (e.g. "example.com/path") that are NOT already
- * inside a markdown link. Only targets strings that look like domain.tld/...
- */
-const BARE_URL_REGEX =
-  /(?<!\(|\[)(?:^|(?<=\s))((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}\/[^\s)\]]+)/gi;
 const GLOB_TOKEN_REGEX = /(?<![`\\])\*\*\/\*[^\s,;()]+/g;
 const FENCED_CODE_BLOCK_REGEX = /(```[\s\S]*?```)/g;
 const JSON_PATH_PAYLOAD_LINE_REGEX = /^(\s*)\{\s*"path"\s*:\s*"((?:\\.|[^"\\])*)"\s*\}(\s*)$/;
@@ -2255,32 +2066,6 @@ const SOURCE_ENTRY_DETECT_REGEX =
 const SOURCE_PIPE_SEPARATOR_REGEX = /\s*\|\s*/g;
 /** Split inline sources: "[1] ... [2] ..." -> one per line (whitespace before [N]). */
 const SOURCE_INLINE_BEFORE_NUMBER_REGEX = /\s+(?=\[\d+\])/g;
-
-/**
- * Pre-process assistant message text to convert bare domain URLs into markdown links.
- * e.g. "spectrum.ieee.org/quantum" → "[spectrum.ieee.org/quantum](https://spectrum.ieee.org/quantum)"
- */
-export function autolinkBareUrls(text: string): string {
-  return text.replace(BARE_URL_REGEX, (_match, url) => {
-    return `[${url}](https://${url})`;
-  });
-}
-
-/**
- * Convert URLs inside square brackets to clickable markdown links.
- * Handles formats like [learn.microsoft.com], [https://example.com/path], [domain.com/path].
- * Skips citation numbers [1], [2] and existing markdown links [text](url).
- */
-const BRACKETED_URL_REGEX =
-  /\[(https?:\/\/[^\]\s]+)\](?!\s*\()|\[((?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.)+[a-z]{2,}(?:\/[^\]\s]*)?)\](?!\s*\()/gi;
-export function autolinkUrlsInBrackets(text: string): string {
-  return text.replace(BRACKETED_URL_REGEX, (_match, fullUrl: string | undefined, bareDomain: string | undefined) => {
-    const url = fullUrl ?? bareDomain;
-    if (!url) return _match;
-    const href = url.startsWith("http") ? url : `https://${url}`;
-    return `[${url}](${href})`;
-  });
-}
 
 /** Keep glob-style path patterns literal when rendering markdown. */
 function protectGlobTokens(text: string): string {
@@ -2408,291 +2193,6 @@ export function cleanAssistantMessageForDisplay(message: string): string {
     normalizeInlineLists(unwrapMarkdownCodeBlocks(sanitized)),
   );
 }
-
-export const buildMarkdownComponents = (options: {
-  workspacePath?: string;
-  onOpenViewer?: (path: string) => void;
-  onOpenWebLinkInSidebar?: (url: string) => void;
-  citations?: Array<{ index: number; url: string; title: string; snippet: string; domain: string; accessedAt: number; sourceTool: string }>;
-}) => {
-  const { workspacePath, onOpenViewer, onOpenWebLinkInSidebar, citations } = options;
-
-  /** Map citation index → citation for O(1) lookup */
-  const citationMap = new Map(
-    (citations || []).map((c) => [c.index, c]),
-  );
-
-  /** Map normalised citation URL → citation for enriched link rendering */
-  const citationUrlMap = new Map(
-    (citations || []).map((c) => [c.url.replace(/\/+$/, "").toLowerCase(), c]),
-  );
-
-  const MarkdownLink = ({ href, children, ...props }: Any) => {
-    if (!href) {
-      return <a {...props}>{children}</a>;
-    }
-
-    const linkText = getTextContent(children);
-    const xComLink = isXComLink(href);
-    const externalHref = isExternalHttpLink(href)
-      ? href
-      : xComLink
-        ? `https://${href.replace(/^\/+/, "")}`
-        : null;
-    const fileTarget = externalHref ? null : resolveFileLinkTarget(href, linkText);
-
-    if (!externalHref && (fileTarget || isFileLink(href))) {
-      const filePath = fileTarget ?? normalizeFileHref(href);
-      const handleClick = async (e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        if (onOpenViewer && workspacePath) {
-          onOpenViewer(filePath);
-          return;
-        }
-
-        if (!workspacePath) return;
-
-        try {
-          const error = await window.electronAPI.openFile(filePath, workspacePath);
-          if (error) {
-            console.error("Failed to open file:", error);
-          }
-        } catch (err) {
-          console.error("Error opening file:", err);
-        }
-      };
-
-      const handleContextMenu = async (e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (!workspacePath) return;
-        try {
-          await window.electronAPI.showInFinder(filePath, workspacePath);
-        } catch (err) {
-          console.error("Error showing in Finder:", err);
-        }
-      };
-
-      return (
-        <a
-          {...props}
-          href={href}
-          className={`clickable-file-path ${props.className || ""}`.trim()}
-          onClick={handleClick}
-          onContextMenu={handleContextMenu}
-          title={`${filePath}\n\nClick to preview • Right-click to show in Finder`}
-        >
-          {children}
-        </a>
-      );
-    }
-
-    if (externalHref) {
-      const handleClick = async (e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (onOpenWebLinkInSidebar) {
-          onOpenWebLinkInSidebar(externalHref);
-          return;
-        }
-        try {
-          await window.electronAPI.openExternal(externalHref);
-        } catch (err) {
-          console.error("Error opening link:", err);
-        }
-      };
-
-      if (xComLink) {
-        return (
-          <a
-            {...props}
-            href={externalHref}
-            onClick={handleClick}
-            className={`x-social-link ${props.className || ""}`.trim()}
-            title={externalHref}
-          >
-            <span className="x-social-link-icon" aria-hidden="true">
-              X
-            </span>
-            <span className="x-social-link-label">{children}</span>
-          </a>
-        );
-      }
-
-      // Check if this link matches a citation — render an enriched card
-      const normHref = externalHref.replace(/\/+$/, "").toLowerCase();
-      const matchedCitation = citationUrlMap.get(normHref);
-      const matchedCitationUrl =
-        matchedCitation && typeof matchedCitation.url === "string" ? matchedCitation.url : externalHref;
-      const matchedCitationTitle =
-        matchedCitation && typeof matchedCitation.title === "string"
-          ? stripHtmlTags(matchedCitation.title)
-          : "";
-      const matchedCitationDomain =
-        matchedCitation && typeof matchedCitation.domain === "string"
-          ? stripHtmlTags(matchedCitation.domain)
-          : "";
-      const shouldRenderCitationCard =
-        !!matchedCitation &&
-        matchedCitationTitle.length > 0 &&
-        matchedCitationTitle !== matchedCitationUrl &&
-        !isUrlLikeLabel(linkText);
-
-      if (shouldRenderCitationCard) {
-        const citationDomain = matchedCitationDomain || extractDomainFromUrl(matchedCitationUrl);
-        return (
-          <a
-            {...props}
-            href={externalHref}
-            onClick={handleClick}
-            className="citation-source-link"
-            title={matchedCitationUrl}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "3px 8px",
-              borderRadius: 6,
-              background: "var(--surface-secondary, #1a1a1a)",
-              border: "1px solid var(--border-color, #333)",
-              textDecoration: "none",
-              color: "inherit",
-              transition: "background 0.15s, border-color 0.15s",
-              maxWidth: "100%",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLAnchorElement).style.background =
-                "var(--surface-hover, rgba(255,255,255,0.08))";
-              (e.currentTarget as HTMLAnchorElement).style.borderColor =
-                "var(--accent-color, #60a5fa)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLAnchorElement).style.background =
-                "var(--surface-secondary, #1a1a1a)";
-              (e.currentTarget as HTMLAnchorElement).style.borderColor =
-                "var(--border-color, #333)";
-            }}
-          >
-            <img
-              src={`https://www.google.com/s2/favicons?domain=${citationDomain}&sz=16`}
-              alt=""
-              width={14}
-              height={14}
-              style={{ borderRadius: 2, flexShrink: 0 }}
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = "none";
-              }}
-            />
-            <span style={{ minWidth: 0 }}>
-              <span
-                style={{
-                  display: "block",
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: "var(--text-primary, #e5e5e5)",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {matchedCitationTitle}
-              </span>
-              <span
-                style={{
-                  display: "block",
-                  fontSize: 10,
-                  color: "var(--text-tertiary, #666)",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {citationDomain}
-              </span>
-            </span>
-          </a>
-        );
-      }
-
-      return (
-        <a {...props} href={externalHref} onClick={handleClick}>
-          {children}
-        </a>
-      );
-    }
-
-    return (
-      <a {...props} href={href}>
-        {children}
-      </a>
-    );
-  };
-
-  /**
-   * Replace citation references like [1], [2] in text children with
-   * interactive CitationBadge components.
-   */
-  const replaceCitationsInChildren = (children: React.ReactNode): React.ReactNode => {
-    if (citationMap.size === 0) return replaceEmojisInChildren(children);
-
-    return Children.map(children, (child) => {
-      if (typeof child === "string") {
-        const parts: React.ReactNode[] = [];
-        let lastIndex = 0;
-
-        CITATION_REF_REGEX.lastIndex = 0;
-        let match: RegExpExecArray | null;
-        while ((match = CITATION_REF_REGEX.exec(child)) !== null) {
-          const idx = parseInt(match[1], 10);
-          const citation = citationMap.get(idx);
-          if (!citation) continue;
-
-          if (match.index > lastIndex) {
-            parts.push(child.slice(lastIndex, match.index));
-          }
-          parts.push(
-            <CitationBadge key={`cite-${idx}-${match.index}`} index={idx} citation={citation} />,
-          );
-          lastIndex = match.index + match[0].length;
-        }
-
-        if (parts.length === 0) return replaceEmojisInChildren(child);
-
-        if (lastIndex < child.length) {
-          parts.push(child.slice(lastIndex));
-        }
-        return <>{parts.map((p) => (typeof p === "string" ? replaceEmojisInChildren(p) : p))}</>;
-      }
-      return child;
-    });
-  };
-
-  // Custom components for ReactMarkdown
-  return {
-    code: CodeBlock,
-    h1: renderHeading("h1"),
-    h2: renderHeading("h2"),
-    h3: renderHeading("h3"),
-    table: ({ children, ...props }: Any) => (
-      <div className="markdown-table-wrapper">
-        <table {...props}>{children}</table>
-      </div>
-    ),
-    a: MarkdownLink,
-    img: ({ src, alt, title }: Any) => (
-      <MarkdownImagePreview
-        src={typeof src === "string" ? src : ""}
-        alt={typeof alt === "string" ? alt : ""}
-        title={typeof title === "string" ? title : undefined}
-        workspacePath={workspacePath}
-      />
-    ),
-    p: ({ children, ...props }: Any) => <p {...props}>{replaceCitationsInChildren(children)}</p>,
-    li: ({ children, ...props }: Any) => <li {...props}>{replaceCitationsInChildren(children)}</li>,
-  };
-};
 
 function UserMessageText({
   text,
@@ -4863,6 +4363,7 @@ interface MainContentProps {
   onContinueWithoutShellForPausedTask?: () => void | Promise<void>;
   onWrapUpTask?: () => void;
   inputRequest?: InputRequest | null;
+  pendingInputRequests?: InputRequest[];
   onSubmitInputRequest?: (
     requestId: string,
     answers: Record<string, { optionLabel?: string; otherText?: string }>,
@@ -4875,6 +4376,7 @@ interface MainContentProps {
   onOpenDocumentArtifact?: (path: string) => void;
   onOpenPresentationArtifact?: (path: string) => void;
   onOpenWebArtifact?: (path: string) => void;
+  onOpenBrowserWorkbenchSidebar?: (url?: string) => void;
   onOpenWebLinkInSidebar?: (url: string) => void;
   selectedModel: string;
   selectedProvider: LLMProviderType;
@@ -6025,6 +5527,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
   const transcriptMode = props.transcriptMode as TranscriptMode;
   const lastAssistantMessage = props.lastAssistantMessage as TaskEvent | null;
   const initialPromptEventId = props.initialPromptEventId as string | null;
+  const trimmedPrompt = props.trimmedPrompt as string;
   const markdownComponents = props.markdownComponents as any;
   const messageFeedbackMap = props.messageFeedbackMap as Map<string, string>;
   const mainBodyRef = props.mainBodyRef as React.RefObject<HTMLDivElement | null>;
@@ -6130,6 +5633,20 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
   });
 
   const leadingCommandOutputSessions = commandOutputSessionsByInsertIndex.get(-1) ?? [];
+  const [expandedArtifactStacks, setExpandedArtifactStacks] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const expandArtifactStack = useCallback((rowKey: string) => {
+    setExpandedArtifactStacks((current) => {
+      if (current.has(rowKey)) return current;
+      const next = new Set(current);
+      next.add(rowKey);
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    setExpandedArtifactStacks(new Set());
+  }, [task?.id]);
   const getActionBlockRenderState = useCallback(
     (blockEvents: TaskEvent[], blockEventIndices: number[], blockId: string) => {
       const isBlockShowAll = showAllActionBlocks.has(blockId);
@@ -6298,14 +5815,19 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
 
     const endArtifactCards = collectLatestEndOfTaskArtifactCards(events);
     if (endArtifactCards.length > 0) {
+      const rowKey = "end-artifact-stack";
+      const expanded = expandedArtifactStacks.has(rowKey);
       rows.push({
         kind: "artifact-stack",
-        key: "end-artifact-stack",
-        estimatedHeight: 28 + endArtifactCards.length * 86,
+        key: rowKey,
+        estimatedHeight: estimateEndOfTaskArtifactStackHeight(endArtifactCards, expanded),
         artifacts: endArtifactCards,
-        revision: endArtifactCards
-          .map((artifact) => `${artifact.path}:${artifact.kind}:${artifact.eventId ?? "none"}`)
-          .join("|"),
+        revision: [
+          expanded ? "expanded" : "collapsed",
+          endArtifactCards
+            .map((artifact) => `${artifact.path}:${artifact.kind}:${artifact.eventId ?? "none"}`)
+            .join("|"),
+        ].join(":"),
         visiblePerfEventId: null,
       });
     }
@@ -6328,6 +5850,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
     isReplayMode,
     getActionBlockRenderState,
     events,
+    expandedArtifactStacks,
   ]);
   const { visibleFeedRows, hiddenLiveFeedRowCount } = useMemo(
     () => selectVisibleTaskFeedRows(feedRows, transcriptMode),
@@ -6457,9 +5980,12 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                   }
                   if (row.kind === "artifact-stack") {
                     if (!workspace?.path) return null;
+                    const expanded = expandedArtifactStacks.has(row.key);
+                    const { visibleArtifacts, hiddenCount } =
+                      getVisibleEndOfTaskArtifactCards(row.artifacts, expanded);
                     return (
                       <div className="conversation-artifact-stack assistant-artifact-cards">
-                        {row.artifacts.map((artifact) => {
+                        {visibleArtifacts.map((artifact) => {
                           if (artifact.kind === "spreadsheet") {
                             return (
                               <SpreadsheetArtifactCard
@@ -6502,6 +6028,17 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                           }
                           return null;
                         })}
+                        {hiddenCount > 0 && (
+                          <button
+                            type="button"
+                            className="conversation-artifact-stack-show-more"
+                            onClick={() => expandArtifactStack(row.key)}
+                            aria-label={`Show ${hiddenCount} more generated files`}
+                          >
+                            <span>Show {hiddenCount} more</span>
+                            <ChevronDown size={17} aria-hidden="true" />
+                          </button>
+                        )}
                       </div>
                     );
                   }
@@ -6653,7 +6190,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                     }
                     return null;
                   }
-                  const { summary, stepCount, toolCallCount, durationMs, outputTokens } = buildActionBlockSummary(
+                  const { summary, iconKind, stepCount, toolCallCount, durationMs, outputTokens } = buildActionBlockSummary(
                     renderableEvents,
                     events,
                     { isActive },
@@ -6704,6 +6241,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                       <ActionBlock
                         blockId={item.blockId}
                         summary={summary}
+                        iconKind={iconKind}
                         stepCount={stepCount}
                         toolCallCount={toolCallCount}
                         durationMs={actionBlockDurationMs}
@@ -7000,7 +6538,14 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
 
                 // Render user messages as chat bubbles on the right
                 if (isUserMessage) {
-                  if (event.id === initialPromptEventId) {
+                  if (
+                    shouldSuppressInitialPromptUserEvent({
+                      event,
+                      initialPromptEventId,
+                      trimmedPrompt,
+                      taskCreatedAt: task?.createdAt,
+                    })
+                  ) {
                     if (!commandOutputsAfterEvent || commandOutputsAfterEvent.length === 0) {
                       return null;
                     }
@@ -7011,7 +6556,10 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                     );
                   }
                   const rawMessage = event.payload?.message || "User message";
-                  const messageText = stripStrategyContextBlock(stripPptxBubbleContent(rawMessage));
+                  const messageText =
+                    typeof rawMessage === "string"
+                      ? normalizeInitialPromptText(rawMessage)
+                      : "User message";
                   const messageIntegrationMentions =
                     Array.isArray(event.payload?.integrationMentions)
                       ? (event.payload.integrationMentions as IntegrationMentionSelection[])
@@ -7494,7 +7042,9 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
       currentStep,
       eventTitleMarkdownComponents,
       events,
+      expandedArtifactStacks,
       expandedActionBlocks,
+      expandArtifactStack,
       handleCanvasClose,
       handleMessageFeedback,
       onQuoteAssistantMessage,
@@ -7763,6 +7313,7 @@ function MainContentComponent({
   onContinueWithoutShellForPausedTask,
   onWrapUpTask,
   inputRequest = null,
+  pendingInputRequests = [],
   onSubmitInputRequest,
   onDismissInputRequest,
   onOpenBrowserView,
@@ -7772,6 +7323,7 @@ function MainContentComponent({
   onOpenDocumentArtifact,
   onOpenPresentationArtifact,
   onOpenWebArtifact,
+  onOpenBrowserWorkbenchSidebar,
   onOpenWebLinkInSidebar,
   selectedModel,
   selectedProvider,
@@ -8034,6 +7586,7 @@ function MainContentComponent({
   });
   // Autonomous mode state
   const [autonomousModeEnabled, setAutonomousModeEnabled] = useState(false);
+  const [clarifyingCheckinsEnabled, setClarifyingCheckinsEnabled] = useState(false);
   const [collaborativeModeEnabled, setCollaborativeModeEnabled] = useState(false);
   const [multiLlmModeEnabled, setMultiLlmModeEnabled] = useState(false);
   const [chronicleEnabledForTask, setChronicleEnabledForTask] = useState(true);
@@ -8055,6 +7608,7 @@ function MainContentComponent({
   const setAutonomousModeSelection = useCallback((enabled: boolean) => {
     setAutonomousModeEnabled(enabled);
     if (enabled) {
+      setClarifyingCheckinsEnabled(false);
       setCollaborativeModeEnabled(false);
       setMultiLlmModeEnabled(false);
     }
@@ -8391,6 +7945,16 @@ function MainContentComponent({
       ]);
 
       const collected: WelcomeTaskSuggestion[] = [];
+      pendingInputRequests
+        .filter((request) => request.status === "pending")
+        .slice()
+        .sort((a, b) => b.requestedAt - a.requestedAt)
+        .slice(0, 4)
+        .forEach((request, index) => {
+          const item = buildInputRequestWelcomeSuggestion(request, index);
+          if (item) collected.push(item);
+        });
+
       const proactiveSuggestions = Array.isArray(rawSuggestions)
         ? (rawSuggestions as ProactiveSuggestion[])
         : [];
@@ -8477,7 +8041,7 @@ function MainContentComponent({
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [task, workspace?.id, workspace?.isTemp]);
+  }, [pendingInputRequests, task, workspace?.id, workspace?.isTemp]);
 
   const markdownComponents = useMemo(
     () =>
@@ -9390,8 +8954,11 @@ function MainContentComponent({
 
   const loadIntegrationMentionOptions = useCallback(async () => {
     const options = await window.electronAPI.listIntegrationMentionOptions().catch(() => []);
+    const nextOptions = Array.isArray(options) ? options : [];
     startTransition(() => {
-      setIntegrationMentionOptions(Array.isArray(options) ? options : []);
+      setIntegrationMentionOptions((current) =>
+        areIntegrationMentionOptionsEqual(current, nextOptions) ? current : nextOptions,
+      );
     });
   }, []);
 
@@ -10824,6 +10391,7 @@ function MainContentComponent({
         setSlashTarget(null);
         setModeSuggestions([]);
         setAutonomousModeEnabled(false);
+        setClarifyingCheckinsEnabled(false);
         setCollaborativeModeEnabled(false);
         setMultiLlmModeEnabled(false);
         setChronicleEnabledForTask(true);
@@ -10907,6 +10475,9 @@ function MainContentComponent({
           taskDomain,
           chronicleMode: chronicleEnabledForTask ? "inherit" : "disabled",
           videoGenerationMode: taskDomain === "media" ? true : undefined,
+          ...(clarifyingCheckinsEnabled
+            ? { agentConfig: { humanInputPolicy: "legacy_interactive" as const } }
+            : {}),
           ...createIntegrationMentionOptions,
           ...(permissionAccessMode === "full"
             ? { permissionMode: "bypass_permissions", shellAccess: true }
@@ -11581,22 +11152,38 @@ function MainContentComponent({
   };
 
   const handleWelcomeTaskSuggestion = (suggestion: WelcomeTaskSuggestion) => {
-    handleQuickAction(suggestion.prompt);
-    setActiveWelcomeSuggestionDraft(
-      suggestion.feedback?.kind === "proactive"
-        ? {
-            workspaceId: suggestion.feedback.workspaceId,
-            suggestionId: suggestion.feedback.suggestionId,
-            originalPrompt: suggestion.prompt,
-          }
-        : null,
-    );
+    if (suggestion.action.type === "task") {
+      setActiveWelcomeSuggestionDraft(null);
+      onSelectTask?.(suggestion.action.taskId);
+    } else if (suggestion.action.type === "settings") {
+      setActiveWelcomeSuggestionDraft(null);
+      onOpenSettings?.(suggestion.action.tab);
+    } else if (suggestion.action.type === "url") {
+      setActiveWelcomeSuggestionDraft(null);
+      if (onOpenWebLinkInSidebar) {
+        onOpenWebLinkInSidebar(suggestion.action.url);
+      } else {
+        onOpenBrowserView?.(suggestion.action.url);
+      }
+    } else {
+      const prompt = suggestion.action.prompt;
+      handleQuickAction(prompt);
+      setActiveWelcomeSuggestionDraft(
+        suggestion.feedback?.kind === "proactive"
+          ? {
+              workspaceId: suggestion.feedback.workspaceId,
+              suggestionId: suggestion.feedback.suggestionId,
+              originalPrompt: prompt,
+            }
+          : null,
+      );
+      window.setTimeout(() => {
+        promptInputRef.current?.focus();
+        const position = prompt.length;
+        promptInputRef.current?.setSelectionRange(position, position);
+      }, 0);
+    }
     setWelcomeTaskSuggestions((current) => current.filter((item) => item.id !== suggestion.id));
-    window.setTimeout(() => {
-      promptInputRef.current?.focus();
-      const position = suggestion.prompt.length;
-      promptInputRef.current?.setSelectionRange(position, position);
-    }, 0);
   };
 
   const handleDismissWelcomeTaskSuggestion = (
@@ -11648,17 +11235,14 @@ function MainContentComponent({
         </div>
         <div className="welcome-next-actions-list">
         {welcomeTaskSuggestions.map((suggestion) => {
-          const Icon =
-            suggestion.source === "memory"
-              ? ListTodo
-              : suggestion.source === "insight"
-                ? Sparkles
-                : MessageCircle;
+          const Icon = iconForWelcomeAction(suggestion);
+          const actionLabel = labelForWelcomeAction(suggestion.action);
           const title = [suggestion.title, suggestion.whyNow, suggestion.description]
             .concat(suggestion.evidence?.slice(0, 3) || [])
             .filter(Boolean)
             .join("\n");
           const metaChips = [
+            actionLabel,
             ...formatWelcomeModules(suggestion.modules),
             typeof suggestion.confidence === "number"
               ? `${Math.round(suggestion.confidence * 100)}%`
@@ -12042,14 +11626,25 @@ function MainContentComponent({
     setShowTaskAutomationModal(true);
   }, [closeTaskHeaderMenu, remoteSession, task]);
 
+  const handleTaskHeaderOpenBrowser = useCallback(() => {
+    if (!task || remoteSession || !workspace?.path || !onOpenBrowserWorkbenchSidebar) return;
+    closeTaskHeaderMenu();
+    onOpenBrowserWorkbenchSidebar();
+  }, [
+    closeTaskHeaderMenu,
+    onOpenBrowserWorkbenchSidebar,
+    remoteSession,
+    task,
+    workspace?.path,
+  ]);
+
   const initialPromptEventId = useMemo(() => {
     if (!trimmedPrompt) return null;
     for (const event of events) {
       if (getEffectiveTaskEventType(event) !== "user_message") continue;
-      const rawMessage = typeof event.payload?.message === "string" ? event.payload.message : "";
-      const cleanedEventMessage = stripStrategyContextBlock(stripPptxBubbleContent(rawMessage));
+      const cleanedEventMessage = getUserEventDisplayMessage(event);
       if (cleanedEventMessage === trimmedPrompt || cleanedEventMessage.startsWith(trimmedPrompt)) {
-        return event.id;
+        return event.id || null;
       }
     }
     return null;
@@ -12813,6 +12408,35 @@ function MainContentComponent({
                                 style={{ margin: 0 }}
                                 onClick={() => {
                                   setOverflowSubmenu(null);
+                                  setClarifyingCheckinsEnabled(!clarifyingCheckinsEnabled);
+                                }}
+                                data-tooltip="Allow optional clarification pauses during this task"
+                                role="menuitemcheckbox"
+                                aria-checked={clarifyingCheckinsEnabled}
+                                disabled={autonomousModeEnabled}
+                                data-overflow-menu-item
+                              >
+                                <span className="goal-mode-toggle-switch-content">
+                                  <span className="goal-mode-toggle-text">
+                                    <span className="goal-mode-label">Check-ins</span>
+                                  </span>
+                                  <span
+                                    className={`goal-mode-switch-track ${
+                                      clarifyingCheckinsEnabled ? "on" : ""
+                                    }`}
+                                    aria-hidden="true"
+                                  >
+                                    <span className="goal-mode-switch-thumb" />
+                                  </span>
+                                </span>
+                              </button>
+                            </div>
+                            <div className="overflow-menu-item" role="none">
+                              <button
+                                className="goal-mode-toggle goal-mode-toggle-switch-row menu-tooltip-target"
+                                style={{ margin: 0 }}
+                                onClick={() => {
+                                  setOverflowSubmenu(null);
                                   setCollaborativeModeSelection(!collaborativeModeEnabled);
                                 }}
                                 data-tooltip="Multiple agents share perspectives"
@@ -12922,16 +12546,23 @@ function MainContentComponent({
                 <div className="input-right-actions">
                   {uiDensity === "focused" ? (
                     <>
-                      {(executionMode !== "execute" || collaborativeModeEnabled) && (
+                      {(executionMode !== "execute" ||
+                        collaborativeModeEnabled ||
+                        clarifyingCheckinsEnabled) && (
                         <button
                           className="active-mode-badge"
                           title="Click to reset mode"
                           onClick={() => {
                             setExecutionMode("execute");
                             setCollaborativeModeEnabled(false);
+                            setClarifyingCheckinsEnabled(false);
                           }}
                         >
-                          {collaborativeModeEnabled ? "Collab" : EXECUTION_MODE_LABEL[executionMode]}
+                          {clarifyingCheckinsEnabled
+                            ? "Check-ins"
+                            : collaborativeModeEnabled
+                              ? "Collab"
+                              : EXECUTION_MODE_LABEL[executionMode]}
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M18 6L6 18M6 6l12 12" />
                           </svg>
@@ -13503,6 +13134,7 @@ function MainContentComponent({
       currentStep={currentStep}
       lastAssistantMessage={lastAssistantMessage}
       initialPromptEventId={initialPromptEventId}
+      trimmedPrompt={trimmedPrompt}
       eventTitleMarkdownComponents={eventTitleMarkdownComponents}
       events={events}
       expandedActionBlocks={expandedActionBlocks}
@@ -13648,6 +13280,17 @@ function MainContentComponent({
                     <span>Archive task</span>
                   </button>
                   <div className="main-header-task-menu-divider" role="separator" />
+                  <button
+                    type="button"
+                    className="main-header-task-menu-item"
+                    role="menuitem"
+                    data-task-header-menu-option
+                    disabled={Boolean(remoteSession) || !workspace?.path || !onOpenBrowserWorkbenchSidebar}
+                    onClick={handleTaskHeaderOpenBrowser}
+                  >
+                    <Globe size={17} aria-hidden="true" />
+                    <span>Open browser</span>
+                  </button>
                   <button
                     type="button"
                     className="main-header-task-menu-item"
@@ -14648,6 +14291,21 @@ function getMainContentInputRequestSignature(inputRequest: InputRequest | null |
   ].join(":");
 }
 
+function getMainContentInputRequestsSignature(inputRequests: InputRequest[] | undefined): string {
+  if (!inputRequests?.length) return "none";
+  return inputRequests
+    .map((request) =>
+      [
+        request.id,
+        request.taskId,
+        request.status,
+        request.requestedAt,
+        request.questions.length,
+      ].join(":"),
+    )
+    .join("|");
+}
+
 function getRemoteSessionSignature(
   remoteSession: { deviceId: string; deviceName: string } | null | undefined,
 ): string {
@@ -14666,6 +14324,8 @@ function areMainContentPropsEqual(prev: MainContentProps, next: MainContentProps
     prev.childEvents === next.childEvents &&
     getMainContentInputRequestSignature(prev.inputRequest) ===
       getMainContentInputRequestSignature(next.inputRequest) &&
+    getMainContentInputRequestsSignature(prev.pendingInputRequests) ===
+      getMainContentInputRequestsSignature(next.pendingInputRequests) &&
     prev.selectedModel === next.selectedModel &&
     prev.selectedProvider === next.selectedProvider &&
     prev.selectedReasoningEffort === next.selectedReasoningEffort &&
@@ -14679,6 +14339,7 @@ function areMainContentPropsEqual(prev: MainContentProps, next: MainContentProps
     prev.onOpenDocumentArtifact === next.onOpenDocumentArtifact &&
     prev.onOpenPresentationArtifact === next.onOpenPresentationArtifact &&
     prev.onOpenWebArtifact === next.onOpenWebArtifact &&
+    prev.onOpenBrowserWorkbenchSidebar === next.onOpenBrowserWorkbenchSidebar &&
     prev.onOpenWebLinkInSidebar === next.onOpenWebLinkInSidebar &&
     prev.onOpenChildAgentSidebar === next.onOpenChildAgentSidebar
   );
@@ -14728,6 +14389,58 @@ function condenseStepText(raw: string, maxLength: number = 72): string {
     text = `${text.slice(0, maxLength - 1).trimEnd()}…`;
   }
   return text;
+}
+
+function coerceStepFailureText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeStepFailureTextForComparison(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").replace(/[.。]+$/g, "").trim();
+}
+
+function unwrapTaskFailureText(reason: string): string {
+  return reason
+    .trim()
+    .replace(/^Task execution failed:\s*/i, "")
+    .replace(/^Error:\s*/i, "")
+    .trim();
+}
+
+function formatCompletionGuardFailureTitle(reason: string): string | null {
+  const unwrapped = unwrapTaskFailureText(reason);
+  if (/^Task missing verification evidence\b/i.test(unwrapped)) return "Verification evidence missing";
+  if (/^Task missing direct answer\b/i.test(unwrapped)) return "Direct answer missing";
+  if (/^Task missing artifact evidence\b/i.test(unwrapped)) return "Output artifact missing";
+  if (/^Task missing execution evidence\b/i.test(unwrapped)) return "Execution evidence missing";
+  if (/^Task missing required tool evidence\b/i.test(unwrapped)) return "Required tool evidence missing";
+  return null;
+}
+
+export function formatTimelineErrorTitleForDisplay(message: string): string {
+  return formatCompletionGuardFailureTitle(message) || message;
+}
+
+export function formatStepFailedTitleForDisplay(payload: Any): string {
+  const step = payload?.step && typeof payload.step === "object" ? payload.step : {};
+  const description = coerceStepFailureText((step as Any).description);
+  const reason =
+    coerceStepFailureText(payload?.reason) ||
+    coerceStepFailureText((step as Any).error) ||
+    coerceStepFailureText(payload?.error);
+  const guardTitle = formatCompletionGuardFailureTitle(reason || description);
+  if (guardTitle) return guardTitle;
+
+  if (
+    description &&
+    reason &&
+    normalizeStepFailureTextForComparison(description) ===
+      normalizeStepFailureTextForComparison(reason)
+  ) {
+    return "Step failed";
+  }
+
+  return `Step failed: ${condenseStepText(description || reason || "Unknown step")}`;
 }
 
 function formatStepContractEscalatedMessage(reason: string): string {
@@ -15077,7 +14790,7 @@ function renderEventTitle(
   if (event.type === "timeline_error") {
     const message = getTimelineErrorText(event);
     if (isLongOsascriptCommandText(message)) return "Command failed: osascript";
-    return message || getMessage("error", msgCtx);
+    return message ? formatTimelineErrorTitleForDisplay(message) : getMessage("error", msgCtx);
   }
 
   if (event.type === "timeline_step_updated" && effectiveType === "progress_update") {
@@ -15136,7 +14849,7 @@ function renderEventTitle(
       ) {
         return "Command failed: osascript";
       }
-      return `Step failed: ${condenseStepText(event.payload.step?.description || "Unknown step")}`;
+      return formatStepFailedTitleForDisplay(event.payload);
     case "continuation_decision":
       return "Deciding next steps";
     case "auto_continuation_started":
@@ -15544,14 +15257,7 @@ function renderEventDetails(
         </div>
       );
     }
-    return (
-      <div
-        className="event-details"
-        style={{ background: "rgba(239, 68, 68, 0.1)", borderColor: "rgba(239, 68, 68, 0.2)" }}
-      >
-        {message || "Timeline error"}
-      </div>
-    );
+    return <div className="event-details event-details-failure">{message || "Timeline error"}</div>;
   }
 
   if (effectiveType === "diagram_created") {
@@ -15932,14 +15638,7 @@ function renderEventDetails(
           </div>
         );
       }
-      return (
-        <div
-          className="event-details"
-          style={{ background: "rgba(239, 68, 68, 0.1)", borderColor: "rgba(239, 68, 68, 0.2)" }}
-        >
-          {displayReason}
-        </div>
-      );
+      return <div className="event-details event-details-failure">{displayReason}</div>;
     }
     case "verification_pending_user_action": {
       const checklist: string[] = Array.isArray(event.payload?.pendingChecklist)
@@ -16541,10 +16240,7 @@ function renderEventDetails(
     }
     case "error":
       return (
-        <div
-          className="event-details"
-          style={{ background: "rgba(239, 68, 68, 0.1)", borderColor: "rgba(239, 68, 68, 0.2)" }}
-        >
+        <div className="event-details event-details-failure">
           {formatProviderErrorForDisplay(
             String(event.payload.error || event.payload.message || ""),
             { task: taskForEvent },
