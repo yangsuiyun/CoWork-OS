@@ -1,3 +1,4 @@
+import { createRequire } from "module";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
@@ -5,6 +6,29 @@ import { afterEach, describe, expect, it } from "vitest";
 import { TranscriptStore } from "../TranscriptStore";
 
 const createdDirs: string[] = [];
+const databases: Array<import("better-sqlite3").Database> = [];
+
+const require = createRequire(import.meta.url);
+const BetterSqlite3Module = (() => {
+  try {
+    return require("better-sqlite3") as typeof import("better-sqlite3");
+  } catch {
+    return null;
+  }
+})();
+
+const BetterSqlite3 = (() => {
+  if (!BetterSqlite3Module) return null;
+  try {
+    const probe = new BetterSqlite3Module(":memory:");
+    probe.close();
+    return BetterSqlite3Module;
+  } catch {
+    return null;
+  }
+})();
+
+const describeWithNativeDb = BetterSqlite3 ? describe : describe.skip;
 
 async function createWorkspace(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "cowork-transcript-store-"));
@@ -13,6 +37,10 @@ async function createWorkspace(): Promise<string> {
 }
 
 afterEach(async () => {
+  TranscriptStore.setDatabaseForTests(null);
+  for (const db of databases.splice(0)) {
+    db.close();
+  }
   await Promise.all(createdDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
@@ -123,5 +151,48 @@ describe("TranscriptStore", () => {
 
     expect(results).toHaveLength(3);
     expect(results[0]?.timestamp).toBeGreaterThan(results[2]?.timestamp || 0);
+  });
+});
+
+describeWithNativeDb("TranscriptStore SQLite FTS", () => {
+  function createDb(): import("better-sqlite3").Database {
+    if (!BetterSqlite3) throw new Error("better-sqlite3 unavailable");
+    const db = new BetterSqlite3(":memory:");
+    databases.push(db);
+    return db;
+  }
+
+  it("indexes appended spans in SQLite FTS and falls back to JSONL for misses", async () => {
+    const workspacePath = await createWorkspace();
+    TranscriptStore.setDatabaseForTests(createDb());
+
+    await TranscriptStore.appendEvent(workspacePath, {
+      id: "event-db-1",
+      eventId: "event-db-1",
+      taskId: "task-db",
+      timestamp: Date.now(),
+      type: "assistant_message",
+      payload: { message: "SQLite transcript recall is indexed" },
+      schemaVersion: 2,
+    });
+
+    const indexed = await TranscriptStore.searchSpans({
+      workspacePath,
+      query: "sqlite transcript",
+      limit: 5,
+    });
+
+    expect(indexed).toHaveLength(1);
+    expect(indexed[0]?.eventId).toBe("event-db-1");
+
+    TranscriptStore.setDatabaseForTests(null);
+    const fallback = await TranscriptStore.searchSpans({
+      workspacePath,
+      query: "sqlite transcript",
+      limit: 5,
+    });
+
+    expect(fallback).toHaveLength(1);
+    expect(fallback[0]?.eventId).toBe("event-db-1");
   });
 });
