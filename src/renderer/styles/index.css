@@ -25102,7 +25102,7 @@ a,
   opacity: 0.6;
 }
 
-@container (max-width: 240px) {
+@container (max-width: 280px) {
   .sidebar-header,
   .sidebar-ideas-tab {
     padding-left: 12px;
@@ -25174,6 +25174,12 @@ a,
   }
 
   .cli-task-actions {
+    width: 0;
+  }
+
+  .cli-task-item:hover .cli-task-actions,
+  .cli-task-item:focus-within .cli-task-actions,
+  .cli-task-actions:has(.task-item-menu) {
     width: 22px;
   }
 
