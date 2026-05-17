@@ -53,6 +53,7 @@ When a user reports a failure, error, or unexpected behavior that likely involve
 - `npm run package:win:x64` does not run the full workspace build; run `npm run build` first when renderer/electron/daemon/connectors outputs may be stale.
 - `npm run package:win:x64` also runs `scripts/release-artifact-names.mjs` and `scripts/release-artifact-names.mjs --check` after packaging.
 - Use `npm run package:linux:server` to produce a Linux server bundle (daemon/connectors plus launcher assets).
+- `npm run package:linux:server` does not run renderer/electron builds; run `npm run build` first when desktop artifacts may be stale.
 - `npm run package` also runs `scripts/release-artifact-names.mjs` and `scripts/release-artifact-names.mjs --check` to align and verify updater metadata artifact filenames in `release/`.
 - On macOS distribution/signing flows, use `npm run package:mac`; it loads optional repo-root `.env.mac` (see `scripts/mac-notarize.env.example`), runs build + `electron-builder --mac --publish never`, aligns updater artifact names, and runs the macOS artifact smoke check.
 - Use `npm run package:mac:unsigned` to force an unsigned macOS fallback build (sets `COWORK_MAC_UNSIGNED=1` and disables certificate auto-discovery).
@@ -114,6 +115,9 @@ When a user reports a failure, error, or unexpected behavior that likely involve
 - Use `npm run qa:eval:build` to refresh the eval corpus when curating new reliability regressions.
 - Use `npm run qa:eval:run` to replay the eval suite, and `npm run qa:reliability` for the combined eval + battery loop.
 - Use `npm run qa:eval:enforce-regressions` to enforce production-fix-to-eval coverage policy.
+- Use `npm run qa:security:harness` to run the security QA harness checks when validating security-sensitive behavior.
+- Use `npm run qa:security:harness -- --fail-on-findings` when you need high/critical findings to fail CI or local verification runs.
+- For confirmed security fixes, run `npm run qa:security:harness -- --confirmed-fix --fix-id <incident-or-pr-id> --fix-summary "Short fix summary"` to update `scripts/qa/eval-cases/security-harness-regressions.json`.
 - Use `npx vitest run tests/tools/shell-tools.test.ts src/electron/agent/tools/__tests__/browser-tools.test.ts src/electron/security/__tests__/network-policy.test.ts` for a focused runtime-policy regression pass (shell tools + browser tools + network policy).
 - Use `npm run qa:renderer-perf` to run the renderer performance fixture test (`src/renderer/utils/__tests__/renderer-perf-fixture.test.ts`) when validating virtualization/perf-sensitive renderer changes.
 - Use `npm run qa:timeline:backfill -- --db /absolute/path/to.db` then `npm run qa:timeline:enforce -- --db /absolute/path/to.db` when validating timeline completion telemetry changes.
@@ -138,6 +142,6 @@ When a user reports a failure, error, or unexpected behavior that likely involve
 - Use `npm run setup:native` to isolate native module/driver setup issues.
 - Use `npm run setup:server` for server-only dependency/bootstrap flows (for example Linux VPS daemon/connectors).
 - `npm run setup:server` runs `npm install` followed by `npm rebuild --ignore-scripts=false better-sqlite3` to ensure native SQLite bindings are rebuilt for the host.
-- `npm install` triggers `postinstall` (`scripts/codesign_electron_dev.mjs`) to dev-sign local `node_modules` Electron on macOS when available.
-- Use `npm run postinstall` to rerun local Electron dev codesigning when you need to repair/refresh that step without reinstalling dependencies.
-- If local dev codesigning needs overrides, use `COWORK_CODESIGN_IDENTITY` to pin an identity or `COWORK_CODESIGN_SKIP=1` to skip.
+- On macOS, `npm run dev:start` brands the local `node_modules/electron/dist/Electron.app` display name/icon as CoWork OS while preserving `CFBundleName=Electron` and `CFBundleIdentifier=com.github.Electron` for safeStorage compatibility.
+- Set `COWORK_DEV_BRAND_APP=0` to skip dev Electron bundle branding.
+- `scripts/codesign_electron_dev.mjs` is opt-in. Set `COWORK_CODESIGN_ENABLE=1` for ad-hoc development signing, or `COWORK_CODESIGN_IDENTITY` to pin an identity. `COWORK_CODESIGN_SKIP=1` still forces a skip.
