@@ -2,8 +2,8 @@
 layout: home
 hero:
   name: CoWork OS
-  text: The local-first personal agentic OS and everything app
-  tagline: Code, research, design web pages, create documents, work with spreadsheets and decks, run automations, and ask your agent for changes without switching context.
+  text: The GUI-first local AI super app and everything app
+  tagline: Code, email, research, design web pages, create documents, work with spreadsheets and decks, spawn and manage agents, run automations, and ask for changes without jumping between separate coding, mail, browser, Word, Excel, or PowerPoint apps.
   actions:
     - theme: brand
       text: Get Started
@@ -130,12 +130,14 @@ hero:
       link: https://github.com/CoWork-OS/CoWork-OS
 
 features:
-  - title: Personal Agentic OS
-    details: CoWork OS keeps tasks, memory, skills, providers, approvals, channels, devices, and automations in one local-first governed workspace for personal AI agents.
-  - title: Everything App
-    details: Use one workspace for coding, web design, research, documents, spreadsheets, presentations, web pages, PDFs, email, automations, and long-running operational work.
+  - title: AI Super App / Everything App
+    details: CoWork OS keeps coding, email, research, documents, spreadsheets, presentations, web pages, PDFs, memory, skills, providers, approvals, channels, devices, and automations in one local-first governed workspace.
+  - title: GUI-First Agent Management
+    details: Create reusable agents, spawn parallel work, inspect delegated runs, assign tasks, review approvals, and monitor many agents through Agents Hub, Mission Control, task timelines, and visual boards instead of terminal-only workflows.
+  - title: One App For Daily Work
+    details: Use one app instead of separate coding, mail, browser, Word, Excel, and PowerPoint workflows for everyday agentic work.
   - title: Everything Workbench
-    details: Generated documents, spreadsheets, decks, web pages, PDFs, and file outputs live beside the agent. Open artifacts in the app, edit or review them, and ask for follow-up changes with fewer switches into separate office apps.
+    details: Generated documents, spreadsheets, decks, web pages, PDFs, and file outputs live beside the agent. Open artifacts in the app, edit or review them, and ask for follow-up changes without defaulting to separate office apps.
   - title: Production Runtime
     details: Local-first runtime with approvals, guardrails, and governance controls for production agent workflows.
   - title: Linux Server Package
@@ -192,7 +194,7 @@ features:
     details: The automations surface now separates core automation from trigger ingress, device routing, schedules, webhooks, and optional twin features. Existing tasks can also become cron scheduled tasks from the task overflow menu with source task references preserved.
   - title: Heartbeat V3
     details: Default two-lane background automation with cheap Pulse checks, selective Dispatch escalation, signal compression, automation-profile ownership, and truthful Mission Control state.
-  - title: 147 Built-in Skills
+  - title: 150 Built-in Skills
     details: Document creation, web research, code generation, image analysis, React/Next.js implementation guidance, and specialized bundled workflows such as `llm-wiki` for persistent research vaults, `manim-video` for technical animation, `kami` for editorial PDFs and slide decks, `react-best-practices` for React workspace changes, and `taste-skill` for high-agency frontend design. The bundled CoWork Shortcuts pack adds slash-searchable workflow aliases on top of the same skills runtime. Extensible via custom skills, ClawHub installs, external skill imports, and optional read-only external skill directories, with staged scanning and warning/quarantine handling for managed imports.
   - title: LaTeX PDF Artifacts
     details: Source-first `.tex` workflows compile with installed system TeX engines and render paired source/PDF artifact workbenches in task output surfaces.
