@@ -41,7 +41,7 @@ The in-app editor supports the current lightweight document editing surface:
 - copy document text
 - open the file externally for full Microsoft Word, Pages, or LibreOffice behavior
 
-The editor is intended for generated-document review and light editing, not as a full replacement for every Microsoft Word or Google Docs capability. Complex layout fidelity, comments, track changes, embedded objects, and advanced Word features should still be handled in a native document editor through the external-open actions.
+For everyday generated document work, this makes CoWork the default Word-style workspace instead of a separate Microsoft Word, Pages, or Google Docs session. Complex layout fidelity, comments, track changes, embedded objects, and advanced native document features still belong in external editors through the provided open actions.
 
 ## Fullscreen Follow-Up Flow
 
