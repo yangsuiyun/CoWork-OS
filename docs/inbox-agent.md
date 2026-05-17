@@ -10,6 +10,11 @@ The current product shape is:
 - **`@Inbox` from the main composer routes mailbox questions into Inbox Agent** without starting a normal task run.
 - **Provider state is authoritative** for read/unread and supported server actions; the local database is the cache plus agent metadata.
 
+<p align="center">
+  <img src="../resources/branding/images/cowork-os-5.webp" alt="Inbox Agent workspace" width="700">
+  <br><em>Inbox Agent keeps mailbox triage, thread evidence, drafts, and next actions in one workspace.</em>
+</p>
+
 ## What It Does
 
 Inbox Agent helps you move from "read everything" to "act on what matters":
