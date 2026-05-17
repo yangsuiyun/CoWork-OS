@@ -116,6 +116,45 @@ describe("task output summary utilities", () => {
     expect(summary?.primaryOutputPath).toBe("artifacts/hyperframes-demo.mp4");
   });
 
+  it("derives output evidence from assistant frame directives when file events are missing", () => {
+    const events: TaskEvent[] = [
+      makeEvent(
+        "timeline_step_updated",
+        {
+          legacyType: "assistant_message",
+          internal: true,
+          message:
+            'Rendered the status surface.\n\n::frame{path="artifacts/sync-status.html" title="Sync status" kind="progress" height="420"}',
+        },
+        57,
+      ),
+    ];
+
+    const summary = deriveTaskOutputSummaryFromEvents(events);
+    expect(summary).not.toBeNull();
+    expect(summary?.created).toEqual(["artifacts/sync-status.html"]);
+    expect(summary?.primaryOutputPath).toBe("artifacts/sync-status.html");
+  });
+
+  it("derives output evidence from rich-frame tag aliases when file events are missing", () => {
+    const events: TaskEvent[] = [
+      makeEvent(
+        "timeline_step_updated",
+        {
+          legacyType: "assistant_message",
+          internal: true,
+          message:
+            '<rich-frame src="artifacts/investment-performance.html" kind="chart" height="720" title="Investment performance">',
+        },
+        58,
+      ),
+    ];
+
+    const summary = deriveTaskOutputSummaryFromEvents(events);
+    expect(summary).not.toBeNull();
+    expect(summary?.created).toEqual(["artifacts/investment-performance.html"]);
+  });
+
   it("formats filename-only labels and output folder context", () => {
     expect(getFileName("artifacts/legal/negotiation-analysis")).toBe("negotiation-analysis");
     const nestedSummary = sanitizeTaskOutputSummary({
