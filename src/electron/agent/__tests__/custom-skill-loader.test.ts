@@ -435,6 +435,33 @@ describe("CustomSkillLoader", () => {
       expect(skill).toBeDefined();
       expect(skill?.id).toBe("my-skill");
     });
+
+    it("unregisters managed plugin skills for a pack without removing workspace skills", () => {
+      const managedSkill = createTestSkill({
+        id: "smb-plan-payroll",
+        source: "managed",
+        metadata: { pluginSource: "smb-complete" },
+      });
+      const otherPackSkill = createTestSkill({
+        id: "legal-review",
+        source: "managed",
+        metadata: { pluginSource: "commercial-legal-pack" },
+      });
+      const workspaceSkill = createTestSkill({
+        id: "smb-custom-override",
+        source: "workspace",
+        metadata: { pluginSource: "smb-complete" },
+      });
+
+      loader.registerPluginSkill(managedSkill);
+      loader.registerPluginSkill(otherPackSkill);
+      loader.registerPluginSkill(workspaceSkill);
+
+      expect(loader.unregisterPluginSkills("smb-complete")).toBe(1);
+      expect(loader.getSkill("smb-plan-payroll")).toBeUndefined();
+      expect(loader.getSkill("legal-review")).toBeDefined();
+      expect(loader.getSkill("smb-custom-override")).toBeDefined();
+    });
   });
 
   describe("reloadSkills", () => {
