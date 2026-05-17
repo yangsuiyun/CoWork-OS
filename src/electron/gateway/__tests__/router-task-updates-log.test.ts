@@ -144,6 +144,8 @@ describe("MessageRouter.sendTaskUpdate logging", () => {
     const db = createMockDb();
     const router = new MessageRouter(db, {}, undefined);
 
+    const sendSlackA = vi.fn().mockResolvedValue("m-a");
+    const sendSlackB = vi.fn().mockResolvedValue("m-b");
     const slackA = {
       type: "slack",
       status: "connected",
@@ -151,7 +153,7 @@ describe("MessageRouter.sendTaskUpdate logging", () => {
       onMessage: vi.fn(),
       onError: vi.fn(),
       onStatusChange: vi.fn(),
-      sendMessage: vi.fn().mockResolvedValue("m-a"),
+      sendMessage: sendSlackA,
       connect: vi.fn(),
       disconnect: vi.fn(),
     } as Any;
@@ -162,7 +164,7 @@ describe("MessageRouter.sendTaskUpdate logging", () => {
       onMessage: vi.fn(),
       onError: vi.fn(),
       onStatusChange: vi.fn(),
-      sendMessage: vi.fn().mockResolvedValue("m-b"),
+      sendMessage: sendSlackB,
       connect: vi.fn(),
       disconnect: vi.fn(),
     } as Any;
@@ -183,8 +185,8 @@ describe("MessageRouter.sendTaskUpdate logging", () => {
     );
 
     expect(messageId).toBe("m-b");
-    expect(slackA.sendMessage).not.toHaveBeenCalled();
-    expect(slackB.sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendSlackA).not.toHaveBeenCalled();
+    expect(sendSlackB).toHaveBeenCalledTimes(1);
     expect((router as Any).messageRepo.create).toHaveBeenCalledWith(
       expect.objectContaining({
         channelId: "slack-b",
