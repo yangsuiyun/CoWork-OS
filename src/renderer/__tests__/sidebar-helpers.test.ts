@@ -281,6 +281,28 @@ describe("getSidebarSessionTitle", () => {
 
     expect(title).toBe("Go to llmwizard.com and test");
   });
+
+  it("derives readable titles from slash command task titles", () => {
+    const title = getSidebarSessionTitle({
+      task: createTask({
+        title: "/litigation-legal-demand-intake unpaid invoices acme logistics",
+        prompt: "/litigation-legal-demand-intake unpaid invoices acme logistics",
+      }),
+    });
+
+    expect(title).toBe("Litigation Demand Intake: unpaid invoices acme logistics");
+  });
+
+  it("falls back to slash prompt context for older truncated slash titles", () => {
+    const title = getSidebarSessionTitle({
+      task: createTask({
+        title: "Run...",
+        prompt: "/privacy-legal-dpa-review acme processor terms",
+      }),
+    });
+
+    expect(title).toBe("Privacy DPA Review: acme processor terms");
+  });
 });
 
 describe("filterTaskTreeBySearch", () => {
