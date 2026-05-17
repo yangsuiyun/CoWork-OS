@@ -109,6 +109,12 @@ If a single message pushes context past 100% without triggering the 90% proactiv
 
 Every compaction summary is flushed to the MemoryService and (if available) the workspace `.cowork/` daily log. This provides durable backup even if the in-context summary is later dropped by a subsequent compaction.
 
+When **Durable Runtime Context** is enabled, compaction summaries are also recorded in the durable
+runtime-context tables with links back to the source messages they summarize. Overlapping summaries
+can link to parent summaries, forming a summary DAG rather than a flat list. Agents can recover these
+summaries later in the same active task with `context_grep` and expand source links with
+`context_describe`. See [Durable Runtime Context](durable-runtime-context.md).
+
 ### Pinned Messages
 
 The compaction summary is stored as a **pinned message** with the `<cowork_compaction_summary>` tag. Pinned messages survive future compaction rounds — they are never removed by the message-removal strategy.
@@ -184,6 +190,8 @@ Compaction behavior is controlled by constants in `src/electron/agent/executor-h
 | `src/electron/agent/executor.ts` | Summary generation, proactive trigger, overflow guard, memory flush |
 | `src/electron/agent/runtime/SessionRuntime.ts` | Task-session snapshot ownership, resume precedence, and runtime projection |
 | `src/electron/agent/executor-helpers.ts` | Tunable constants |
+| `src/electron/memory/DurableContextService.ts` | Optional task-scoped durable message/summarization index with source links, large-payload refs, and summary DAG parent links |
+| `src/electron/agent/tools/system-tools.ts` | `context_grep` and `context_describe` tool definitions and active-task scope enforcement |
 | `src/renderer/components/TaskTimeline.tsx` | Compaction event rendering with collapsible sections |
 | `src/renderer/styles/index.css` | Summary section styling |
 
@@ -196,5 +204,6 @@ Compaction behavior is controlled by constants in `src/electron/agent/executor-h
 5. **Overflow guard** — Ensures summary + remaining messages stay below 95%
 6. **Pinned insertion** — Summary upserted as a pinned `<cowork_compaction_summary>` user message
 7. **Memory flush** — Summary stored in MemoryService for cross-session recall
-8. **UI event** — `context_summarized` event emitted for timeline rendering
-9. **Reactive fallback** — Standard `compactMessagesWithMeta()` runs if proactive didn't trigger
+8. **Durable context write** — If enabled, source messages and summary rows are stored in task-scoped durable runtime context
+9. **UI event** — `context_summarized` event emitted for timeline rendering
+10. **Reactive fallback** — Standard `compactMessagesWithMeta()` runs if proactive didn't trigger
