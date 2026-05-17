@@ -6,6 +6,11 @@ Heartbeat v3 is the default background automation model exposed here. Mission Co
 
 Access it from **Settings** > **Mission Control**. For company-ops workflows, you can also jump into it directly from **Settings** > **Companies** with the selected company preloaded.
 
+<p align="center">
+  <img src="../resources/branding/images/cowork-os-8.webp" alt="Mission Control board" width="700">
+  <br><em>Mission Control brings task queues, assigned work, live feed, and review state into one operations view.</em>
+</p>
+
 Mission Control now sits alongside the other operational entry points:
 
 - **Devices** for machine-level task routing and remote execution
