@@ -332,23 +332,27 @@ export class MemoryService {
     }
 
     if (MemoryFeaturesManager.loadSettings().structuredObservationsEnabled !== false) {
-      MemoryObservationService.createForMemory(
-        {
-          ...memory,
-          summary: localSummary || memory.summary,
-          content: truncatedContent,
-          isPrivate: finalIsPrivate,
-        },
-        {
-          origin: options?.origin ?? (taskId ? "task" : "unknown"),
-          captureReason: options?.signalFamily || "memory_capture",
-          privacyState: finalIsPrivate
-            ? privacyPrepared.hadPrivateBlock
-              ? "redacted"
-              : "private"
-            : "normal",
-        },
-      );
+      try {
+        MemoryObservationService.createForMemory(
+          {
+            ...memory,
+            summary: localSummary || memory.summary,
+            content: truncatedContent,
+            isPrivate: finalIsPrivate,
+          },
+          {
+            origin: options?.origin ?? (taskId ? "task" : "unknown"),
+            captureReason: options?.signalFamily || "memory_capture",
+            privacyState: finalIsPrivate
+              ? privacyPrepared.hadPrivateBlock
+                ? "redacted"
+                : "private"
+              : "normal",
+          },
+        );
+      } catch {
+        // Structured observations are an auxiliary index; memory capture should still succeed.
+      }
     }
 
     // Queue a batched LLM digest only when the signal is worth it. Routine entries
