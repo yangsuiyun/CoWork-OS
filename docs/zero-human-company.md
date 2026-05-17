@@ -8,6 +8,11 @@ This is not a claim that the product removes human judgment from all business op
 - agents turn strategy into ongoing operational work
 - Mission Control provides visibility into planning, execution, and review
 
+<p align="center">
+  <img src="../resources/branding/images/cowork-os-2.webp" alt="Company operations dashboard" width="700">
+  <br><em>Company workspaces track goals, operator agents, and autonomous operating loops.</em>
+</p>
+
 ---
 
 ## What This Feature Is
