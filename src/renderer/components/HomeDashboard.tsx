@@ -20,7 +20,13 @@ import {
   Mail,
 } from "lucide-react";
 import type { FileViewerResult } from "../../electron/preload";
-import { Task, Workspace } from "../../shared/types";
+import type {
+  EverydayActionReceipt,
+  EverydayAgentProfileResult,
+  ProactiveSuggestion,
+  Task,
+  Workspace,
+} from "../../shared/types";
 import {
   formatOutputLocationLabel,
   getFileName,
@@ -58,9 +64,17 @@ interface HomeDashboardProps {
   onNewSession: () => void;
   onOpenScheduledTasks: () => void;
   onOpenMissionControl: () => void;
+  onOpenEverydayAgent: () => void;
   onOpenEventTriggers: () => void;
   onOpenSelfImprove: () => void;
   automationInboxFocusTick?: number;
+}
+
+interface EverydayAgentHomeSnapshot {
+  status: "enabled" | "paused" | "disabled" | "blocked" | "unavailable";
+  activeCapabilities: number;
+  attentionCount: number;
+  suggestionCount: number;
 }
 
 interface CompanionSuggestion {
@@ -396,6 +410,7 @@ export function HomeDashboard({
   onNewSession,
   onOpenScheduledTasks,
   onOpenMissionControl,
+  onOpenEverydayAgent,
   onOpenEventTriggers,
   onOpenSelfImprove,
   automationInboxFocusTick,
@@ -414,8 +429,23 @@ export function HomeDashboard({
   const [companionLoading, setCompanionLoading] = useState(false);
   const [companionError, setCompanionError] = useState<string | null>(null);
   const [selectedCompanionItemId, setSelectedCompanionItemId] = useState<string | null>(null);
+  const [everydayAgentSnapshot, setEverydayAgentSnapshot] =
+    useState<EverydayAgentHomeSnapshot | null>(null);
   const automationInboxRef = useRef<HTMLDivElement>(null);
   const currentWorkspaceName = workspace?.name || "Workspace";
+  const everydayAgentStatusText = everydayAgentSnapshot
+    ? everydayAgentSnapshot.status === "enabled"
+      ? everydayAgentSnapshot.attentionCount > 0 || everydayAgentSnapshot.suggestionCount > 0
+        ? `${everydayAgentSnapshot.attentionCount} needs attention, ${everydayAgentSnapshot.suggestionCount} suggestions`
+        : `${everydayAgentSnapshot.activeCapabilities} capabilities active`
+      : everydayAgentSnapshot.status === "paused"
+        ? "Paused"
+        : everydayAgentSnapshot.status === "blocked"
+          ? "Blocked by policy"
+          : everydayAgentSnapshot.status === "disabled"
+            ? "Not enabled"
+            : "Unavailable"
+    : "Loading status";
 
   useEffect(() => {
     let cancelled = false;
@@ -436,6 +466,62 @@ export function HomeDashboard({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const profileResult = (await window.electronAPI.everydayAgentGetProfile()) as EverydayAgentProfileResult;
+        const receiptRows = (await window.electronAPI.everydayAgentListReceipts({
+          profileId: profileResult.profile.id,
+          workspaceId: workspace?.id,
+          limit: 20,
+        })) as EverydayActionReceipt[];
+        const suggestionRows =
+          workspace?.id && window.electronAPI.listSuggestions
+            ? (((await window.electronAPI.listSuggestions(workspace.id)) || []) as ProactiveSuggestion[])
+            : [];
+
+        if (cancelled) return;
+
+        const status: EverydayAgentHomeSnapshot["status"] = profileResult.compiledPolicy.adminPolicy
+          .blocked
+          ? "blocked"
+          : !profileResult.profile.enabled
+            ? "disabled"
+            : !profileResult.compiledPolicy.enabled
+              ? "paused"
+              : "enabled";
+        const attentionCount = receiptRows.filter((receipt) =>
+          ["blocked", "failed", "paused", "previewed"].includes(receipt.status),
+        ).length;
+        const suggestionCount = suggestionRows.filter(
+          (suggestion) => !suggestion.dismissed && !suggestion.actedOn,
+        ).length;
+
+        setEverydayAgentSnapshot({
+          status,
+          activeCapabilities: profileResult.compiledPolicy.allowedCapabilities.length,
+          attentionCount,
+          suggestionCount,
+        });
+      } catch {
+        if (!cancelled) {
+          setEverydayAgentSnapshot({
+            status: "unavailable",
+            activeCapabilities: 0,
+            attentionCount: 0,
+            suggestionCount: 0,
+          });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1056,6 +1142,15 @@ export function HomeDashboard({
             )}
           </div>
           <div className="home-automation-strip">
+            <button type="button" className="home-auto-card" onClick={onOpenEverydayAgent}>
+              <div className="home-auto-card-icon">
+                <Sparkles size={20} />
+              </div>
+              <div className="home-auto-card-copy">
+                <strong>Everyday Agent</strong>
+                <span>{everydayAgentStatusText}</span>
+              </div>
+            </button>
             <button type="button" className="home-auto-card" onClick={onOpenScheduledTasks}>
               <div className="home-auto-card-icon">
                 <TimerReset size={20} />
