@@ -30,6 +30,11 @@ That makes `Routines` the main user-facing automation abstraction without redefi
 
 Task view can also create a direct scheduled task with `... > Add automation...`. That flow is intentionally a shortcut into `Scheduled Tasks`, not a new core cognition loop and not a separate routine authoring path. It is useful when a completed or in-progress task should become a recurring cron-backed check while preserving a source task title, task ID, and `cowork://tasks/<taskId>` reference. See [Task Automations](task-automations.md).
 
+<p align="center">
+  <img src="../resources/branding/images/cowork-os-6.webp" alt="Automations control center" width="700">
+  <br><em>The Automations surface separates scheduled work, triggered work, and core automation controls.</em>
+</p>
+
 ## Ownership Model
 
 Core automation is owned by `AutomationProfile`, not by persona templates and not by raw role editing.
