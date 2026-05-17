@@ -3118,6 +3118,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     teamDomain?: string;
     tenant?: string;
     loginHint?: string;
+    prompt?: "select_account" | "consent";
   }) => ipcRenderer.invoke(IPC_CHANNELS.MCP_CONNECTOR_OAUTH_START, payload),
 
   // MCP Status change event listener
@@ -6110,6 +6111,7 @@ export interface ElectronAPI {
     teamDomain?: string;
     tenant?: string;
     loginHint?: string;
+    prompt?: "select_account" | "consent";
   }) => Promise<{
     provider:
       | "salesforce"
