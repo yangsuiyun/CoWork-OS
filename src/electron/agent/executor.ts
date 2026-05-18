@@ -45,6 +45,7 @@ import {
   type SkillApplicationTrigger,
   type QuotedAssistantMessage,
   type TaskFollowUpInput,
+  type TaskStopReason,
 } from "../../shared/types";
 import { resolveModelPreferenceToModelKey } from "../../shared/agent-preferences";
 import { isVerificationStepDescription } from "../../shared/plan-utils";
@@ -90,6 +91,7 @@ import {
   type SessionRuntimeState,
   type SessionRuntimeTaskProjection,
 } from "./runtime/SessionRuntime";
+import { defaultStepLoopBudget, type LoopBudgetStopReason } from "./runtime/LoopBudgetPolicy";
 import type {
   TurnKernelIterationState,
   TurnKernelPolicy,
@@ -4944,15 +4946,7 @@ ${transcript}
   private softDeadlineTriggered: boolean = false;
   private wrapUpRequested: boolean = false;
   private completionVerificationMetadata: VerificationCompletionMetadata | null = null;
-  private stepStopReasons: Set<
-    | "completed"
-    | "max_turns"
-    | "tool_error"
-    | "contract_block"
-    | "verification_block"
-    | "awaiting_user_input"
-    | "dependency_unavailable"
-  > = new Set();
+  private stepStopReasons: Set<TaskStopReason> = new Set();
   private capabilityGapSignalCount = 0;
   private capabilityGapHintInjectedTurn = -1;
   private capabilityGapHintInjectedSteps: Set<string> = new Set();
@@ -18024,15 +18018,7 @@ You are continuing a previous conversation. The context from the previous conver
 
   private ensureReliabilityTrackingSets(): void {
     if (!(this.stepStopReasons instanceof Set)) {
-      this.stepStopReasons = new Set<
-        | "completed"
-        | "max_turns"
-        | "tool_error"
-        | "contract_block"
-        | "verification_block"
-        | "awaiting_user_input"
-        | "dependency_unavailable"
-      >();
+      this.stepStopReasons = new Set<TaskStopReason>();
     }
     if (!(this.taskFailureDomains instanceof Set)) {
       this.taskFailureDomains = new Set();
@@ -24903,10 +24889,11 @@ Return ONLY a JSON object:
       let foundBrowserInspectionEvidence = false;
       let browserInspectionEvidenceText = "";
       let currentStepTargetVerificationObserved = false;
-      const maxIterations = 32; // Allow enough iterations for scaffolding steps and build-fix cycles
+      const stepLoopBudget = defaultStepLoopBudget();
+      const maxIterations = stepLoopBudget.maxIterations;
       const maxEmptyResponses = 3;
-      const maxMaxTokensRecoveries = 6; // Max recovery attempts for max_tokens truncation
-      const maxContextCapacityRecoveries = 2;
+      const maxMaxTokensRecoveries = stepLoopBudget.maxMaxTokenRecoveries;
+      const maxContextCapacityRecoveries = stepLoopBudget.maxContextRecoveries;
       let maxTokensRecoveryCount = 0;
       let contextCapacityRecoveryCount = 0;
       let lastTurnMemoryRecallQuery = "";
@@ -29298,18 +29285,36 @@ Return ONLY a JSON object:
         mode: "step",
         messages,
         maxIterations,
+        maxLlmCalls: stepLoopBudget.maxLlmCalls,
         maxEmptyResponses,
+        maxRecoveredResponses: stepLoopBudget.maxRecoveredResponses,
+        maxRepeatedIterations: stepLoopBudget.maxRepeatedIterations,
         policy: stepKernelPolicy,
       });
       messages = stepKernelOutcome.messages;
       iterationCount = stepKernelOutcome.iterations;
       emptyResponseCount = stepKernelOutcome.emptyResponseCount;
+      const stepLoopBudgetStopReason = stepKernelOutcome.loopBudgetStopReason;
+      if (stepLoopBudgetStopReason) {
+        stepFailed = true;
+        lastFailureReason = this.getStepLoopBudgetFailureReason(stepLoopBudgetStopReason);
+        this.emitEvent("log", {
+          metric: "step_loop_budget_stop",
+          stepId: step.id,
+          reason: stepLoopBudgetStopReason,
+          message: lastFailureReason,
+        });
+      }
 
       if (stepKernelSkipped || stepKernelRetried) {
         return;
       }
 
-      if (hadRecoverableUnavailableAlternative && (hadToolSuccessAfterError || hadAnyToolSuccess)) {
+      if (
+        !stepLoopBudgetStopReason &&
+        hadRecoverableUnavailableAlternative &&
+        (hadToolSuccessAfterError || hadAnyToolSuccess)
+      ) {
         stepFailed = false;
         if (/Tool .* failed: Tool not available/i.test(String(lastFailureReason || ""))) {
           lastFailureReason = "";
@@ -29719,6 +29724,7 @@ Return ONLY a JSON object:
 
       if (
         stepFailed &&
+        !stepLoopBudgetStopReason &&
         strictVerificationOutcome === "required_fail" &&
         enforceVerificationOk &&
         !verificationRewindAttempted &&
@@ -29817,6 +29823,7 @@ Return ONLY a JSON object:
         awaitingUserInput,
         iterationCount,
         maxIterations,
+        loopBudgetStopReason: stepLoopBudgetStopReason,
       });
       this.stepStopReasons.add(stepStopReason);
       this.emitEvent("log", {
@@ -29872,6 +29879,7 @@ Return ONLY a JSON object:
         const recoveryState = runtime.getRecoveryState();
         const shouldHandleRecovery =
           !isNonBlockingVerificationFailure &&
+          !stepLoopBudgetStopReason &&
           (userRequestedRecovery || autoRecoveryRequested) &&
           recoveryClass !== "user_blocker" &&
           recoveryState.lastRecoveryFailureSignature !== recoverySignature;
@@ -30897,17 +30905,12 @@ Return ONLY a JSON object:
     awaitingUserInput: boolean;
     iterationCount: number;
     maxIterations: number;
-  }):
-    | "completed"
-    | "max_turns"
-    | "tool_error"
-    | "contract_block"
-    | "verification_block"
-    | "awaiting_user_input"
-    | "dependency_unavailable" {
+    loopBudgetStopReason?: LoopBudgetStopReason;
+  }): TaskStopReason {
     if (opts.awaitingUserInput) return "awaiting_user_input";
     const lower = String(opts.failureReason || "").toLowerCase();
     if (!opts.stepFailed) return "completed";
+    if (opts.loopBudgetStopReason) return opts.loopBudgetStopReason;
     if (opts.iterationCount >= opts.maxIterations) return "max_turns";
     if (
       /enotfound|err_network|network changed|opening handshake has timed out|dependency_unavailable|status:\s*408/.test(
@@ -30923,6 +30926,17 @@ Return ONLY a JSON object:
       return "verification_block";
     }
     return "tool_error";
+  }
+
+  private getStepLoopBudgetFailureReason(reason: LoopBudgetStopReason): string {
+    switch (reason) {
+      case "max_llm_calls":
+        return "Step loop budget exhausted: reached the total LLM call limit.";
+      case "max_recovered_responses":
+        return "Step loop budget exhausted: reached the recovered response limit.";
+      case "max_repeated_iterations":
+        return "Step loop budget exhausted: reached the repeated iteration limit.";
+    }
   }
 
   private inferFailureDomainsFromReason(reason: string): string[] {
@@ -30960,15 +30974,7 @@ Return ONLY a JSON object:
     coreOutcome: "ok" | "partial" | "failed";
     dependencyOutcome: "healthy" | "degraded" | "down";
     failureDomains: string[];
-    stopReasons: Array<
-      | "completed"
-      | "max_turns"
-      | "tool_error"
-      | "contract_block"
-      | "verification_block"
-      | "awaiting_user_input"
-      | "dependency_unavailable"
-    >;
+    stopReasons: TaskStopReason[];
   } {
     this.ensureVerificationOutcomeSets();
     const domains = new Set<string>(this.taskFailureDomains);
