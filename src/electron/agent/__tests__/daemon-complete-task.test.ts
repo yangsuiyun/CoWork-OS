@@ -4,6 +4,12 @@ import { AgentDaemon } from "../daemon";
 import type { TaskOutputSummary } from "../../../shared/types";
 import { PersonalityManager } from "../../settings/personality-manager";
 
+vi.mock("electron", () => ({
+  app: {
+    getPath: vi.fn().mockReturnValue("/tmp"),
+  },
+}));
+
 vi.spyOn(PersonalityManager, "recordTaskCompleted").mockImplementation(() => {});
 
 function createDaemonLike() {
@@ -595,6 +601,222 @@ describe("AgentDaemon.completeTask", () => {
     expect(daemonLike.taskRepo.update).not.toHaveBeenCalledWith(
       "task-1",
       expect.objectContaining({ status: "failed" }),
+    );
+  });
+
+  it("preserves explicit failed terminal metadata from executor finalization", () => {
+    const daemonLike = createDaemonLike();
+    daemonLike.getUnresolvedFailedSteps.mockReturnValue([]);
+
+    AgentDaemon.prototype.completeTask.call(daemonLike, "task-1", "Cannot verify required evidence.", {
+      terminalStatus: "failed",
+      terminalKind: "failed",
+      failureClass: "required_verification",
+      failedStepIds: ["step:verify"],
+      terminalStatusReason: "Task missing required verification evidence.",
+      outputSummary: {
+        outputCount: 1,
+        textOutputCount: 1,
+      },
+    });
+
+    expect(daemonLike.taskRepo.update).toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        status: "failed",
+        terminalStatus: "failed",
+        failureClass: "required_verification",
+      }),
+    );
+    expect(daemonLike.taskRepo.update).not.toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        status: "completed",
+        terminalStatus: "ok",
+      }),
+    );
+    const terminalPayload = (daemonLike.logEvent as Any).mock.calls.find(
+      (call: unknown[]) => call[1] === "task_status",
+    )?.[2];
+    expect(terminalPayload).toEqual(
+      expect.objectContaining({
+        status: "failed",
+        terminalStatus: "failed",
+        terminalKind: "failed",
+        failureClass: "required_verification",
+        failedStepIds: ["step:verify"],
+        message: "Task failed",
+      }),
+    );
+  });
+
+  it("does not downgrade explicit failed terminal metadata when completion gates fail", () => {
+    const daemonLike = createDaemonLike();
+    daemonLike.taskRepo.findById.mockReturnValue({
+      id: "task-1",
+      title: "Task 1",
+      prompt: "Verify required output evidence",
+      status: "executing",
+      workspaceId: "workspace-1",
+      parentTaskId: "parent-task",
+      agentType: "sub",
+      agentConfig: {
+        reviewPolicy: "strict",
+      },
+    });
+    daemonLike.getUnresolvedFailedSteps.mockReturnValue([]);
+    daemonLike.runQuickQualityPass.mockReturnValue({
+      passed: false,
+      issues: ["strict_mode_requires_more_complete_summary"],
+    });
+    daemonLike.hasEvidenceForKeyClaims.mockReturnValue({
+      passed: false,
+      keyClaims: ["The required verification passed."],
+    });
+
+    AgentDaemon.prototype.completeTask.call(daemonLike, "task-1", "Cannot verify required evidence.", {
+      terminalStatus: "failed",
+      terminalKind: "failed",
+      failureClass: "required_verification",
+      failedStepIds: ["step:verify"],
+      terminalStatusReason: "Task missing required verification evidence.",
+      outputSummary: {
+        outputCount: 1,
+        textOutputCount: 1,
+      },
+    });
+
+    expect(daemonLike.taskRepo.update).toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        status: "failed",
+        terminalStatus: "failed",
+        failureClass: "required_verification",
+      }),
+    );
+    expect(daemonLike.taskRepo.update).not.toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        status: "completed",
+        terminalStatus: "partial_success",
+        failureClass: "contract_error",
+      }),
+    );
+    const terminalPayload = (daemonLike.logEvent as Any).mock.calls.find(
+      (call: unknown[]) => call[1] === "task_status",
+    )?.[2];
+    expect(terminalPayload).toEqual(
+      expect.objectContaining({
+        status: "failed",
+        terminalStatus: "failed",
+        terminalKind: "failed",
+        failureClass: "required_verification",
+        failedStepIds: ["step:verify"],
+        message: "Task failed",
+      }),
+    );
+  });
+
+  it("treats terminalKind failed as an explicit failed terminal outcome", () => {
+    const daemonLike = createDaemonLike();
+    daemonLike.getUnresolvedFailedSteps.mockReturnValue([]);
+
+    AgentDaemon.prototype.completeTask.call(daemonLike, "task-1", "Cannot verify required evidence.", {
+      terminalStatus: "ok",
+      terminalKind: "failed",
+      failureClass: "required_verification",
+    });
+
+    expect(daemonLike.taskRepo.update).toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        status: "failed",
+        terminalStatus: "failed",
+        failureClass: "required_verification",
+      }),
+    );
+    const terminalPayload = (daemonLike.logEvent as Any).mock.calls.find(
+      (call: unknown[]) => call[1] === "task_status",
+    )?.[2];
+    expect(terminalPayload).toEqual(
+      expect.objectContaining({
+        status: "failed",
+        terminalStatus: "failed",
+        message: "Task failed",
+      }),
+    );
+  });
+
+  it("does not run completion-only side effects for explicit failed terminal outcomes", async () => {
+    const daemonLike = createDaemonLike();
+    const onTaskCompleted = vi.fn().mockResolvedValue(undefined);
+    daemonLike.comparisonService = { onTaskCompleted };
+    daemonLike.taskRepo.findById.mockReturnValue({
+      id: "task-1",
+      title: "Task 1",
+      prompt: "Run tests, edit files, deploy production changes, verify security, and publish release",
+      status: "executing",
+      workspaceId: "workspace-1",
+      agentType: "main",
+      worktreeStatus: "active",
+      worktreePath: "/tmp/task-1",
+      comparisonSessionId: "comparison-1",
+      agentConfig: {
+        reviewPolicy: "strict",
+        entropySweepPolicy: "strict",
+      },
+    });
+    daemonLike.worktreeManager.getSettings.mockReturnValue({
+      autoCommitOnComplete: true,
+      commitMessagePrefix: "task: ",
+    });
+    daemonLike.getUnresolvedFailedSteps.mockReturnValue([]);
+    daemonLike.eventRepo.findByTaskId.mockReturnValue([
+      {
+        id: "e1",
+        taskId: "task-1",
+        timestamp: Date.now(),
+        type: "tool_call",
+        payload: { tool: "run_command", input: { command: "npm test" } },
+      },
+    ]);
+
+    AgentDaemon.prototype.completeTask.call(daemonLike, "task-1", "Cannot verify required evidence.", {
+      terminalStatus: "failed",
+      terminalKind: "failed",
+      failureClass: "required_verification",
+      failedStepIds: ["step:verify"],
+      outputSummary: {
+        outputCount: 1,
+        textOutputCount: 1,
+        created: ["artifacts/report.md"],
+        primaryOutputPath: "artifacts/report.md",
+      },
+    });
+    await Promise.resolve();
+
+    expect(daemonLike.taskRepo.update).toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        status: "failed",
+        terminalStatus: "failed",
+        failureClass: "required_verification",
+      }),
+    );
+    expect(daemonLike.runPostCompletionVerification).not.toHaveBeenCalled();
+    expect(daemonLike.runPostTaskEntropySweep).not.toHaveBeenCalled();
+    expect(daemonLike.worktreeManager.commitTaskChanges).not.toHaveBeenCalled();
+    expect(onTaskCompleted).not.toHaveBeenCalled();
+    expect(PersonalityManager.recordTaskCompleted).not.toHaveBeenCalled();
+    expect(daemonLike.logEvent).not.toHaveBeenCalledWith(
+      "task-1",
+      "verification_started",
+      expect.anything(),
+    );
+    expect(daemonLike.logEvent).not.toHaveBeenCalledWith(
+      "task-1",
+      "entropy_sweep_started",
+      expect.anything(),
     );
   });
 
