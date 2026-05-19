@@ -36,6 +36,71 @@ vi.mock("../../settings/personality-manager", () => ({
 }));
 
 describe("TaskExecutor chat mode", () => {
+  const createInferredChatExecutor = (prompt: string, agentConfig: Record<string, unknown> = {}) => {
+    const executor = Object.create(TaskExecutor.prototype) as Any;
+    executor.task = {
+      id: "task-inferred-chat",
+      title: prompt,
+      prompt,
+      userPrompt: prompt,
+      rawPrompt: prompt,
+      createdAt: Date.now(),
+      agentConfig: {
+        executionMode: "execute",
+        executionModeSource: "strategy",
+        conversationMode: "chat",
+        taskIntent: "chat",
+        ...agentConfig,
+      },
+    };
+    return executor;
+  };
+
+  const createExecuteUnlockedRoutingExecutor = (
+    prompt: string,
+    agentConfig: Record<string, unknown> = {},
+  ) => {
+    const executor = createInferredChatExecutor(prompt, agentConfig);
+    executor.workspace = {
+      id: "ws-routing",
+      path: "/tmp",
+      isTemp: true,
+      permissions: { read: true, write: true, delete: true, network: true, shell: true },
+    };
+    executor.daemon = {
+      updateTaskStatus: vi.fn(),
+      updateTask: vi.fn(),
+      getTransientRetryCount: vi.fn().mockReturnValue(0),
+    };
+    executor.toolRegistry = {
+      cleanup: vi.fn().mockResolvedValue(undefined),
+    };
+    executor.emitEvent = vi.fn();
+    executor.handleCompanionPrompt = vi.fn().mockResolvedValue(undefined);
+    executor.maybeHandleExplicitClaudeCodeDelegation = vi.fn().mockResolvedValue(false);
+    executor.maybeHandleOnboardingSlashCommand = vi.fn().mockResolvedValue(false);
+    executor.maybePrepareInitialGoalSlashCommand = vi.fn().mockResolvedValue(false);
+    executor.maybeHandleScheduleSlashCommand = vi.fn().mockResolvedValue(false);
+    executor.maybeHandleSkillSlashCommandOrInlineChain = vi.fn().mockResolvedValue(false);
+    executor.maybeHandleNaturalLlmWikiPrompt = vi.fn().mockResolvedValue(undefined);
+    executor.maybeAutoApplyExplicitSkillInvocation = vi.fn().mockResolvedValue(undefined);
+    executor.maybeHandleHighConfidenceSkillRouting = vi.fn().mockResolvedValue(undefined);
+    executor.analyzeTask = vi.fn().mockResolvedValue({ complexity: "simple" });
+    executor.ensureVerificationOutcomeSets = vi.fn();
+    executor.getBudgetConstrainedFailureStepIdSet = vi.fn().mockReturnValue(new Set());
+    executor.nonBlockingVerificationFailedStepIds = new Set();
+    executor.blockingVerificationFailedStepIds = new Set();
+    executor.stepStopReasons = new Map();
+    executor.taskFailureDomains = new Set();
+    executor.completionVerificationMetadata = null;
+    executor.terminalStatus = "ok";
+    executor.failureClass = undefined;
+    executor.cancelled = false;
+    executor.lastUserMessage = prompt;
+    executor.cancelReason = undefined;
+    return executor;
+  };
+
   it("records executor conversation history into durable context", () => {
     const executor = Object.create(TaskExecutor.prototype) as Any;
     executor.task = { id: "task-durable-history" };
@@ -154,6 +219,13 @@ describe("TaskExecutor chat mode", () => {
     expect(schedule).not.toHaveBeenCalled();
     expect(skillRouting).not.toHaveBeenCalled();
     expect(highConfidenceRouting).not.toHaveBeenCalled();
+    expect(executor.emitEvent).toHaveBeenCalledWith(
+      "log",
+      expect.objectContaining({
+        reason: "initial_companion_prompt",
+        explicitChat: true,
+      }),
+    );
   });
 
   it("does not treat inferred chat intent as explicit chat mode", async () => {
@@ -175,6 +247,9 @@ describe("TaskExecutor chat mode", () => {
     };
 
     expect((TaskExecutor as Any).prototype.isExplicitChatExecutionMode.call(executor)).toBe(false);
+    expect(
+      (TaskExecutor as Any).prototype.shouldHandleInitialPromptAsCompanion.call(executor, "hello"),
+    ).toBe(true);
 
     executor.shouldEmitAnswerFirst = vi.fn().mockReturnValue(true);
     executor.hasDirectAnswerReady = vi.fn().mockReturnValue(true);
@@ -261,6 +336,95 @@ describe("TaskExecutor chat mode", () => {
     expect((TaskExecutor as Any).prototype.buildFollowUpResultSummary.call(executor)).toBe(
       "Goal active.\n\nObjective: Track release blockers",
     );
+  });
+
+  it("does not route inferred chat live-lookup prompts through companion mode", () => {
+    const executor = createInferredChatExecutor(
+      "please tell me which football clubs have games tomorrow in premier league",
+    );
+
+    expect(
+      (TaskExecutor as Any).prototype.shouldHandleInitialPromptAsCompanion.call(
+        executor,
+        "please tell me which football clubs have games tomorrow in premier league",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps ambiguous inferred chat prompts in the normal executor path", () => {
+    const prompts = [
+      "are there premier league games tomorrow",
+      "weather in paris today",
+      "is apple stock up today",
+      "/schedule tomorrow remind me to send the report",
+      "/goal keep an eye on deploy health",
+      "/skill pdf summarize report.pdf",
+      "Use the Codex CLI Agent skill to review this change",
+      "answer_first=true explain the tradeoffs before planning",
+      "summarize report.pdf",
+      "describe this image",
+      "Attached files:\n- photo.png\nWhat is in this image?",
+      "PDF attachment: report.pdf\nPath: .cowork/uploads/123/report.pdf\nSummarize it",
+    ];
+
+    for (const prompt of prompts) {
+      const executor = createInferredChatExecutor(prompt);
+
+      expect(
+        (TaskExecutor as Any).prototype.shouldHandleInitialPromptAsCompanion.call(executor, prompt),
+      ).toBe(false);
+    }
+  });
+
+  it("keeps external runtime tasks out of inferred companion routing", () => {
+    const executor = createInferredChatExecutor("hello", {
+      externalRuntime: {
+        kind: "acpx",
+        agent: "claude",
+        sessionMode: "persistent",
+        outputMode: "json",
+        permissionMode: "approve-reads",
+      },
+    });
+
+    expect(
+      (TaskExecutor as Any).prototype.shouldHandleInitialPromptAsCompanion.call(executor, "hello"),
+    ).toBe(false);
+  });
+
+  it("keeps explicit chat ACP tasks on the external runtime path", async () => {
+    const executor = createExecuteUnlockedRoutingExecutor("hello", {
+      executionMode: "chat",
+      executionModeSource: "user",
+      conversationMode: "hybrid",
+      externalRuntime: {
+        kind: "acpx",
+        agent: "claude",
+        sessionMode: "persistent",
+        outputMode: "json",
+        permissionMode: "approve-reads",
+      },
+    });
+    executor.executeWithAcpxRuntime = vi.fn().mockResolvedValue(undefined);
+
+    await (TaskExecutor as Any).prototype.executeUnlocked.call(executor);
+
+    expect(executor.executeWithAcpxRuntime).toHaveBeenCalledWith("hello");
+    expect(executor.handleCompanionPrompt).not.toHaveBeenCalled();
+    expect(executor.maybeHandleScheduleSlashCommand).not.toHaveBeenCalled();
+  });
+
+  it("keeps slash commands on the executor entrypoint path", async () => {
+    const executor = createExecuteUnlockedRoutingExecutor(
+      "/schedule tomorrow remind me to send the report",
+    );
+    executor.maybeHandleScheduleSlashCommand = vi.fn().mockResolvedValue(true);
+
+    await (TaskExecutor as Any).prototype.executeUnlocked.call(executor);
+
+    expect(executor.handleCompanionPrompt).not.toHaveBeenCalled();
+    expect(executor.maybeHandleScheduleSlashCommand).toHaveBeenCalledTimes(1);
+    expect(executor.analyzeTask).not.toHaveBeenCalled();
   });
 
   it("only exposes the last non-verification step as an assistant bubble", () => {

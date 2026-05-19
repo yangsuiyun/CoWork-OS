@@ -4202,6 +4202,89 @@ export class TaskExecutor {
     );
   }
 
+  private shouldHandleInitialPromptAsCompanion(prompt: string): boolean {
+    if (this.shouldUseReadOnlyPdfAttachmentMode()) return false;
+    if (this.isAcpxExternalRuntimeTask()) return false;
+    if (this.isExplicitChatExecutionMode()) return true;
+
+    const agentConfig = this.task.agentConfig;
+    const source = agentConfig?.executionModeSource;
+    const userSelectedNonChatMode = source === "user" && agentConfig?.executionMode !== "chat";
+    if (userSelectedNonChatMode) return false;
+
+    const conversationMode = agentConfig?.conversationMode;
+    const taskIntent = agentConfig?.taskIntent;
+    const strategyCompanionMode =
+      conversationMode === "chat" ||
+      conversationMode === "think" ||
+      taskIntent === "chat" ||
+      taskIntent === "thinking";
+    if (!strategyCompanionMode) return false;
+
+    const text = String(prompt || this.getContractPrompt() || "").trim();
+    if (!text) return false;
+    if (this.promptRequiresLiveLookup(text)) return false;
+    if (this.promptHasExecutorRoutingCue(text)) return false;
+    return this.isClearlyTrivialCompanionPrompt(text);
+  }
+
+  private promptRequiresLiveLookup(prompt: string): boolean {
+    const normalized = String(prompt || "")
+      .trim()
+      .toLowerCase();
+    if (!normalized) return false;
+
+    const timeSensitiveCue =
+      /\b(?:today|tomorrow|yesterday|tonight|this\s+(?:week|month|season|year)|next\s+(?:week|month|season|year)|latest|current|recent|newest|now|upcoming|live)\b/.test(
+        normalized,
+      );
+    const volatileDataCue =
+      /\b(?:fixture|fixtures|schedule|games?|matches?|scores?|results?|standings|table|odds|price|prices|stock|weather|forecast|news|release|version)\b/.test(
+        normalized,
+      );
+
+    return timeSensitiveCue || volatileDataCue;
+  }
+
+  private promptHasExecutorRoutingCue(prompt: string): boolean {
+    const normalized = String(prompt || "")
+      .trim()
+      .toLowerCase();
+    if (!normalized) return false;
+    // Routing boundary: keep this denylist aligned with executor entrypoints that must
+    // run before companion short-circuiting (slash commands, runtimes, skills, attachments).
+    if (/^\s*\/[\w-]+/.test(prompt)) return true;
+    if (/\banswer_first\s*=/.test(normalized)) return true;
+    if (/\b(?:skill|codex\s+cli\s+agent|claude\s+code|acpx)\b/.test(normalized)) return true;
+    if (
+      /\b(?:attached\s+files?|pdf\s+attachment|path:\s*|file|pdf|image|screenshot)\b/.test(
+        normalized,
+      )
+    ) {
+      return true;
+    }
+    if (/\.(?:pdf|png|jpe?g|gif|webp|csv|xlsx?|docx?|pptx?)\b/.test(normalized)) return true;
+    return /\b(?:create|write|edit|modify|build|make|generate|save|export|run|execute|fix|debug|install|open|browse|review|analyze|summarize|compare|monitor|remind|schedule)\b/.test(
+      normalized,
+    );
+  }
+
+  private isClearlyTrivialCompanionPrompt(prompt: string): boolean {
+    const normalized = String(prompt || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[.!?\s]+$/g, "");
+    if (!normalized) return false;
+
+    if (/^(?:hi|hello|hey|yo)(?:\s+there)?$/.test(normalized)) return true;
+    if (/^(?:thanks|thank\s+you|thx|ok|okay|cool|nice|great|awesome|yes|no|yep|nope|sure)$/.test(normalized)) {
+      return true;
+    }
+    return /^(?:who\s+are\s+you|what\s+are\s+you|what\s+can\s+you\s+do|how\s+are\s+you|what'?s\s+up|are\s+you\s+there)$/.test(
+      normalized,
+    );
+  }
+
   private stripPinnedSummaryPrefixFromFirstUserMessage(messages: LLMMessage[]): LLMMessage[] {
     const cloned = messages.map((msg) => ({ ...msg })) as LLMMessage[];
 
@@ -22305,8 +22388,17 @@ You are continuing a previous conversation. The context from the previous conver
         });
       }
 
-      // Only explicit user-selected chat mode skips the task pipeline entirely.
-      if (this.isExplicitChatExecutionMode()) {
+      // Companion turns are text-only and should not enter native planning/tool execution.
+      if (this.shouldHandleInitialPromptAsCompanion(initialPrompt)) {
+        this.emitEvent("log", {
+          message: "Routing initial prompt through companion mode before planning.",
+          reason: "initial_companion_prompt",
+          explicitChat: this.isExplicitChatExecutionMode(),
+          executionMode: this.task.agentConfig?.executionMode,
+          executionModeSource: this.task.agentConfig?.executionModeSource,
+          conversationMode: this.task.agentConfig?.conversationMode,
+          taskIntent: this.task.agentConfig?.taskIntent,
+        });
         await this.handleCompanionPrompt();
         return;
       }
