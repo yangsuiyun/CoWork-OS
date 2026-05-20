@@ -418,6 +418,30 @@ describe("applyHookMappings", () => {
     }
   });
 
+  it("should build task_message actions for existing-thread mappings", async () => {
+    const mappings: HookMappingResolved[] = [
+      {
+        id: "test",
+        matchPath: "test",
+        action: "task_message",
+        targetTaskId: "task-123",
+        workspaceId: "workspace-123",
+        wakeMode: "now",
+        messageTemplate: "Webhook update: {{text}}",
+      },
+    ];
+
+    const result = await applyHookMappings(mappings, createContext("test", { text: "done" }));
+
+    expect(result?.ok).toBe(true);
+    expect(result?.ok && result.action?.kind).toBe("task_message");
+    if (result?.ok && result.action && result.action.kind === "task_message") {
+      expect(result.action.taskId).toBe("task-123");
+      expect(result.action.workspaceId).toBe("workspace-123");
+      expect(result.action.message).toBe("Webhook update: done");
+    }
+  });
+
   it("should fail if wake action has empty text", async () => {
     const mappings: HookMappingResolved[] = [
       {
@@ -453,6 +477,25 @@ describe("applyHookMappings", () => {
     expect(result?.ok).toBe(false);
     if (result && !result.ok) {
       expect(result.error).toContain("message");
+    }
+  });
+
+  it("should fail if task_message action has no target task", async () => {
+    const mappings: HookMappingResolved[] = [
+      {
+        id: "test",
+        matchPath: "test",
+        action: "task_message",
+        wakeMode: "now",
+        messageTemplate: "Message",
+      },
+    ];
+
+    const result = await applyHookMappings(mappings, createContext("test", {}));
+
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) {
+      expect(result.error).toContain("targetTaskId");
     }
   });
 
