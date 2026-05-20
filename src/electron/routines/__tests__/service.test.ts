@@ -124,6 +124,65 @@ describeWithSqlite("RoutineService", () => {
     ).toBeTruthy();
   });
 
+  it("syncs task-session routines as thread follow-ups across schedule, api, and event triggers", async () => {
+    await routineService.create({
+      name: "Task Follow-up",
+      enabled: true,
+      workspaceId: "ws-1",
+      prompt: "Continue the existing task.",
+      connectors: ["github"],
+      contextBindings: {
+        metadata: {
+          runMode: "thread_follow_up",
+          targetTaskId: "task-existing",
+          sourceTaskTitle: "Original Task",
+          sourceLink: "cowork://tasks/task-existing",
+          threadAutomation: "true",
+        },
+      },
+      triggers: [
+        {
+          id: "schedule-1",
+          type: "schedule",
+          enabled: true,
+          schedule: { kind: "cron", expr: "0 2 * * *" },
+        },
+        {
+          id: "api-1",
+          type: "api",
+          enabled: true,
+        },
+        {
+          id: "connector-1",
+          type: "connector_event",
+          enabled: true,
+          connectorId: "github",
+          changeType: "resource_updated",
+        },
+      ],
+    });
+
+    expect(cronService.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runMode: "thread_follow_up",
+        targetTaskId: "task-existing",
+        threadAutomation: expect.objectContaining({
+          sourceTaskId: "task-existing",
+          sourceTaskTitle: "Original Task",
+          sourceLink: "cowork://tasks/task-existing",
+        }),
+      }),
+    );
+    expect(hooksSettings.mappings[0]).toMatchObject({
+      action: "task_message",
+      targetTaskId: "task-existing",
+    });
+    expect(eventTriggerService.listTriggers()[0]?.action.config).toMatchObject({
+      runMode: "thread_follow_up",
+      targetTaskId: "task-existing",
+    });
+  });
+
   it("removes managed resources when a routine is deleted", async () => {
     const routine = await routineService.create({
       name: "Deploy Alerts",
@@ -158,6 +217,50 @@ describeWithSqlite("RoutineService", () => {
     expect(cronService.remove).toHaveBeenCalledTimes(1);
     expect(hooksSettings.mappings).toHaveLength(0);
     expect(eventTriggerService.listTriggers()).toHaveLength(0);
+  });
+
+  it("queues manual task-session routine runs into the existing thread", async () => {
+    const sendTaskMessage = vi.fn().mockResolvedValue({ queued: true });
+    routineService = new RoutineServiceCtor({
+      db,
+      getCronService: () => cronService as Any,
+      getEventTriggerService: () => eventTriggerService,
+      loadHooksSettings: () => hooksSettings,
+      saveHooksSettings: (settings) => {
+        hooksSettings = settings;
+      },
+      createTask: vi.fn().mockResolvedValue({ id: "new-task" }),
+      sendTaskMessage,
+      now: () => 1_779_000_000_000,
+    });
+
+    const routine = await routineService.create({
+      name: "Task Follow-up",
+      enabled: true,
+      workspaceId: "ws-1",
+      prompt: "Continue the existing task.",
+      connectors: [],
+      contextBindings: {
+        metadata: {
+          runMode: "thread_follow_up",
+          targetTaskId: "task-existing",
+          threadAutomation: "true",
+        },
+      },
+      triggers: [{ id: "manual-1", type: "manual", enabled: true }],
+    });
+
+    await routineService.runNow(routine.id);
+
+    expect(sendTaskMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: "task-existing",
+        message: expect.stringContaining("Continue the existing task."),
+      }),
+    );
+    const runs = await routineService.listRuns(routine.id, 10);
+    expect(runs[0]?.backingTaskId).toBe("task-existing");
+    expect(runs[0]?.status).toBe("queued");
   });
 
   it("refreshes a manual run without creating duplicate run rows", async () => {
