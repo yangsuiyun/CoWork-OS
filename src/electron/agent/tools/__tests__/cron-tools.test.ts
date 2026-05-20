@@ -106,4 +106,35 @@ describe("CronTools.schedule_create workspace behavior", () => {
     expect(result.success).toBe(true);
     expect(result.job?.workspaceId).toBe(workspaceId);
   });
+
+  it("creates current-thread jobs as thread follow-ups", async () => {
+    const daemon = makeDaemonStub();
+    const workspaceId = "ws-5678";
+    const workspace: Workspace = {
+      id: workspaceId,
+      name: "My Workspace",
+      path: "/tmp/my-workspace",
+      createdAt: 0,
+      permissions: { read: true, write: true, delete: false, network: true, shell: false },
+    };
+
+    const tools = new CronTools(workspace, daemon, "task-current");
+    const result = await tools.createJob({
+      name: "Follow Up Here",
+      prompt: "Return to this conversation and check progress.",
+      target: "current_thread",
+      schedule: { type: "interval", every: "1h" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.job).toMatchObject({
+      runMode: "thread_follow_up",
+      targetTaskId: "task-current",
+      threadAutomation: {
+        sourceTaskId: "task-current",
+        wakeObjective: "Return to this conversation and check progress.",
+        includeContextBrief: true,
+      },
+    });
+  });
 });
