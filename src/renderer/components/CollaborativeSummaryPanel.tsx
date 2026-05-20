@@ -242,14 +242,20 @@ export function CollaborativeSummaryPanel({
       });
     }
 
-    // 4. Status: "Thinking..." (after spawns, when phase=think)
-    if (phase === "think" || phase === "dispatch") {
-      const thinkTs = spawnTs + 100;
+    // 4. Status indicator based on current phase
+    if (phase === "dispatch") {
       entries.push({
         kind: "status",
         id: "status-thinking",
-        label: "Thinking...",
-        ts: thinkTs,
+        label: "Planning...",
+        ts: spawnTs + 100,
+      });
+    } else if (phase === "think" || phase === "execute") {
+      entries.push({
+        kind: "status",
+        id: "status-thinking",
+        label: "Agents are executing...",
+        ts: spawnTs + 100,
       });
     }
 
