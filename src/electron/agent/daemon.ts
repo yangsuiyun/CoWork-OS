@@ -2,6 +2,7 @@ import { EventEmitter } from "events";
 import * as fs from "fs";
 import * as crypto from "crypto";
 import * as path from "path";
+import { createLogger } from "../utils/logger";
 import { DatabaseManager } from "../database/schema";
 import { ControlPlaneCoreService } from "../control-plane/ControlPlaneCoreService";
 import type Database from "better-sqlite3";
@@ -63,6 +64,7 @@ import {
   MULTI_LLM_PROVIDER_DISPLAY,
   AgentTeamRun,
   AgentTeamItem,
+  AgentTeamItemStatus,
   StepFeedbackAction,
   TASK_ERROR_CODES,
   EvidenceRef,
@@ -156,10 +158,40 @@ import {
 import { buildEntropySweepPrompt, collectBlastRadiusPaths } from "./post-task-entropy-sweep";
 import { OrchestrationGraphEngine, type OrchestrationGraphNodeInput } from "./orchestration/OrchestrationGraphEngine";
 import { OrchestrationGraphRepository } from "./orchestration/OrchestrationGraphRepository";
+import { MCPClientManager } from "../mcp/client/MCPClientManager";
+
+const log = createLogger("AgentDaemon");
+
+const FORK_REPLAY_EVENT_TYPES = new Set([
+  "user_message",
+  "assistant_message",
+  "tool_call",
+  "tool_result",
+  "tool_error",
+  "tool_warning",
+  "tool_blocked",
+  "plan_created",
+  "plan_updated",
+  "step_started",
+  "step_completed",
+  "step_failed",
+  "step_skipped",
+  "step_feedback",
+  "task_list_created",
+  "task_list_updated",
+  "task_list_completed",
+  "context_summarized",
+  "conversation_snapshot",
+  "command_output",
+  "artifact_created",
+  "diagram_created",
+  "citations_collected",
+  "progress_update",
+]);
 
 // Memory management constants
-const MAX_CACHED_EXECUTORS = 10; // Maximum number of completed task executors to keep in memory
-const EXECUTOR_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes - time before completed executors are cleaned up
+const MAX_CACHED_EXECUTORS = 2; // Maximum number of completed task executors to keep in memory
+const EXECUTOR_CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes - time before completed executors are cleaned up
 
 // Mid-conversation correction detection patterns.
 // Regex-based (no LLM calls) to detect when a user is correcting the agent during a task.
@@ -234,6 +266,35 @@ function parseBooleanEnv(envName: string, fallback = false): boolean {
     return false;
   }
   return fallback;
+}
+
+const READ_ONLY_SHELL_CAPABLE_SYSTEM_ROLE_NAMES = new Set([
+  "reviewer",
+  "researcher",
+  "finance-data-reader",
+  "finance-reviewer",
+]);
+
+function normalizeReadOnlyRoleToolRestrictions(
+  role: Pick<AgentRole, "name" | "isSystem">,
+  deniedTools: unknown,
+): string[] | undefined {
+  if (!Array.isArray(deniedTools)) return undefined;
+  const normalized = deniedTools
+    .map((raw) => (typeof raw === "string" ? raw.trim() : ""))
+    .filter((value) => value.length > 0);
+  if (!role.isSystem || !READ_ONLY_SHELL_CAPABLE_SYSTEM_ROLE_NAMES.has(role.name)) {
+    return normalized;
+  }
+  const next = new Set<string>();
+  for (const value of normalized) {
+    if (value === "group:destructive") {
+      next.add("delete_file");
+    } else {
+      next.add(value);
+    }
+  }
+  return Array.from(next);
 }
 
 const TASK_OVERRIDE_ALLOWLIST = new Set<keyof Task>([
@@ -330,6 +391,7 @@ export class AgentDaemon extends EventEmitter {
     }
   > = new Map();
   private cleanupIntervalHandle?: ReturnType<typeof setInterval>;
+  private maintenanceIntervalHandle?: ReturnType<typeof setInterval>;
   private queueManager: TaskQueueManager;
   // Activity throttle: Map<taskId:eventType, lastTimestamp>
   private activityThrottle: Map<string, number> = new Map();
@@ -372,6 +434,7 @@ export class AgentDaemon extends EventEmitter {
   };
   private completionTelemetryBackfilledTaskIds: Set<string> = new Set();
   private readonly verificationOutcomeV2Enabled: boolean;
+  private verificationLocks: Map<string, { promise: Promise<{ success: boolean; output?: string }>; startedAt: number }> = new Map();
   private static readonly TRANSIENT_RETRY_ERROR_REGEX =
     /^Transient provider error\.\s*Retry\s+\d+\/\d+\s+in\s+\d+s\./i;
 
@@ -432,7 +495,13 @@ export class AgentDaemon extends EventEmitter {
     });
 
     // Start periodic cleanup of old executors
-    this.cleanupIntervalHandle = setInterval(() => this.cleanupOldExecutors(), 5 * 60 * 1000); // Run every 5 minutes
+    this.cleanupIntervalHandle = setInterval(() => this.cleanupOldExecutors(), 120_000); // Run every 2 minutes
+
+    // Deferred database maintenance: prune old events and vacuum
+    setTimeout(() => {
+      this.runDatabaseMaintenance();
+      this.maintenanceIntervalHandle = setInterval(() => this.runDatabaseMaintenance(), 24 * 60 * 60 * 1000);
+    }, 60_000);
   }
 
   /** Get the worktree manager instance. */
@@ -477,6 +546,48 @@ export class AgentDaemon extends EventEmitter {
     return this.teamOrchestrator;
   }
 
+  /**
+   * Deduplicate workspace verification commands so concurrent executors in the
+   * same workspace don't redundantly run the same verification (e.g. `tsc --noEmit`).
+   * An in-flight lock is reused if the identical workspace+command pair was started
+   * less than 120 s ago; the lock is cleaned up 5 s after completion.
+   */
+  async runWorkspaceVerification(
+    workspacePath: string,
+    command: string,
+    _taskId: string,
+    executeTool: (name: string, args: Record<string, unknown>) => Promise<{ success: boolean; output?: string }>,
+  ): Promise<{ success: boolean; output?: string }> {
+    const lockKey = `${workspacePath}::${command}`;
+    const existing = this.verificationLocks.get(lockKey);
+    if (existing && Date.now() - existing.startedAt < 120_000) {
+      return existing.promise;
+    }
+
+    const promise = executeTool("run_command", { command, workingDirectory: workspacePath })
+      .finally(() => {
+        setTimeout(() => this.verificationLocks.delete(lockKey), 5_000);
+      });
+
+    this.verificationLocks.set(lockKey, { promise, startedAt: Date.now() });
+    return promise;
+  }
+
+  /**
+   * Periodic database maintenance: prune old task events for terminal tasks
+   * older than 90 days and vacuum the database if freelist exceeds threshold.
+   */
+  private runDatabaseMaintenance(): void {
+    try {
+      const repo = new TaskEventRepository(this.dbManager.getDatabase());
+      const pruned = repo.pruneOldEvents(90);
+      if (pruned > 0) log.info(`DB maintenance: pruned ${pruned} old events`);
+      repo.vacuumIfNeeded(500);
+    } catch (error) {
+      log.error("DB maintenance failed:", error);
+    }
+  }
+
   private applyTaskWorkspaceOverrides(task: Task, workspace: Workspace): Workspace {
     if (task.agentConfig?.shellAccess !== true || workspace.permissions.shell === true) {
       return workspace;
@@ -492,7 +603,10 @@ export class AgentDaemon extends EventEmitter {
 
   private applyTaskFollowUpOverrides(
     task: Task,
-    options?: Pick<TaskFollowUpInput, "permissionMode" | "shellAccess" | "integrationMentions">,
+    options?: Pick<
+      TaskFollowUpInput,
+      "permissionMode" | "shellAccess" | "integrationMentions" | "agentConfigOverride"
+    >,
   ): { task: Task; changed: boolean } {
     const hasPermissionMode = typeof options?.permissionMode === "string";
     const hasShellAccess = typeof options?.shellAccess === "boolean";
@@ -587,7 +701,7 @@ export class AgentDaemon extends EventEmitter {
       changed = true;
     }
 
-    const denied = role.toolRestrictions?.deniedTools;
+    const denied = normalizeReadOnlyRoleToolRestrictions(role, role.toolRestrictions?.deniedTools);
     if (!Array.isArray(denied) || denied.length === 0) {
       // Fall through to autonomy merge
     } else {
@@ -604,6 +718,11 @@ export class AgentDaemon extends EventEmitter {
 
       addAll(nextAgentConfig.toolRestrictions);
       addAll(denied);
+      if (role.isSystem && READ_ONLY_SHELL_CAPABLE_SYSTEM_ROLE_NAMES.has(role.name)) {
+        if (merged.delete("group:destructive")) {
+          merged.add("delete_file");
+        }
+      }
 
       if (merged.size > 0) {
         nextAgentConfig.toolRestrictions = Array.from(merged);
@@ -998,6 +1117,16 @@ export class AgentDaemon extends EventEmitter {
     // Delete the marked executors
     for (const taskId of toDelete) {
       console.log(`[AgentDaemon] Cleaning up cached executor for task ${taskId}`);
+      // Release any MCP server connections held by this executor to prevent process leaks
+      try {
+        void MCPClientManager.getInstance()
+          ?.releaseForExecutor(taskId)
+          .catch(() => {
+            // Ignore release failures during cache cleanup.
+          });
+      } catch {
+        // Ignore — MCPClientManager may not be initialized
+      }
       this.activeTasks.delete(taskId);
     }
 
@@ -1722,16 +1851,27 @@ export class AgentDaemon extends EventEmitter {
     if (!sourceTask) {
       throw new Error(`Task ${params.taskId} not found`);
     }
+    const sourceEvents = this.getTaskEventsForReplay(sourceTask.id);
+    const explicitPrompt =
+      typeof params.prompt === "string" && params.prompt.trim().length > 0
+        ? params.prompt.trim()
+        : undefined;
+    const forkHistory = this.buildForkHistory(sourceEvents, {
+      fromEventId: params.fromEventId,
+      useSelectedUserMessageAsPrompt: !explicitPrompt,
+    });
     const branchLabel =
       typeof params.branchLabel === "string" && params.branchLabel.trim().length > 0
         ? params.branchLabel.trim()
         : `fork-${new Date().toISOString().slice(11, 19).replace(/:/g, "-")}`;
     const nextPrompt =
-      typeof params.prompt === "string" && params.prompt.trim().length > 0
-        ? params.prompt.trim()
-        : sourceTask.userPrompt || sourceTask.rawPrompt || sourceTask.prompt;
+      explicitPrompt ||
+      forkHistory.prefillPrompt ||
+      sourceTask.userPrompt ||
+      sourceTask.rawPrompt ||
+      sourceTask.prompt;
 
-    const forkedTask = await this.createTask({
+    const { task: forkedTask, derived } = this.createTaskRecord({
       title: `${sourceTask.title} (${branchLabel})`,
       prompt: nextPrompt,
       workspaceId: sourceTask.workspaceId,
@@ -1745,14 +1885,110 @@ export class AgentDaemon extends EventEmitter {
       },
     });
 
+    this.cloneForkHistoryEvents({
+      sourceTaskId: sourceTask.id,
+      targetTaskId: forkedTask.id,
+      events: forkHistory.events,
+    });
     this.logEvent(forkedTask.id, "log", {
       message: "Session fork created",
       sourceTaskId: sourceTask.id,
       branchLabel,
       branchFromEventId: params.fromEventId,
+      copiedEvents: forkHistory.events.length,
     });
+    this.logTaskIntentRouted(forkedTask.id, derived);
 
     return forkedTask;
+  }
+
+  private buildForkHistory(
+    sourceEvents: TaskEvent[],
+    options: {
+      fromEventId?: string;
+      useSelectedUserMessageAsPrompt?: boolean;
+    },
+  ): { events: TaskEvent[]; prefillPrompt?: string } {
+    let cutoff = sourceEvents.length;
+    let prefillPrompt: string | undefined;
+    const requestedEventId =
+      typeof options.fromEventId === "string" && options.fromEventId.trim().length > 0
+        ? options.fromEventId.trim()
+        : undefined;
+
+    if (requestedEventId) {
+      const selectedIndex = sourceEvents.findIndex((event) => {
+        return (
+          event.id === requestedEventId ||
+          event.eventId === requestedEventId ||
+          (typeof event.payload?.eventId === "string" && event.payload.eventId === requestedEventId)
+        );
+      });
+      if (selectedIndex < 0) {
+        throw new Error(`Event ${requestedEventId} not found in task history`);
+      }
+
+      const selectedEvent = sourceEvents[selectedIndex];
+      const selectedType = this.resolveLegacyEventType(selectedEvent);
+      if (selectedType === "user_message") {
+        cutoff = selectedIndex;
+        if (options.useSelectedUserMessageAsPrompt && typeof selectedEvent.payload?.message === "string") {
+          prefillPrompt = selectedEvent.payload.message.trim() || undefined;
+        }
+      } else {
+        cutoff = selectedIndex + 1;
+      }
+    }
+
+    return {
+      events: sourceEvents.slice(0, cutoff).filter((event) => this.isForkReplayEvent(event)),
+      ...(prefillPrompt ? { prefillPrompt } : {}),
+    };
+  }
+
+  private isForkReplayEvent(event: TaskEvent): boolean {
+    const effectiveType = this.resolveLegacyEventType(event);
+    if (effectiveType.startsWith("timeline_")) return true;
+    return FORK_REPLAY_EVENT_TYPES.has(effectiveType);
+  }
+
+  private cloneForkHistoryEvents(params: {
+    sourceTaskId: string;
+    targetTaskId: string;
+    events: TaskEvent[];
+  }): void {
+    let seq = 0;
+    for (const event of params.events) {
+      seq += 1;
+      const payload =
+        event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+          ? {
+              ...(event.payload as Record<string, unknown>),
+              forkedFromTaskId: params.sourceTaskId,
+              forkedFromEventId: event.eventId || event.id,
+            }
+          : {
+              value: event.payload,
+              forkedFromTaskId: params.sourceTaskId,
+              forkedFromEventId: event.eventId || event.id,
+            };
+      this.eventRepo.create({
+        taskId: params.targetTaskId,
+        timestamp: event.timestamp,
+        type: event.type,
+        payload,
+        schemaVersion: event.schemaVersion,
+        eventId: crypto.randomUUID(),
+        seq,
+        ts: event.ts ?? event.timestamp,
+        status: event.status,
+        stepId: event.stepId,
+        groupId: event.groupId,
+        actor: event.actor,
+        legacyType: event.legacyType,
+      });
+    }
+    this.taskSeqById.set(params.targetTaskId, seq);
   }
 
   /**
@@ -1768,7 +2004,28 @@ export class AgentDaemon extends EventEmitter {
     budgetCost?: number;
     source?: Task["source"];
     taskOverrides?: Partial<Task>;
+    autoStart?: boolean;
   }): Promise<Task> {
+    const { task, derived } = this.createTaskRecord(params);
+    this.logTaskIntentRouted(task.id, derived);
+
+    if (params.autoStart !== false) {
+      await this.startTask(task);
+    }
+
+    return task;
+  }
+
+  private createTaskRecord(params: {
+    title: string;
+    prompt: string;
+    workspaceId: string;
+    agentConfig?: AgentConfig;
+    budgetTokens?: number;
+    budgetCost?: number;
+    source?: Task["source"];
+    taskOverrides?: Partial<Task>;
+  }) {
     const derived = this.deriveTaskStrategy({
       title: params.title,
       prompt: params.prompt,
@@ -1817,18 +2074,20 @@ export class AgentDaemon extends EventEmitter {
     };
     this.taskRepo.update(task.id, rootLineageUpdates);
     Object.assign(task, rootLineageUpdates);
-    this.logEvent(task.id, "log", {
+    return { task, derived };
+  }
+
+  private logTaskIntentRouted(
+    taskId: string,
+    derived: ReturnType<AgentDaemon["deriveTaskStrategy"]>,
+  ): void {
+    this.logEvent(taskId, "log", {
       message:
         `Intent routed: ${derived.route.intent} | domain=${derived.route.domain} | ` +
         `convoMode=${derived.strategy.conversationMode} | execMode=${derived.strategy.executionMode}`,
       confidence: Number(derived.route.confidence.toFixed(2)),
       signals: derived.route.signals,
     });
-
-    // Start the task (will be queued if necessary)
-    await this.startTask(task);
-
-    return task;
   }
 
   /**
@@ -1907,6 +2166,8 @@ export class AgentDaemon extends EventEmitter {
     depth?: number;
     assignedAgentRoleId?: string;
     workerRole?: WorkerRoleKind;
+    teamRunId?: string;
+    teamItemId?: string;
     boardColumn?: BoardColumn;
     priority?: number;
     budgetTokens?: number;
@@ -1921,6 +2182,12 @@ export class AgentDaemon extends EventEmitter {
     const mergedAllowUserInput = mergedAutonomousMode
       ? false
       : (params.agentConfig?.allowUserInput ?? parent?.agentConfig?.allowUserInput);
+    const mergedPermissionMode =
+      parent?.agentConfig?.permissionMode === "bypass_permissions"
+        ? "bypass_permissions"
+        : params.agentConfig?.permissionMode;
+    const mergedShellAccess =
+      parent?.agentConfig?.shellAccess === true ? true : params.agentConfig?.shellAccess;
 
     // Prevent privilege escalation: a child task may not become "more private" than its parent.
     const mergedGatewayContext: AgentConfig["gatewayContext"] | undefined = (() => {
@@ -2067,6 +2334,21 @@ export class AgentDaemon extends EventEmitter {
       if (mergedAllowUserInput !== undefined) {
         next.allowUserInput = mergedAllowUserInput;
       }
+      if (mergedPermissionMode !== undefined) {
+        next.permissionMode = mergedPermissionMode;
+      }
+      if (mergedShellAccess !== undefined) {
+        next.shellAccess = mergedShellAccess;
+      }
+      if (
+        mergedPermissionMode === "bypass_permissions" &&
+        next.externalRuntime?.kind === "acpx"
+      ) {
+        next.externalRuntime = {
+          ...next.externalRuntime,
+          permissionMode: "approve-all",
+        };
+      }
       return Object.keys(next).length > 0 ? next : undefined;
     })();
 
@@ -2112,6 +2394,10 @@ export class AgentDaemon extends EventEmitter {
     if (Object.keys(initialUpdates).length > 0) {
       this.taskRepo.update(task.id, initialUpdates);
       Object.assign(task, initialUpdates);
+    }
+
+    if (!params.teamRunId && !params.teamItemId) {
+      this.ensureCollaborativeRunForParentTask(params.parentTaskId);
     }
 
     // Start the task (will be queued if necessary)
@@ -2174,6 +2460,175 @@ export class AgentDaemon extends EventEmitter {
         console.error("[AgentDaemon] Error sending team run IPC:", error);
       }
     });
+  }
+
+  ensureCollaborativeRunForParentTask(parentTaskId: string): AgentTeamRun | null {
+    const parentTask = this.taskRepo.findById(parentTaskId);
+    if (!parentTask) return null;
+
+    const childTasks = this.taskRepo.findByParent(parentTaskId);
+    if (childTasks.length < 2) {
+      const db = this.dbManager.getDatabase();
+      return new AgentTeamRunRepository(db).findByRootTaskId(parentTaskId) || null;
+    }
+
+    const db = this.dbManager.getDatabase();
+    const teamRepo = new AgentTeamRepository(db);
+    const teamMemberRepo = new AgentTeamMemberRepository(db);
+    const teamRunRepo = new AgentTeamRunRepository(db);
+    const teamItemRepo = new AgentTeamItemRepository(db);
+    const existingRun = teamRunRepo.findByRootTaskId(parentTaskId);
+
+    if (existingRun) {
+      if (parentTask.agentConfig?.childAgentCollaborativeRun === true) {
+        this.ensureChildTasksHaveTeamItems(existingRun, childTasks, teamMemberRepo, teamItemRepo);
+        if (this.childTasksHaveActiveWork(childTasks) && existingRun.status !== "running") {
+          const updatedRun = teamRunRepo.update(existingRun.id, {
+            status: "running",
+            completedAt: null,
+            phase: "dispatch",
+            error: null,
+          });
+          if (updatedRun) {
+            this.emitTeamRunEvent({
+              type: "team_run_updated",
+              timestamp: Date.now(),
+              run: updatedRun,
+              reason: "child_agent_spawned",
+            });
+            return updatedRun;
+          }
+        }
+      }
+      return existingRun;
+    }
+
+    const activeRoles = this.agentRoleRepo.findAll(false).filter((role) => role.isActive);
+    const activeRoleIds = new Set(activeRoles.map((role) => role.id));
+    const assignedLeadRoleId =
+      childTasks.find((task) => task.assignedAgentRoleId && activeRoleIds.has(task.assignedAgentRoleId))
+        ?.assignedAgentRoleId || activeRoles[0]?.id;
+    if (!assignedLeadRoleId) {
+      log.warn(
+        `Cannot create collaborative child-agent run for ${parentTaskId}: no active agent roles`,
+      );
+      return null;
+    }
+
+    const nextAgentConfig: AgentConfig = {
+      ...(parentTask.agentConfig || {}),
+      collaborativeMode: true,
+      childAgentCollaborativeRun: true,
+    };
+    this.taskRepo.update(parentTask.id, { agentConfig: nextAgentConfig });
+    parentTask.agentConfig = nextAgentConfig;
+
+    const team = teamRepo.create({
+      workspaceId: parentTask.workspaceId,
+      name: `ChildAgents-${parentTask.id.slice(0, 8)}-${Date.now()}`,
+      description: `Spawned child agents for: ${parentTask.title}`,
+      leadAgentRoleId: assignedLeadRoleId,
+      maxParallelAgents: Math.max(2, childTasks.length),
+    });
+
+    const run = teamRunRepo.create({
+      teamId: team.id,
+      rootTaskId: parentTask.id,
+      status: this.childTasksHaveActiveWork(childTasks) ? "running" : "completed",
+      collaborativeMode: true,
+    });
+    this.ensureChildTasksHaveTeamItems(run, childTasks, teamMemberRepo, teamItemRepo);
+
+    if (!this.childTasksHaveActiveWork(childTasks)) {
+      const completedRun = teamRunRepo.update(run.id, {
+        status: childTasks.some((task) => task.status === "failed") ? "failed" : "completed",
+        phase: "complete",
+        summary: this.buildChildAgentRunSummary(childTasks),
+      });
+      if (completedRun) {
+        this.emitTeamRunEvent({
+          type: "team_run_created",
+          timestamp: Date.now(),
+          run: completedRun,
+        });
+        return completedRun;
+      }
+    }
+
+    this.emitTeamRunEvent({ type: "team_run_created", timestamp: Date.now(), run });
+    return run;
+  }
+
+  private ensureChildTasksHaveTeamItems(
+    run: AgentTeamRun,
+    childTasks: Task[],
+    teamMemberRepo: AgentTeamMemberRepository,
+    teamItemRepo: AgentTeamItemRepository,
+  ): AgentTeamItem[] {
+    const existingItems = teamItemRepo.listByRun(run.id);
+    const existingSourceTaskIds = new Set(
+      existingItems
+        .map((item) => item.sourceTaskId)
+        .filter((sourceTaskId): sourceTaskId is string => Boolean(sourceTaskId)),
+    );
+    const items = [...existingItems];
+
+    for (let i = 0; i < childTasks.length; i += 1) {
+      const childTask = childTasks[i];
+      const assignedRole = childTask.assignedAgentRoleId
+        ? this.agentRoleRepo.findById(childTask.assignedAgentRoleId)
+        : undefined;
+      if (assignedRole) {
+        teamMemberRepo.add({
+          teamId: run.teamId,
+          agentRoleId: assignedRole.id,
+          memberOrder: (i + 1) * 10,
+          isRequired: true,
+        });
+      }
+      if (existingSourceTaskIds.has(childTask.id)) continue;
+
+      const item = teamItemRepo.create({
+        teamRunId: run.id,
+        title: childTask.title,
+        description: childTask.prompt,
+        ownerAgentRoleId: assignedRole?.id,
+        sourceTaskId: childTask.id,
+        status: this.mapChildTaskStatusToTeamItemStatus(childTask.status),
+        sortOrder: (i + 1) * 10,
+      });
+      items.push(item);
+      this.emitTeamRunEvent({
+        type: "team_item_spawned",
+        timestamp: Date.now(),
+        runId: run.id,
+        item,
+        spawnedTaskId: childTask.id,
+      });
+    }
+
+    return items;
+  }
+
+  private mapChildTaskStatusToTeamItemStatus(status: TaskStatus): AgentTeamItemStatus {
+    if (status === "completed") return "done";
+    if (status === "failed") return "failed";
+    if (status === "cancelled") return "blocked";
+    if (status === "planning" || status === "executing" || status === "interrupted") {
+      return "in_progress";
+    }
+    return "todo";
+  }
+
+  private childTasksHaveActiveWork(childTasks: Task[]): boolean {
+    return childTasks.some((task) => !isTerminalTaskStatus(task.status));
+  }
+
+  private buildChildAgentRunSummary(childTasks: Task[]): string {
+    const done = childTasks.filter((task) => task.status === "completed").length;
+    const failed = childTasks.filter((task) => task.status === "failed").length;
+    const blocked = childTasks.filter((task) => task.status === "cancelled").length;
+    return `Items: ${done} done, ${failed} failed, ${blocked} blocked (total: ${childTasks.length})`;
   }
 
   private async maybeLaunchCollaborativeTask(task: Task): Promise<boolean> {
@@ -7257,17 +7712,17 @@ export class AgentDaemon extends EventEmitter {
       parentTaskId: params.parentTask.id,
       agentType: "sub",
       depth: currentDepth + 1,
-        agentConfig: {
-          autonomousMode: true,
-          allowUserInput: false,
-          retainMemory: false,
-          conversationMode: "task",
-          verificationAgent: false,
-          toolRestrictions: ["group:write", "group:destructive", "group:image"],
-          ...params.agentConfig,
-        },
-        workerRole: params.workerRole,
-      });
+      agentConfig: {
+        autonomousMode: true,
+        allowUserInput: false,
+        retainMemory: false,
+        conversationMode: "task",
+        verificationAgent: false,
+        toolRestrictions: ["group:write", "delete_file", "group:image"],
+        ...params.agentConfig,
+      },
+      workerRole: params.workerRole,
+    });
 
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
@@ -7983,6 +8438,21 @@ export class AgentDaemon extends EventEmitter {
       cached.status = "completed";
       cached.lastAccessed = Date.now();
     }
+
+    // Immediately release MCP server connections for sub-agent tasks to prevent process leaks
+    // during multitask runs. Sub-agents are short-lived and won't receive follow-ups.
+    if (existingTask.agentType === "sub") {
+      try {
+        void MCPClientManager.getInstance()
+          ?.releaseForExecutor(taskId)
+          .catch(() => {
+            // Ignore release failures after short-lived sub-agent completion.
+          });
+      } catch {
+        // Ignore — MCPClientManager may not be initialized
+      }
+    }
+
     const completionMessage =
       terminalStatus === "needs_user_action"
         ? "Task completed - action required"
@@ -8203,7 +8673,10 @@ export class AgentDaemon extends EventEmitter {
     message: string,
     images?: ImageAttachment[],
     quotedAssistantMessage?: QuotedAssistantMessage,
-    options?: Pick<TaskFollowUpInput, "permissionMode" | "shellAccess" | "integrationMentions">,
+    options?: Pick<
+      TaskFollowUpInput,
+      "permissionMode" | "shellAccess" | "integrationMentions" | "agentConfigOverride"
+    >,
   ): Promise<{ queued: boolean }> {
     let cached = this.activeTasks.get(taskId);
     let executor: TaskExecutor;
@@ -8217,7 +8690,16 @@ export class AgentDaemon extends EventEmitter {
     if (overrideResult.changed) {
       this.taskRepo.update(taskId, { agentConfig: overrideResult.task.agentConfig });
     }
-    const { task: effectiveTask } = this.applyAgentRoleOverrides(overrideResult.task);
+    const { task: roleAdjustedTask } = this.applyAgentRoleOverrides(overrideResult.task);
+    const effectiveTask = options?.agentConfigOverride
+      ? {
+          ...roleAdjustedTask,
+          agentConfig: {
+            ...(roleAdjustedTask.agentConfig || {}),
+            ...options.agentConfigOverride,
+          },
+        }
+      : roleAdjustedTask;
 
     const workspace = this.workspaceRepo.findById(effectiveTask.workspaceId);
     if (!workspace) {
@@ -8256,7 +8738,13 @@ export class AgentDaemon extends EventEmitter {
     // loop to pick up and return immediately so the IPC doesn't block.
     if (executor.isRunning) {
       const integrationMentions = effectiveTask.agentConfig?.integrationMentions;
-      executor.queueFollowUp(message, images, quotedAssistantMessage, integrationMentions);
+      executor.queueFollowUp(
+        message,
+        images,
+        quotedAssistantMessage,
+        integrationMentions,
+        options?.agentConfigOverride,
+      );
       // Emit user_message event immediately so the UI shows the message right away.
       // The executor's sendMessageLegacy won't re-emit because the message is
       // injected directly into the conversation loop, not through sendMessage.
@@ -8269,7 +8757,9 @@ export class AgentDaemon extends EventEmitter {
     }
 
     // Send the message (executor is idle, acquire mutex normally)
-    await executor.sendMessage(message, images, quotedAssistantMessage);
+    await executor.sendMessage(message, images, quotedAssistantMessage, {
+      agentConfigOverride: options?.agentConfigOverride,
+    });
     return { queued: false };
   }
 
@@ -8473,13 +8963,19 @@ export class AgentDaemon extends EventEmitter {
    * Properly awaits all task cancellations and clears intervals
    */
   async shutdown(): Promise<void> {
-    console.log("Shutting down agent daemon...");
+    log.info("Shutting down agent daemon...");
     this.orchestrationGraphEngine.stop();
 
     // Clear the cleanup interval
     if (this.cleanupIntervalHandle) {
       clearInterval(this.cleanupIntervalHandle);
       this.cleanupIntervalHandle = undefined;
+    }
+
+    // Clear the database maintenance interval
+    if (this.maintenanceIntervalHandle) {
+      clearInterval(this.maintenanceIntervalHandle);
+      this.maintenanceIntervalHandle = undefined;
     }
 
     // Clear all pending approval timeouts and reject pending promises
