@@ -9,6 +9,7 @@
  */
 
 import { contextBridge, ipcRenderer } from "electron";
+import { IPC_CHANNELS } from "../../shared/types";
 
 // Type definitions for the canvas API
 interface CanvasAPI {
@@ -58,7 +59,7 @@ interface CanvasAPI {
 // Create the canvas API
 const canvasAPI: CanvasAPI = {
   sendA2UIAction: async (actionName, componentId, context) => {
-    await ipcRenderer.invoke("canvas:a2ui-action-from-window", {
+    await ipcRenderer.invoke(IPC_CHANNELS.CANVAS_A2UI_ACTION_FROM_WINDOW, {
       actionName,
       componentId,
       context,
@@ -66,21 +67,21 @@ const canvasAPI: CanvasAPI = {
   },
 
   getSessionInfo: async () => {
-    return ipcRenderer.invoke("canvas:get-session-from-window");
+    return ipcRenderer.invoke(IPC_CHANNELS.CANVAS_GET_SESSION_FROM_WINDOW);
   },
 
   onAgentUpdate: (callback) => {
-    ipcRenderer.on("canvas:agent-update", (_event, data) => {
+    ipcRenderer.on(IPC_CHANNELS.CANVAS_AGENT_UPDATE, (_event, data) => {
       callback(data);
     });
   },
 
   requestSnapshot: async () => {
-    return ipcRenderer.invoke("canvas:request-snapshot-from-window");
+    return ipcRenderer.invoke(IPC_CHANNELS.CANVAS_REQUEST_SNAPSHOT_FROM_WINDOW);
   },
 
   log: (message, data) => {
-    ipcRenderer.send("canvas:log", { message, data });
+    ipcRenderer.send(IPC_CHANNELS.CANVAS_LOG, { message, data });
   },
 };
 
