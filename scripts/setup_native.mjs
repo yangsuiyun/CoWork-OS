@@ -6,7 +6,7 @@
  * - The repo ships with `.npmrc` setting `ignore-scripts=true` to reduce OOM kills
  *   during `npm install`.
  * - That means Electron's postinstall (binary download) won't run automatically.
- * - We then need to (1) fetch Electron and (2) rebuild native modules (better-sqlite3)
+ * - We then need to (1) fetch Electron and (2) rebuild native modules (better-sqlite3, node-pty)
  *   against the Electron ABI.
  *
  * This wrapper adds:
@@ -193,7 +193,7 @@ function runElectronRebuild(
     electronRebuildCli,
     "-f",
     "--only",
-    "better-sqlite3",
+    "better-sqlite3,node-pty",
     "--sequential",
   ];
 
@@ -252,6 +252,19 @@ function testBetterSqlite3InElectron(env) {
   return res;
 }
 
+function testNativeModulesInElectron(env) {
+  const sqliteRes = testBetterSqlite3InElectron(env);
+  if (sqliteRes.status !== 0) return sqliteRes;
+
+  const electronBinary = getElectronBinaryPath();
+  if (!electronBinary) return { status: 1, signal: null };
+  return spawnSync(
+    electronBinary,
+    ["-e", "require('node-pty');console.log('ok')"],
+    { env: { ...env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" }
+  );
+}
+
 function shouldTryWindowsArm64X64Fallback() {
   if (!(process.platform === "win32" && process.arch === "arm64")) return false;
   const raw = String(process.env.COWORK_SETUP_SKIP_X64_FALLBACK || "")
@@ -297,14 +310,14 @@ function tryWindowsArm64X64Fallback(
   );
   if (rebuildX64Res.status !== 0) return rebuildX64Res;
 
-  const testRes = testBetterSqlite3InElectron(x64ElectronEnv);
+  const testRes = testNativeModulesInElectron(x64ElectronEnv);
   if (testRes.status === 0) {
     console.log(
-      "[cowork] better-sqlite3 loads in Electron after x64 electron-rebuild fallback."
+      "[cowork] native modules load in Electron after x64 electron-rebuild fallback."
     );
   } else {
     console.log(
-      "[cowork] x64 electron-rebuild fallback completed, but better-sqlite3 still did not load."
+      "[cowork] x64 electron-rebuild fallback completed, but native modules still did not load."
     );
   }
 
@@ -498,14 +511,14 @@ function main() {
             "[cowork] Electron rebuild failed; trying fallback paths."
           );
         } else {
-          const testRes = testBetterSqlite3InElectron(env);
+          const testRes = testNativeModulesInElectron(env);
           if (testRes.status === 0) {
-            console.log("[cowork] better-sqlite3 loads in Electron.");
+            console.log("[cowork] native modules load in Electron.");
             return testRes;
           }
 
           console.log(
-            "[cowork] better-sqlite3 did not load after Electron rebuild; " +
+            "[cowork] native modules did not load after Electron rebuild; " +
               "trying fallback paths."
           );
         }
@@ -535,19 +548,19 @@ function main() {
       console.log(
         "[cowork] @electron/rebuild is not installed; skipping fallback rebuild."
       );
-      return testBetterSqlite3InElectron(env);
+      return testNativeModulesInElectron(env);
     }
 
     const rebuildRes = runElectronRebuild(electronRebuildCli, env, installRootDir);
     if (rebuildRes.status !== 0) return rebuildRes;
 
-    const testRes = testBetterSqlite3InElectron(env);
+    const testRes = testNativeModulesInElectron(env);
     if (testRes.status === 0) {
-      console.log("[cowork] better-sqlite3 loads in Electron.");
+      console.log("[cowork] native modules load in Electron.");
       return testRes;
     }
 
-    console.log("[cowork] better-sqlite3 did not load after electron-rebuild.");
+    console.log("[cowork] native modules did not load after electron-rebuild.");
     return testRes;
   };
 
