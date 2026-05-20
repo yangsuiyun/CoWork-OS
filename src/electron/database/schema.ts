@@ -20,6 +20,8 @@ export class DatabaseManager {
 
     const dbPath = path.join(userDataPath, "cowork-os.db");
     this.db = new Database(dbPath);
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("busy_timeout = 5000");
     this.ensureRestrictedFile(dbPath);
     this.initializeSchema();
 
