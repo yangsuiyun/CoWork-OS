@@ -34,7 +34,7 @@ function formatGmailError(status: number, data: Any, fallback?: string): string 
 }
 
 export interface GmailRequestOptions {
-  method: "GET" | "POST" | "PATCH" | "DELETE";
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   path: string;
   query?: Record<string, string | number | boolean | string[] | undefined>;
   body?: Any;
