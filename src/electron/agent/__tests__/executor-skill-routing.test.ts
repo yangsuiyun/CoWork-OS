@@ -46,6 +46,21 @@ describe("TaskExecutor skill shortlist routing", () => {
     };
     executor.appliedSkills = [];
     executor.taskContextNotes = [];
+    executor.workspace = {
+      id: "workspace-1",
+      name: "Workspace",
+      path: "/tmp/workspace",
+      createdAt: Date.now() - 1000,
+      permissions: {
+        read: true,
+        write: true,
+        delete: false,
+        shell: true,
+        network: false,
+        unrestrictedFileAccess: false,
+      },
+      isTemp: false,
+    };
     executor.emitEvent = vi.fn();
     executor.appendConversationHistory = vi.fn();
     executor.saveConversationSnapshot = vi.fn();
@@ -358,6 +373,28 @@ describe("TaskExecutor skill shortlist routing", () => {
         }),
       ]),
     );
+  });
+
+  it("blocks code review skill invocation in a temporary workspace", async () => {
+    const executor = createExecutor("/review all uncommitted fixes");
+    executor.workspace = {
+      ...executor.workspace,
+      id: "__temp_workspace__",
+      name: "Temporary Workspace",
+      isTemp: true,
+    };
+
+    await expect(
+      (TaskExecutor as Any).prototype.executeSkillInvocation.call(
+        executor,
+        "code-reviewer",
+        "all uncommitted fixes",
+        "/review",
+        "slash",
+      ),
+    ).rejects.toThrow("requires a regular workspace");
+
+    expect(executor.toolRegistry.executeTool).not.toHaveBeenCalled();
   });
 
   it("deterministically routes natural research-vault prompts into llm-wiki", async () => {
