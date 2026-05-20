@@ -103,6 +103,40 @@ describe("CollaborativeAgentLines", () => {
       ],
     );
 
-    expect(markup).toContain("Completed with warnings");
+    expect(markup).toContain("Needs review");
+  });
+
+  it("shows per-agent terminal chips and aggregate counts", () => {
+    const markup = render(
+      React.createElement(CollaborativeAgentLines, {
+        collaborativeRun: makeRun(),
+        childTasks: [
+          makeTask({
+            id: "child-1",
+            title: "Finished lane",
+            status: "completed",
+            completedAt: 1740841080000,
+          }),
+          makeTask({
+            id: "child-2",
+            title: "Broken lane",
+            status: "failed",
+            error: "Command failed",
+          }),
+        ],
+        childEvents: [
+          makeEvent("step_failed", 1740841020000, { description: "Run verification" }, { taskId: "child-2" }),
+        ],
+        onOpenAgent: () => undefined,
+        onWrapUp: () => undefined,
+        mainTaskCompleted: false,
+      }),
+    );
+
+    expect(markup).toContain("1 done · 1 failed");
+    expect(markup).toContain("Done");
+    expect(markup).toContain("Failed");
+    expect(markup).not.toContain("failures need review");
+    expect(markup).toContain("Wrap Up");
   });
 });
