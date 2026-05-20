@@ -12,6 +12,9 @@ import {
   saveNotificationStore,
   getNotificationStorePath,
 } from "./store";
+import { createLogger } from "../utils/logger";
+
+const log = createLogger("NotificationService");
 
 export type NotificationEventType = "added" | "updated" | "removed" | "cleared";
 
@@ -38,33 +41,51 @@ type AddNotificationParams = {
   companionStyle?: "email" | "note";
 };
 
-function collapseDuplicateInputRequiredNotifications(notifications: AppNotification[]): {
+function getInputRequiredDedupeKey(notification: AppNotification): string | null {
+  if (notification.type !== "input_required" || !notification.taskId) return null;
+  return `input_required:${notification.taskId}`;
+}
+
+function getIntegrationAuthDedupeKey(notification: AppNotification): string | null {
+  if (notification.type !== "warning") return null;
+  const title = notification.title.trim();
+  const message = notification.message.trim();
+  if (!/^Reconnect\s+\S/.test(title)) return null;
+  if (!/\bneeds attention in\b/.test(message) || !/\bReconnect or resync\b/.test(message)) {
+    return null;
+  }
+  return `integration_auth:${title.toLowerCase()}`;
+}
+
+function getPersistentDedupeKey(notification: AppNotification): string | null {
+  return getInputRequiredDedupeKey(notification) || getIntegrationAuthDedupeKey(notification);
+}
+
+function collapseDuplicateNotifications(notifications: AppNotification[]): {
   notifications: AppNotification[];
   changed: boolean;
 } {
-  const newestInputRequiredByTask = new Map<string, AppNotification>();
+  const newestByDedupeKey = new Map<string, AppNotification>();
 
   for (const notification of notifications) {
-    if (notification.type !== "input_required" || !notification.taskId) continue;
-    const existing = newestInputRequiredByTask.get(notification.taskId);
+    const dedupeKey = getPersistentDedupeKey(notification);
+    if (!dedupeKey) continue;
+    const existing = newestByDedupeKey.get(dedupeKey);
     if (!existing || notification.createdAt > existing.createdAt) {
-      newestInputRequiredByTask.set(notification.taskId, notification);
+      newestByDedupeKey.set(dedupeKey, notification);
     }
   }
 
-  if (newestInputRequiredByTask.size === 0) {
+  if (newestByDedupeKey.size === 0) {
     return { notifications, changed: false };
   }
 
-  const keptInputRequiredIds = new Set(
-    [...newestInputRequiredByTask.values()].map((notification) => notification.id),
+  const keptDedupeIds = new Set(
+    [...newestByDedupeKey.values()].map((notification) => notification.id),
   );
   const collapsed = notifications.filter((notification) => {
-    return (
-      notification.type !== "input_required" ||
-      !notification.taskId ||
-      keptInputRequiredIds.has(notification.id)
-    );
+    const dedupeKey = getPersistentDedupeKey(notification);
+    return !dedupeKey || keptDedupeIds.has(notification.id);
   });
 
   return {
@@ -84,7 +105,7 @@ export class NotificationService {
 
     // Load notifications synchronously on startup
     const store = loadNotificationStoreSync(this.storePath);
-    const collapsed = collapseDuplicateInputRequiredNotifications(store.notifications);
+    const collapsed = collapseDuplicateNotifications(store.notifications);
     this.notifications = collapsed.notifications;
     if (collapsed.changed) {
       try {
@@ -93,10 +114,10 @@ export class NotificationService {
           this.storePath,
         );
       } catch (error) {
-        console.warn("[Notifications] Failed to save deduplicated notification store:", error);
+        log.warn("Failed to save deduplicated notification store:", error);
       }
     }
-    console.log(`[Notifications] Loaded ${this.notifications.length} notifications from store`);
+    log.info(`Loaded ${this.notifications.length} notifications from store`);
   }
 
   /**
@@ -117,9 +138,9 @@ export class NotificationService {
    * Add a new notification
    */
   async add(params: AddNotificationParams): Promise<AppNotification> {
-    const existingInputRequired = this.findExistingInputRequiredNotification(params);
-    if (existingInputRequired) {
-      return existingInputRequired;
+    const existing = this.findExistingPersistentNotification(params);
+    if (existing) {
+      return existing;
     }
 
     const notification: AppNotification = {
@@ -144,16 +165,31 @@ export class NotificationService {
     return notification;
   }
 
-  private findExistingInputRequiredNotification(
+  private findExistingPersistentNotification(
     params: AddNotificationParams,
   ): AppNotification | null {
-    if (params.type !== "input_required" || !params.taskId) {
+    const candidate: AppNotification = {
+      id: "",
+      type: params.type,
+      title: params.title,
+      message: params.message,
+      read: false,
+      createdAt: 0,
+      taskId: params.taskId,
+      cronJobId: params.cronJobId,
+      workspaceId: params.workspaceId,
+      suggestionId: params.suggestionId,
+      recommendedDelivery: params.recommendedDelivery,
+      companionStyle: params.companionStyle,
+    };
+    const dedupeKey = getPersistentDedupeKey(candidate);
+    if (!dedupeKey) {
       return null;
     }
     return (
       this.notifications
         .filter((notification) => {
-          return notification.type === "input_required" && notification.taskId === params.taskId;
+          return getPersistentDedupeKey(notification) === dedupeKey;
         })
         .sort((a, b) => b.createdAt - a.createdAt)[0] || null
     );
