@@ -18,6 +18,11 @@ describe("worker-role-registry", () => {
     expect(verifier.executionMode).toBe("verified");
     expect(verifier.allowUserInput).toBe(false);
     expect(verifier.toolRestrictions).toEqual(expect.arrayContaining(["group:write", "spawn_agent"]));
+    expect(verifier.toolRestrictions).not.toContain("group:destructive");
+
+    const researcher = resolveWorkerRoleAgentConfig("researcher", {});
+    expect(researcher.toolRestrictions).toContain("delete_file");
+    expect(researcher.toolRestrictions).not.toContain("group:destructive");
   });
 
   it("builds a worker prompt with the role contract", () => {
