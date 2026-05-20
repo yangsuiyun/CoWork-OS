@@ -997,12 +997,14 @@ export class SessionRuntime {
     images?: ImageAttachment[],
     quotedAssistantMessage?: QuotedAssistantMessage,
     integrationMentions?: TaskFollowUpInput["integrationMentions"],
+    agentConfigOverride?: TaskFollowUpInput["agentConfigOverride"],
   ): void {
     this.state.queues.pendingFollowUps.push({
       message,
       images,
       quotedAssistantMessage,
       ...(integrationMentions !== undefined ? { integrationMentions } : {}),
+      ...(agentConfigOverride !== undefined ? { agentConfigOverride } : {}),
     });
   }
 
