@@ -60,6 +60,7 @@ function safeJsonParse<T>(jsonString: string, defaultValue: T, context?: string)
 }
 
 const taskRepositoryLogger = createLogger("TaskRepository");
+const memoryRepositoryLogger = createLogger("MemoryRepository");
 const SAFE_SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const quoteSqlIdentifier = (identifier: string): string => {
@@ -1703,6 +1704,35 @@ export class TaskEventRepository {
         `[TaskEventRepository] Pruned ${idsToDelete.length} old snapshot(s) for task ${taskId}`,
       );
     }
+  }
+
+  /**
+   * Delete events belonging to terminal tasks older than `retentionDays`.
+   * Returns the number of deleted rows.
+   */
+  pruneOldEvents(retentionDays: number = 90): number {
+    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+    const stmt = this.db.prepare(`
+      DELETE FROM task_events
+      WHERE task_id IN (
+        SELECT id FROM tasks WHERE status IN ('completed', 'failed', 'cancelled') AND created_at < ?
+      )
+    `);
+    const result = stmt.run(cutoff);
+    return result.changes;
+  }
+
+  /**
+   * Run VACUUM if the SQLite freelist exceeds `thresholdMB` megabytes.
+   * Returns true if a vacuum was performed.
+   */
+  vacuumIfNeeded(thresholdMB: number = 500): boolean {
+    const freelistCount = (this.db.pragma("freelist_count") as { freelist_count: number }[])[0]?.freelist_count ?? 0;
+    const pageSize = (this.db.pragma("page_size") as { page_size: number }[])[0]?.page_size ?? 4096;
+    const freelistMB = (freelistCount * pageSize) / (1024 * 1024);
+    if (freelistMB < thresholdMB) return false;
+    this.db.exec("VACUUM");
+    return true;
   }
 }
 
@@ -3938,6 +3968,10 @@ const buildImportedMemoryFilterSql = (contentExpr: string): string =>
 export class MemoryRepository {
   constructor(private db: Database.Database) {}
 
+  private static readonly MEMORY_FTS_RAW_MAX_CHARS = 160;
+  private static readonly MEMORY_FTS_RAW_MAX_TOKENS = 12;
+  private static readonly MEMORY_FTS_SLOW_QUERY_MS = 250;
+
   // Keep this small and local: we want memory search to be robust against
   // natural-language queries (punctuation, filler words) without pulling in
   // other modules and risking circular deps.
@@ -4116,6 +4150,7 @@ export class MemoryRepository {
       const raw = (query || "").trim();
       if (!raw) return [];
       const tokenized = this.buildRelaxedFtsQuery(raw);
+      const tryRaw = this.shouldTryRawFtsQuery(raw);
 
       const mapRows = (rows: Record<string, unknown>[]) =>
         rows.map((row) => ({
@@ -4129,17 +4164,23 @@ export class MemoryRepository {
         }));
 
       let rows: Record<string, unknown>[] = [];
-      try {
-        rows = stmt.all(raw, workspaceId, limit) as Record<string, unknown>[];
-      } catch {
-        // Raw query may be invalid FTS syntax; retry below with tokenized query.
-        rows = [];
+      if (tryRaw) {
+        try {
+          rows = this.runMemoryFtsQuery("local-raw", raw, () =>
+            stmt.all(raw, workspaceId, limit),
+          ) as Record<string, unknown>[];
+        } catch {
+          // Raw query may be invalid FTS syntax; retry below with tokenized query.
+          rows = [];
+        }
       }
 
       // If raw query was too strict (common) or failed, retry with relaxed query.
       if (rows.length === 0 && tokenized) {
         try {
-          rows = stmt.all(tokenized, workspaceId, limit) as Record<string, unknown>[];
+          rows = this.runMemoryFtsQuery("local-relaxed", tokenized, () =>
+            stmt.all(tokenized, workspaceId, limit),
+          ) as Record<string, unknown>[];
         } catch {
           // Ignore; we'll fall back to LIKE below.
           rows = [];
@@ -4213,17 +4254,24 @@ export class MemoryRepository {
       const raw = (query || "").trim();
       if (!raw) return [];
       const tokenized = this.buildRelaxedFtsQuery(raw);
+      const tryRaw = this.shouldTryRawFtsQuery(raw);
 
       let rows: Record<string, unknown>[] = [];
-      try {
-        rows = stmt.all(raw, limit) as Record<string, unknown>[];
-      } catch {
-        rows = [];
+      if (tryRaw) {
+        try {
+          rows = this.runMemoryFtsQuery("imported-raw", raw, () =>
+            stmt.all(raw, limit),
+          ) as Record<string, unknown>[];
+        } catch {
+          rows = [];
+        }
       }
 
       if (rows.length === 0 && tokenized) {
         try {
-          rows = stmt.all(tokenized, limit) as Record<string, unknown>[];
+          rows = this.runMemoryFtsQuery("imported-relaxed", tokenized, () =>
+            stmt.all(tokenized, limit),
+          ) as Record<string, unknown>[];
         } catch {
           rows = [];
         }
@@ -4574,6 +4622,25 @@ export class MemoryRepository {
     // Use OR to improve recall for long natural-language prompts.
     const parts = tokens.map((t) => `"${t.replace(/"/g, "")}"`);
     return parts.join(" OR ");
+  }
+
+  private shouldTryRawFtsQuery(raw: string): boolean {
+    if (raw.length > MemoryRepository.MEMORY_FTS_RAW_MAX_CHARS) return false;
+    return this.tokenizeSearchQuery(raw).length <= MemoryRepository.MEMORY_FTS_RAW_MAX_TOKENS;
+  }
+
+  private runMemoryFtsQuery<T>(label: string, query: string, run: () => T): T {
+    const startedAt = Date.now();
+    try {
+      return run();
+    } finally {
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs >= MemoryRepository.MEMORY_FTS_SLOW_QUERY_MS) {
+        memoryRepositoryLogger.warn(
+          `[MemoryRepository] Slow memory FTS query label=${label} elapsedMs=${elapsedMs} queryChars=${query.length}`,
+        );
+      }
+    }
   }
 
   private mapRowToMemory(row: Record<string, unknown>): Memory {
