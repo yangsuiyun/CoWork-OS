@@ -25,6 +25,8 @@ export function resolveSkillSlashAlias(commandName: string): string | null {
     return match.skillId;
   }
 
+  if (name === "review") return null;
+
   const directSkill = loader.getSkill(name);
   if (directSkill) return name;
 
