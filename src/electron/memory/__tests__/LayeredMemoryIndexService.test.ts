@@ -25,7 +25,7 @@ describe("LayeredMemoryIndexService", () => {
   it("writes MEMORY.md and topic files from existing memory sources", async () => {
     const workspacePath = await createWorkspace();
 
-    vi.spyOn(MemoryService, "searchForPromptRecall").mockReturnValue([
+    vi.spyOn(MemoryService, "searchForPromptRecallAsync").mockResolvedValue([
       {
         id: "mem-1",
         snippet: "Remember to keep the prompt stack deterministic.",
@@ -57,16 +57,6 @@ describe("LayeredMemoryIndexService", () => {
         status: "active",
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      },
-    ] as Any);
-    vi.spyOn(MemoryService, "searchForPromptRecall").mockReturnValue([
-      {
-        id: "mem-2",
-        snippet: "Archive recall still exists.",
-        type: "summary",
-        relevanceScore: 0.7,
-        createdAt: Date.now(),
-        source: "db",
       },
     ] as Any);
     vi.spyOn(DailyLogService, "listRecentDays").mockResolvedValue(["2026-03-31"]);
