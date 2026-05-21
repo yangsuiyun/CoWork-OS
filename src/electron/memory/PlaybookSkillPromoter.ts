@@ -195,7 +195,7 @@ export class PlaybookSkillPromoter {
   ): PromotionCandidate[] {
     try {
       // Search for all reinforcement entries
-      const results = MemoryService.search(workspaceId, "[PLAYBOOK] Reinforced pattern", 100);
+      const results = MemoryService.searchByContentMarker(workspaceId, "[PLAYBOOK] Reinforced pattern", 100);
       const reinforcements = results.filter(
         (r) => r.type === "insight" && r.snippet.includes("Reinforced pattern"),
       );
