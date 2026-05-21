@@ -3008,9 +3008,17 @@ export class AgentDaemon extends EventEmitter {
       existing.resultSummary ||
       "Stopped by user with current progress accepted.";
 
+    const completedAt = Date.now();
+    const lastRunDurationMs = this.calculateLatestRunDurationMs(
+      taskId,
+      completedAt,
+      existing.createdAt,
+    );
+
     this.taskRepo.update(taskId, {
       status: "completed",
-      completedAt: Date.now(),
+      completedAt,
+      lastRunDurationMs,
       error: null,
       terminalStatus: "ok",
       failureClass: undefined,
@@ -3024,6 +3032,7 @@ export class AgentDaemon extends EventEmitter {
       message,
       resultSummary,
       terminalStatus: "ok",
+      lastRunDurationMs,
       ...(bestKnownOutcome ? { bestKnownOutcome } : {}),
       terminalStatusReason: "user_accepted_current_progress",
     });
@@ -6215,6 +6224,36 @@ export class AgentDaemon extends EventEmitter {
     }
   }
 
+  beginFollowUpRun(taskId: string): Task | undefined {
+    const existing = this.taskRepo.findById(taskId);
+    if (!existing) return undefined;
+
+    const currentStatus = deriveCanonicalTaskStatus(existing);
+    if (!isTerminalTaskStatus(currentStatus)) {
+      this.updateTaskStatus(taskId, "executing");
+      return this.taskRepo.findById(taskId);
+    }
+
+    this.taskRepo.update(taskId, {
+      status: "executing",
+      error: undefined,
+      completedAt: undefined,
+      lastRunDurationMs: undefined,
+      terminalStatus: undefined,
+      failureClass: undefined,
+      awaitingUserInputReasonCode: undefined,
+    });
+    this.clearRetryState(taskId);
+    this.clearTimelineTaskState(taskId);
+    this.logEvent(taskId, "task_resumed", {
+      message: "Processing follow-up message",
+      newRunStarted: true,
+      previousStatus: currentStatus,
+    });
+
+    return this.taskRepo.findById(taskId);
+  }
+
   /**
    * Get agent role by ID
    */
@@ -6231,6 +6270,93 @@ export class AgentDaemon extends EventEmitter {
    */
   getTask(taskId: string): Task | undefined {
     return this.taskRepo.findById(taskId);
+  }
+
+  private isRunTerminalEvent(event: TaskEvent): boolean {
+    const type = this.resolveLegacyEventType(event);
+    if (type === "task_completed" || type === "task_cancelled") return true;
+    if (type !== "task_status") return false;
+    const status =
+      event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+        ? (event.payload as Record<string, unknown>).status
+        : undefined;
+    return status === "completed" || status === "failed" || status === "cancelled";
+  }
+
+  private isRunActivityEvent(event: TaskEvent): boolean {
+    const type = this.resolveLegacyEventType(event);
+    if (
+      type === "user_message" ||
+      type === "assistant_message" ||
+      type === "task_created" ||
+      type === "task_completed" ||
+      type === "task_cancelled" ||
+      type === "task_status"
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  private calculateLatestRunDurationMs(
+    taskId: string,
+    completedAt: number,
+    fallbackStartedAt?: number,
+    eventsOverride?: TaskEvent[],
+  ): number {
+    const end = Number.isFinite(completedAt) ? Math.floor(completedAt) : Date.now();
+    const events = eventsOverride ?? this.eventRepo.findByTaskId(taskId);
+
+    let previousTerminalAt: number | undefined;
+    for (const event of events) {
+      const ts =
+        typeof event.timestamp === "number" && Number.isFinite(event.timestamp)
+          ? event.timestamp
+          : undefined;
+      if (ts === undefined || ts >= end) continue;
+      if (!this.isRunTerminalEvent(event)) continue;
+      previousTerminalAt = Math.max(previousTerminalAt ?? 0, ts);
+    }
+
+    let latestUserMessageAt: number | undefined;
+    for (const event of events) {
+      const ts =
+        typeof event.timestamp === "number" && Number.isFinite(event.timestamp)
+          ? event.timestamp
+          : undefined;
+      if (ts === undefined || ts > end) continue;
+      if (previousTerminalAt !== undefined && ts <= previousTerminalAt) continue;
+      if (this.resolveLegacyEventType(event) !== "user_message") continue;
+      latestUserMessageAt = Math.max(latestUserMessageAt ?? 0, ts);
+    }
+
+    const fallbackStart =
+      typeof fallbackStartedAt === "number" && Number.isFinite(fallbackStartedAt)
+        ? Math.floor(fallbackStartedAt)
+        : end;
+    const startedAt = latestUserMessageAt ?? fallbackStart;
+    let durationMs = Math.max(0, end - startedAt);
+
+    if (durationMs < 1000) {
+      let firstActivityAt: number | undefined;
+      let lastActivityAt: number | undefined;
+      for (const event of events) {
+        const ts =
+          typeof event.timestamp === "number" && Number.isFinite(event.timestamp)
+            ? event.timestamp
+            : undefined;
+        if (ts === undefined || ts > end) continue;
+        if (previousTerminalAt !== undefined && ts <= previousTerminalAt) continue;
+        if (!this.isRunActivityEvent(event)) continue;
+        firstActivityAt = Math.min(firstActivityAt ?? ts, ts);
+        lastActivityAt = Math.max(lastActivityAt ?? ts, ts);
+      }
+      if (firstActivityAt !== undefined && lastActivityAt !== undefined) {
+        durationMs = Math.max(durationMs, lastActivityAt - firstActivityAt);
+      }
+    }
+
+    return Math.max(0, Math.floor(durationMs));
   }
 
   private getTaskEventsForReplay(taskId: string): TaskEvent[] {
@@ -7008,6 +7134,7 @@ export class AgentDaemon extends EventEmitter {
         | "status"
         | "error"
         | "completedAt"
+        | "lastRunDurationMs"
         | "terminalStatus"
         | "failureClass"
         | "awaitingUserInputReasonCode"
@@ -7086,11 +7213,17 @@ export class AgentDaemon extends EventEmitter {
     this.cleanupPendingApprovalsForTask(taskId, "Task ended before the approval request was resolved.");
 
     const completedAt = metadata?.completedAt ?? Date.now();
+    const lastRunDurationMs = this.calculateLatestRunDurationMs(
+      taskId,
+      completedAt,
+      existingTask?.createdAt,
+    );
     const terminalStatus = metadata?.terminalStatus ?? "failed";
     const updates: Partial<Task> = {
       status: "failed",
       error: errorMessage,
       completedAt,
+      lastRunDurationMs,
       terminalStatus,
       ...(typeof metadata?.resultSummary === "string" && metadata.resultSummary.trim().length > 0
         ? { resultSummary: metadata.resultSummary.trim() }
@@ -7152,6 +7285,7 @@ export class AgentDaemon extends EventEmitter {
       status: "failed",
       message: errorMessage,
       terminalStatus,
+      lastRunDurationMs,
       ...(typeof metadata?.resultSummary === "string" && metadata.resultSummary.trim().length > 0
         ? { resultSummary: metadata.resultSummary.trim() }
         : {}),
@@ -7196,6 +7330,11 @@ export class AgentDaemon extends EventEmitter {
     this.cleanupPendingApprovalsForTask(taskId, "Task ended before the approval request was resolved.");
 
     const completedAt = metadata?.completedAt ?? Date.now();
+    const lastRunDurationMs = this.calculateLatestRunDurationMs(
+      taskId,
+      completedAt,
+      existing?.createdAt,
+    );
     const errorMessage =
       metadata && Object.prototype.hasOwnProperty.call(metadata, "errorMessage")
         ? metadata.errorMessage
@@ -7204,6 +7343,7 @@ export class AgentDaemon extends EventEmitter {
     this.taskRepo.update(taskId, {
       status: "cancelled",
       completedAt,
+      lastRunDurationMs,
       error: errorMessage,
       terminalStatus: undefined,
       failureClass: undefined,
@@ -7220,6 +7360,7 @@ export class AgentDaemon extends EventEmitter {
     this.logEvent(taskId, "task_status", {
       status: "cancelled",
       message,
+      lastRunDurationMs,
       ...(typeof errorMessage === "string" && errorMessage.trim().length > 0
         ? { error: errorMessage }
         : {}),
@@ -7802,9 +7943,15 @@ export class AgentDaemon extends EventEmitter {
       existingTask.agentConfig?.executionModeSource === "user";
     if (isChatSession) {
       const completedAt = Date.now();
+      const lastRunDurationMs = this.calculateLatestRunDurationMs(
+        taskId,
+        completedAt,
+        existingTask.createdAt,
+      );
       this.taskRepo.update(taskId, {
         status: "completed",
         completedAt,
+        lastRunDurationMs,
         error: null,
         terminalStatus: undefined,
         failureClass: undefined,
@@ -7826,6 +7973,7 @@ export class AgentDaemon extends EventEmitter {
       this.logEvent(taskId, "task_status", {
         status: "completed",
         message: resultSummary || "Chat turn completed",
+        lastRunDurationMs,
       });
       this.finishQueueSlot(taskId);
       return;
@@ -8407,9 +8555,17 @@ export class AgentDaemon extends EventEmitter {
     };
     const isCompletedOutcome = resolvedOutcome.status === "completed";
 
+    const completedAt = Date.now();
+    const lastRunDurationMs = this.calculateLatestRunDurationMs(
+      taskId,
+      completedAt,
+      existingTask.createdAt,
+      historicalEvents,
+    );
     const updates: Partial<Task> = {
       status: resolvedOutcome.status,
-      completedAt: Date.now(),
+      completedAt,
+      lastRunDurationMs,
       // Preserve a helpful prompt for resumable states; otherwise clear stale failures.
       error:
         resolvedOutcome.status === "completed"
@@ -8469,6 +8625,7 @@ export class AgentDaemon extends EventEmitter {
             : "Task is waiting for approval or further input";
     this.logEvent(taskId, isCompletedOutcome ? "task_completed" : "task_status", {
       message: terminalStatusMessage,
+      lastRunDurationMs,
       ...(updates.resultSummary ? { resultSummary: updates.resultSummary } : {}),
       ...(resolvedOutcome.status !== "completed" ? { status: resolvedOutcome.status } : {}),
       terminalStatus,
