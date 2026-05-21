@@ -1,0 +1,133 @@
+import { EventEmitter } from "events";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import type { ChildProcess } from "child_process";
+import type { Workspace } from "../../../../shared/types";
+
+const spawnMock = vi.hoisted(() => vi.fn());
+
+vi.mock("child_process", () => ({
+  spawn: spawnMock,
+}));
+
+import { MacOSSandbox } from "../macos-sandbox";
+
+function makeWorkspace(): Workspace {
+  return {
+    id: "workspace-1",
+    name: "Workspace",
+    path: "/tmp/cowork workspace",
+    permissions: {
+      read: true,
+      write: true,
+      delete: false,
+      shell: true,
+      network: false,
+      unrestrictedFileAccess: false,
+      allowedPaths: [],
+    },
+    settings: {
+      useGuardrails: true,
+      guardrails: {
+        blockDangerousCommands: true,
+        customBlockedPatterns: [],
+        autoApproveTrustedCommands: false,
+        trustedCommandPatterns: [],
+        enforceAllowedDomains: false,
+        allowedDomains: [],
+      },
+    },
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+function makeChildProcess(options: {
+  closeCode?: number;
+  stdout?: string;
+  stderr?: string;
+  errorMessage?: string;
+} = {}): ChildProcess {
+  const proc = new EventEmitter() as ChildProcess;
+  proc.stdout = new EventEmitter() as ChildProcess["stdout"];
+  proc.stderr = new EventEmitter() as ChildProcess["stderr"];
+  proc.kill = vi.fn(() => true) as unknown as ChildProcess["kill"];
+  queueMicrotask(() => {
+    if (options.stdout) proc.stdout?.emit("data", Buffer.from(options.stdout));
+    if (options.stderr) proc.stderr?.emit("data", Buffer.from(options.stderr));
+    if (options.errorMessage) {
+      proc.emit("error", new Error(options.errorMessage));
+      return;
+    }
+    proc.emit("close", options.closeCode ?? 0, null);
+  });
+  return proc;
+}
+
+describe("MacOSSandbox", () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+    spawnMock.mockImplementation(() => makeChildProcess());
+  });
+
+  it("passes multiline shell commands as a single -c argument to sandbox-exec", async () => {
+    const sandbox = new MacOSSandbox(makeWorkspace());
+    const command = "mkdir -p out && cat > out/viewer.html <<'EOF'\n<html></html>\nEOF";
+
+    const result = await sandbox.execute(command, [], {
+      cwd: "/tmp/cowork workspace",
+      timeout: 1000,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const [bin, args, options] = spawnMock.mock.calls[0];
+    expect(bin).toBe("sandbox-exec");
+    expect(args.slice(2)).toEqual(["/bin/sh", "-c", command]);
+    expect(options.shell).toBe(false);
+  });
+
+  it("passes explicit command arguments directly through sandbox-exec", async () => {
+    const sandbox = new MacOSSandbox(makeWorkspace());
+
+    const result = await sandbox.execute("node", ["script.js", "--flag"], {
+      cwd: "/tmp/cowork workspace",
+      timeout: 1000,
+    });
+
+    expect(result.exitCode).toBe(0);
+    const [bin, args, options] = spawnMock.mock.calls[0];
+    expect(bin).toBe("sandbox-exec");
+    expect(args.slice(2)).toEqual(["node", "script.js", "--flag"]);
+    expect(options.shell).toBe(false);
+  });
+
+  it("reports nonzero sandbox process exits", async () => {
+    spawnMock.mockImplementationOnce(() =>
+      makeChildProcess({ closeCode: 2, stderr: "command failed\n" }),
+    );
+    const sandbox = new MacOSSandbox(makeWorkspace());
+
+    const result = await sandbox.execute("false", [], {
+      cwd: "/tmp/cowork workspace",
+      timeout: 1000,
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toBe("command failed\n");
+    expect(result.timedOut).toBe(false);
+  });
+
+  it("reports sandbox spawn errors", async () => {
+    spawnMock.mockImplementationOnce(() => makeChildProcess({ errorMessage: "spawn failed" }));
+    const sandbox = new MacOSSandbox(makeWorkspace());
+
+    const result = await sandbox.execute("echo ok", [], {
+      cwd: "/tmp/cowork workspace",
+      timeout: 1000,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("spawn failed");
+    expect(result.error).toBe("spawn failed");
+  });
+});
