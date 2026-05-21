@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const cssPath = fileURLToPath(new URL("../../main-content.css", import.meta.url));
+const cssPath = fileURLToPath(new URL("../../MainContent/main-content.css", import.meta.url));
 const timelineCss = readFileSync(cssPath, "utf8");
 
 describe("StepFeed layout styles", () => {
