@@ -370,7 +370,26 @@ import {
 import { getStepCompletionPreviewPath } from "../../utils/step-document-preview";
 import { resolveDisclosureExpanded } from "../../utils/disclosure-state";
 
+const MAX_COMMAND_OUTPUT_SESSION_CHARS = 50 * 1024;
+const MAX_COMMAND_OUTPUT_SESSIONS = 12;
 
+function appendCommandOutputTail(current: string, chunk: string): string {
+  const next = current + chunk;
+  if (next.length <= MAX_COMMAND_OUTPUT_SESSION_CHARS) return next;
+  return "[... earlier output truncated ...]\n\n" + next.slice(-MAX_COMMAND_OUTPUT_SESSION_CHARS);
+}
+
+function limitCommandOutputSessions(sessions: CommandOutputSession[]): CommandOutputSession[] {
+  if (sessions.length <= MAX_COMMAND_OUTPUT_SESSIONS) return sessions;
+  const running = sessions.filter((session) => session.isRunning);
+  const runningToKeep = running.slice(-MAX_COMMAND_OUTPUT_SESSIONS);
+  const completedBudget = Math.max(0, MAX_COMMAND_OUTPUT_SESSIONS - runningToKeep.length);
+  const recentCompleted =
+    completedBudget > 0
+      ? sessions.filter((session) => !session.isRunning).slice(-completedBudget)
+      : [];
+  return [...recentCompleted, ...runningToKeep].sort((a, b) => a.startTimestamp - b.startTimestamp);
+}
 
 interface MainContentProps {
   task: Task | undefined;
@@ -4294,7 +4313,7 @@ function MainContentComponent({
           payloadType === "stdin" ||
           payloadType === "error"
         ) {
-          currentSession.output += payloadOutput;
+          currentSession.output = appendCommandOutputTail(currentSession.output, payloadOutput);
           continue;
         }
 
@@ -4309,14 +4328,7 @@ function MainContentComponent({
         sessions.push(currentSession);
       }
 
-      const maxUiOutputChars = 50 * 1024;
-      return sessions.map((session) => {
-        if (session.output.length <= maxUiOutputChars) return session;
-        return {
-          ...session,
-          output: "[... earlier output truncated ...]\n\n" + session.output.slice(-maxUiOutputChars),
-        };
-      });
+      return limitCommandOutputSessions(sessions);
     });
   }, [events, effectiveSharedTaskEventUi, rendererPerfLoggingEnabled]);
 
