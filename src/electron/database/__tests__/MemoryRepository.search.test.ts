@@ -123,4 +123,16 @@ describe("MemoryRepository.search", () => {
     expect(sql).toContain("m.content LIKE '[Imported from %'");
     expect(sql).not.toContain("ChatGPT");
   });
+
+  it("excludes private memories from marker lookup", () => {
+    const all = vi.fn(() => []);
+    const prepare = vi.fn(() => ({ all }));
+    const repo = new MemoryRepository({ prepare } as Any);
+
+    repo.searchByContentMarker("ws-1", "[SUGGESTION]", 50);
+
+    const sql = String(prepare.mock.calls[0]?.[0] || "");
+    expect(sql).toContain("is_private = 0");
+    expect(all).toHaveBeenCalledWith("ws-1", "%[SUGGESTION]%", "%[SUGGESTION]%", 50);
+  });
 });
