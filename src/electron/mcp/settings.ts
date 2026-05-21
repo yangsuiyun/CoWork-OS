@@ -61,12 +61,14 @@ function normalizeConnectorRuntime(server: MCPServerConfig): {
     return { server, changed: false };
   }
 
-  const runAsNodeIndex = server.args.indexOf("--runAsNode");
-  if (runAsNodeIndex === -1 || runAsNodeIndex >= server.args.length - 1) {
+  const scriptIndex = server.args.findIndex(
+    (arg) => typeof arg === "string" && CONNECTOR_SCRIPT_PATH_REGEX.test(arg),
+  );
+  if (scriptIndex === -1) {
     return { server, changed: false };
   }
 
-  const scriptArg = server.args[runAsNodeIndex + 1];
+  const scriptArg = server.args[scriptIndex];
   const match = scriptArg.match(CONNECTOR_SCRIPT_PATH_REGEX);
   if (!match) {
     return { server, changed: false };
@@ -74,8 +76,11 @@ function normalizeConnectorRuntime(server: MCPServerConfig): {
 
   const connectorName = match[1];
   const expectedScriptPath = getConnectorScriptPathForCurrentRuntime(connectorName);
-  const expectedArgs = [...server.args];
-  expectedArgs[runAsNodeIndex + 1] = expectedScriptPath;
+  const expectedArgs = server.args.filter((arg) => arg !== "--runAsNode");
+  const expectedScriptIndex = expectedArgs.findIndex(
+    (arg) => typeof arg === "string" && CONNECTOR_SCRIPT_PATH_REGEX.test(arg),
+  );
+  expectedArgs[expectedScriptIndex] = expectedScriptPath;
   const expectedCommand = process.execPath;
 
   if (server.command === expectedCommand && arraysEqual(server.args, expectedArgs)) {
