@@ -113,6 +113,41 @@ describe("TaskExecutor adaptive tool cap + file tracking", () => {
     expect(afterDecay).toBeGreaterThan(0);
   });
 
+  it("keeps maps MCP tools when the prompt is a local walking errand", () => {
+    const executor = createExecutor("execution");
+    executor.task.title = "Urgent dress errand";
+    executor.task.prompt =
+      "My kid just fell into the duck pond and the wedding starts in 30 minutes. Where can I walk and buy her a new dress?";
+    executor.lastUserMessage = executor.task.prompt;
+    executor.plan.steps = [
+      {
+        id: "1",
+        description: "Get current location and rank nearby places to buy a kids dress",
+        status: "in_progress",
+      },
+    ];
+    executor.getMapsMcpToolNames = vi.fn().mockReturnValue([
+      "mcp_maps.search_places",
+      "mcp_maps.route",
+      "mcp_maps.rank_nearby_options",
+    ]);
+    const builtIn = Array.from({ length: 10 }, (_, i) => ({ name: `builtin_${i}`, description: "" }));
+    const mcp = Array.from({ length: 220 }, (_, i) => ({
+      name: `mcp_generic_${i}`,
+      description: "generic external tool",
+    }));
+    mcp.push({
+      name: "mcp_maps.rank_nearby_options",
+      description: "Rank nearby options for urgent errands with walking times",
+    });
+
+    const capped = ((executor as Any).capToolCount([...builtIn, ...mcp]) as Any[]).map(
+      (tool) => tool.name,
+    );
+
+    expect(capped).toContain("mcp_maps.rank_nearby_options");
+  });
+
   it("clears currentStepId after executeStep even when step runner throws", async () => {
     const executor = createExecutor("execution");
     executor.executeStepUnified = vi.fn().mockRejectedValue(new Error("boom"));
