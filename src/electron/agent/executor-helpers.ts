@@ -931,7 +931,17 @@ export class ToolFailureTracker {
     );
   }
 
+  private isShellSandboxRuntimeFailure(toolName: string, errorMessage: string): boolean {
+    if (toolName !== "run_command") return false;
+    return /Shell sandbox failed|sandbox-exec|sandbox_apply|Abort trap|exit\s+134|code\s+134/i.test(
+      errorMessage,
+    );
+  }
+
   private getMaxSystemicFailures(toolName: string, errorMessage: string): number {
+    if (this.isShellSandboxRuntimeFailure(toolName, errorMessage)) {
+      return 2;
+    }
     if (this.isToolRuntimeTimeoutFailure(toolName, errorMessage)) {
       return 2;
     }
