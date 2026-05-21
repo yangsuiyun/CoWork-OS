@@ -15555,6 +15555,8 @@ a,
 }
 
 .browser-workbench-right-actions {
+  width: 216px;
+  flex-basis: 216px;
   justify-content: flex-end;
   position: relative;
   z-index: 2;
@@ -15869,18 +15871,18 @@ a,
     display: none;
   }
 
-  .browser-workbench-nav-controls,
-  .browser-workbench-right-actions {
-    width: 154px;
-    flex-basis: 154px;
-  }
-}
-
-@media (max-width: 720px) {
   .browser-workbench-profile {
     display: none;
   }
 
+  .browser-workbench-nav-controls,
+  .browser-workbench-right-actions {
+    width: 170px;
+    flex-basis: 170px;
+  }
+}
+
+@media (max-width: 720px) {
   .browser-workbench-nav-controls,
   .browser-workbench-right-actions {
     width: auto;
