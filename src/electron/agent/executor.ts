@@ -162,6 +162,7 @@ import { KnowledgeGraphService } from "../knowledge-graph/KnowledgeGraphService"
 import { MemorySynthesizer } from "../memory/MemorySynthesizer";
 import { TranscriptStore } from "../memory/TranscriptStore";
 import { ChronicleObservationRepository } from "../chronicle";
+import { MCPSettingsManager } from "../mcp/settings";
 import { IntentRouter } from "./strategy/IntentRouter";
 import { TaskStrategyService } from "./strategy/TaskStrategyService";
 import { CitationTracker } from "./citation/CitationTracker";
@@ -4197,7 +4198,7 @@ export class TaskExecutor {
       const recentLimit = 4;
       const maxLines = 14;
       const recent = MemoryService.getRecentForPromptRecall(workspaceId, recentLimit);
-      const search = MemoryService.searchForPromptRecall(workspaceId, trimmed, limit);
+      const search = MemoryService.searchForPromptRecallFast(workspaceId, trimmed, limit);
 
       const seen = new Set<string>();
       const lines: string[] = [];
@@ -4358,10 +4359,25 @@ export class TaskExecutor {
     ) {
       return true;
     }
+    if (this.hasLocalErrandLocationIntent(normalized)) return true;
     if (/\.(?:pdf|png|jpe?g|gif|webp|csv|xlsx?|docx?|pptx?)\b/.test(normalized)) return true;
     return /\b(?:create|write|edit|modify|build|make|generate|save|export|run|execute|fix|debug|install|open|browse|review|analyze|summarize|compare|monitor|remind|schedule)\b/.test(
       normalized,
     );
+  }
+
+  private hasLocalErrandLocationIntent(text: string): boolean {
+    return IntentRouter.hasLocalErrandLocationIntent(String(text || "").toLowerCase());
+  }
+
+  private getMapsMcpToolNames(): string[] {
+    const prefix = MCPSettingsManager.loadSettings().toolNamePrefix || "mcp_";
+    return [
+      "maps.search_places",
+      "maps.place_details",
+      "maps.route",
+      "maps.rank_nearby_options",
+    ].map((name) => `${prefix}${name}`);
   }
 
   private isClearlyTrivialCompanionPrompt(prompt: string): boolean {
@@ -13449,6 +13465,13 @@ ${transcript}
       "- Do not ask the user to fetch URLs, page content, or local data that your tools can retrieve directly.",
       "- If the user asks to add or change a tool capability, treat it as actionable work: implement the minimal safe change or take the best fallback path and report the limitation clearly.",
       "",
+      "LOCAL LOCATION AND MAPS ROUTING (CRITICAL):",
+      "- For prompts like 'near me', 'walk nearby', 'closest open', or 'where can I buy/get X before Y', request current desktop location with get_current_location first.",
+      "- After location permission succeeds, use the Maps MCP ranking/search tools, preferably mcp_maps.rank_nearby_options for urgent local errands.",
+      "- Do not ask for an address before trying get_current_location. Ask for a typed address only if location permission is denied, unavailable, times out, or the Maps connector is not available.",
+      "- If get_current_location times out once, do not retry it in the same task; immediately ask for a typed address, venue, or nearby landmark.",
+      "- In the final answer, give the top recommendation, walking time, why it matches, open-status confidence, and a map/source link when available.",
+      "",
       "ATTACHED PDFS:",
       "- Uploaded PDFs may include only a compact excerpt in the user message.",
       "- If the user asks to summarize, answer questions from, extract from, compare, or transform an attached PDF and the answer depends on more than the excerpt, call parse_document with the attached workspace-relative path before answering.",
@@ -14326,6 +14349,12 @@ ${transcript}
     if (this.descriptionHasScreenContextIntent(String(stepText || "").toLowerCase())) {
       base.add("screen_context_resolve");
     }
+    if (this.hasLocalErrandLocationIntent(stepText || "")) {
+      base.add("get_current_location");
+      for (const toolName of this.getMapsMcpToolNames()) {
+        base.add(toolName);
+      }
+    }
     if (hasNativeDesktopGuiIntent(String(stepText || "").toLowerCase())) {
       base.add("open_application");
       base.add("screenshot");
@@ -14465,9 +14494,9 @@ ${transcript}
     );
     const normalizedStepText = stepText.toLowerCase();
     const mcpReferenced =
-      /\bmcp[_\s-]|connector|slack|salesforce|jira|linear|notion|github|postgres|mysql|hubspot\b/.test(
+      /\bmcp[_\s-]|connector|slack|salesforce|jira|linear|notion|github|postgres|mysql|hubspot|maps?|nearby|walking?|places?|location\b/.test(
         normalizedStepText,
-      );
+      ) || this.hasLocalErrandLocationIntent(normalizedStepText);
 
     const scoped = tools.filter((tool) => {
       const name = String(tool.name || "");
@@ -14543,6 +14572,27 @@ ${transcript}
     if (lowSignal) {
       const expandedCap = Math.min(softCap, baseCap + TaskExecutor.LOW_SIGNAL_EXPLORATION_BUFFER);
       mcpBudget = Math.max(mcpBudget, expandedCap - builtIn.length);
+    }
+
+    const localMapsIntent = this.hasLocalErrandLocationIntent(
+      [
+        this.task?.title,
+        this.task?.prompt,
+        this.task?.rawPrompt,
+        this.task?.userPrompt,
+        this.lastUserMessage,
+        this.plan?.steps?.map((step) => step.description).join(" "),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+    const mapsToolNames = localMapsIntent ? new Set(this.getMapsMcpToolNames()) : new Set<string>();
+    if (localMapsIntent) {
+      scored = scored.map((entry) =>
+        mapsToolNames.has(String(entry.tool.name || ""))
+          ? { ...entry, score: entry.score + 200 }
+          : entry,
+      );
     }
 
     const tieSeed = this.toolSelectionEpoch++;
@@ -32107,7 +32157,22 @@ Return ONLY a JSON object:
     this.toolRegistry.setCanvasSessionCutoff(shouldStartNewCanvasSession ? Date.now() : null);
     // Reset deduplicator so follow-up messages can re-invoke tools used in the previous run
     this.toolCallDeduplicator.reset();
-    this.daemon.updateTaskStatus(this.task.id, "executing");
+    if (shouldStartNewCanvasSession) {
+      const restartedTask = this.daemon.beginFollowUpRun
+        ? this.daemon.beginFollowUpRun(this.task.id)
+        : undefined;
+      if (!restartedTask) {
+        this.daemon.updateTaskStatus(this.task.id, "executing");
+      }
+      if (restartedTask) {
+        this.task = {
+          ...this.task,
+          ...restartedTask,
+        };
+      }
+    } else {
+      this.daemon.updateTaskStatus(this.task.id, "executing");
+    }
     this.emitEvent("executing", { message: "Processing follow-up message" });
     if (!handledPendingSkillReply && !suppressUserMessageEvent && !recoveredFromTurnLimit) {
       this.emitEvent("user_message", {
