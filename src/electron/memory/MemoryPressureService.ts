@@ -1,4 +1,4 @@
-import fs from "fs";
+import fs from "fs/promises";
 import path from "path";
 import { WORKSPACE_KIT_CONTRACTS } from "../context/kit-contracts";
 
@@ -49,8 +49,10 @@ function levelForPressure(pressure: number): MemoryPressureFileStatus["level"] {
 }
 
 export class MemoryPressureService {
-  static analyze(workspacePath: string): MemoryPressureReport {
-    const files = PRESSURE_FILES.map((file) => this.analyzeFile(workspacePath, file));
+  static async analyze(workspacePath: string): Promise<MemoryPressureReport> {
+    const files = await Promise.all(
+      PRESSURE_FILES.map((file) => this.analyzeFile(workspacePath, file)),
+    );
     return {
       workspacePath,
       files,
@@ -58,10 +60,10 @@ export class MemoryPressureService {
     };
   }
 
-  static analyzeFile(
+  static async analyzeFile(
     workspacePath: string,
     file: MemoryPressureFileStatus["file"],
-  ): MemoryPressureFileStatus {
+  ): Promise<MemoryPressureFileStatus> {
     const relPath = path.join(".cowork", file).replace(/\\/g, "/");
     const absPath = path.join(workspacePath, ".cowork", file);
     const contract = WORKSPACE_KIT_CONTRACTS[file];
@@ -69,7 +71,7 @@ export class MemoryPressureService {
     let content = "";
     let exists = false;
     try {
-      content = fs.readFileSync(absPath, "utf8");
+      content = await fs.readFile(absPath, "utf8");
       exists = true;
     } catch {
       content = "";
