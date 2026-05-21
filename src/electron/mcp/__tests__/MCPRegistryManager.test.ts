@@ -60,6 +60,8 @@ describe("MCPRegistryManager install defaults", () => {
     const config = await MCPRegistryManager.installServer("salesforce");
 
     expect(config.enabled).toBe(false);
+    expect(config.args).not.toContain("--runAsNode");
+    expect(config.args?.[0]).toContain("/connectors/salesforce-mcp/dist/index.js");
     expect(mockState.addServerMock).toHaveBeenCalledTimes(1);
     expect(mockState.addServerMock.mock.calls[0][0].enabled).toBe(false);
   });
@@ -96,6 +98,7 @@ describe("MCPRegistryManager install defaults", () => {
     const googleWorkspaceTools = googleWorkspace?.tools.map((tool) => tool.name) ?? [];
 
     expect(ids).toContain("google-workspace");
+    expect(ids).toContain("maps");
     expect(ids).toContain("factset");
     expect(ids).toContain("daloopa");
     expect(ids).toContain("egnyte");
