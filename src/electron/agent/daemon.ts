@@ -4920,7 +4920,7 @@ export class AgentDaemon extends EventEmitter {
           taskPrompt: task.prompt,
         });
         const pressureInstructions = MemoryPressureService.buildCompactionInstructions(
-          MemoryPressureService.analyze(workspace.path),
+          await MemoryPressureService.analyze(workspace.path),
         );
         const dreaming = await new DreamingService(
           new DreamingRepository(this.dbManager.getDatabase()),
