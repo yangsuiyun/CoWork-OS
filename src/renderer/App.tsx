@@ -105,6 +105,7 @@ import {
   flushRendererStartupMarks,
   markRendererStartup,
   measureRendererPerf,
+  recordRendererPerfSample,
   recordRendererRender,
 } from "./utils/renderer-perf";
 import {
@@ -131,6 +132,9 @@ const MainContent = lazy(() =>
 );
 const RightPanel = lazy(() =>
   import("./components/RightPanel").then((module) => ({ default: module.RightPanel })),
+);
+const TerminalTabsDock = lazy(() =>
+  import("./components/TerminalTabsDock").then((module) => ({ default: module.TerminalTabsDock })),
 );
 const SpreadsheetArtifactViewer = lazy(() =>
   import("./components/SpreadsheetArtifactViewer").then((module) => ({
@@ -522,6 +526,20 @@ function ArtifactSidebarFallback() {
   );
 }
 
+const EMPTY_RIGHT_PANEL_INPUT = {
+  task: undefined,
+  workspace: null,
+  events: [],
+  sharedTaskEventUi: null,
+  hasActiveChildren: false,
+  childTasks: [],
+  childEvents: [],
+  runningTasks: [],
+  queuedTasks: [],
+  queueStatus: null,
+  highlightOutputPath: null,
+};
+
 function mergeTaskPreservingIdentity(current: Task, updates: Partial<Task>): Task {
   let changed = false;
   const next = { ...current } as Task;
@@ -615,6 +633,7 @@ type SelectedTaskWorkspaceViewProps = {
   homeNextActionsEnabled: boolean;
   rendererPerfLoggingEnabled: boolean;
   effectiveRightCollapsed: boolean;
+  terminalTabsOpen: boolean;
   browserWorkbenchRequest: BrowserWorkbenchOpenRequest | null;
   rightPanelInput: {
     task: Task | undefined;
@@ -669,6 +688,7 @@ type SelectedTaskWorkspaceViewProps = {
   onTasksChanged: () => void | Promise<void>;
   onCancelTaskById: (taskId: string) => Promise<void>;
   onHighlightConsumed: () => void;
+  onCloseTerminalTabs: () => void;
   onModelChange: (selection: {
     providerType?: LLMProviderType;
     modelKey: string;
@@ -728,6 +748,7 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   homeNextActionsEnabled,
   rendererPerfLoggingEnabled,
   effectiveRightCollapsed,
+  terminalTabsOpen,
   browserWorkbenchRequest,
   rightPanelInput,
   onSelectChildTask,
@@ -752,6 +773,7 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   onTasksChanged,
   onCancelTaskById,
   onHighlightConsumed,
+  onCloseTerminalTabs,
   onModelChange,
 }: SelectedTaskWorkspaceViewProps) {
   const [spreadsheetArtifact, setSpreadsheetArtifact] = useState<{
@@ -1487,6 +1509,15 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
         </Suspense>
       ) : null}
       </div>
+      {!remoteTaskView && terminalTabsOpen && (
+        <Suspense fallback={null}>
+          <TerminalTabsDock
+            workspace={workspace}
+            taskId={task?.id ?? selectedTaskId ?? null}
+            onClose={onCloseTerminalTabs}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }, (prev, next) =>
@@ -1513,6 +1544,7 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   prev.homeNextActionsEnabled === next.homeNextActionsEnabled &&
   prev.rendererPerfLoggingEnabled === next.rendererPerfLoggingEnabled &&
   prev.effectiveRightCollapsed === next.effectiveRightCollapsed &&
+  prev.terminalTabsOpen === next.terminalTabsOpen &&
   prev.browserWorkbenchRequest?.requestId === next.browserWorkbenchRequest?.requestId &&
   prev.rightPanelInput === next.rightPanelInput
 );
@@ -1851,6 +1883,10 @@ export function App() {
   // Sidebar collapse state
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
+  const [terminalTabsOpen, setTerminalTabsOpen] = useState(false);
+  const handleCloseTerminalTabs = useCallback(() => {
+    setTerminalTabsOpen(false);
+  }, []);
 
   // Ref to track current tasks for use in event handlers (avoids stale closure)
   const tasksRef = useRef<Task[]>([]);
@@ -2549,6 +2585,9 @@ export function App() {
 
   useEffect(() => {
     currentViewRef.current = currentView;
+    if (currentView !== "main") {
+      setTerminalTabsOpen(false);
+    }
   }, [currentView]);
 
   useEffect(() => {
@@ -4368,6 +4407,37 @@ export function App() {
           ? true
           : rightSidebarCollapsed;
   const unseenOutputCount = unseenOutputTaskIds.length;
+  const showTitleBarTerminalToggle =
+    currentView === "main" &&
+    !effectiveRightCollapsed &&
+    Boolean(currentWorkspace?.path) &&
+    !remoteTaskView;
+  const titleBarBrowserTaskId = showTitleBarTerminalToggle ? selectedTask?.id : undefined;
+  const visibleRightPanelInput = effectiveRightCollapsed
+    ? EMPTY_RIGHT_PANEL_INPUT
+    : deferredRightPanelInput;
+
+  const handleRightSidebarToggle = useCallback(() => {
+    const startedAtMs =
+      typeof performance !== "undefined" ? performance.now() : null;
+    setRightSidebarCollapsed((collapsed) => {
+      const nextCollapsed = !collapsed;
+      if (nextCollapsed) {
+        setTerminalTabsOpen(false);
+      }
+      return nextCollapsed;
+    });
+    if (startedAtMs === null) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        recordRendererPerfSample(
+          "App.right_sidebar_toggle_to_paint",
+          performance.now() - startedAtMs,
+          rendererPerfLoggingEnabled,
+        );
+      });
+    });
+  }, [rendererPerfLoggingEnabled]);
 
   const handleSelectTaskFromShell = useCallback(
     (taskId: string | null) => {
@@ -4618,6 +4688,66 @@ export function App() {
         </div>
         <div className="title-bar-spacer" />
         <div className="title-bar-actions">
+          {titleBarBrowserTaskId && (
+            <button
+              type="button"
+              className="title-bar-btn title-bar-browser-toggle"
+              onClick={() => {
+                setBrowserWorkbenchRequest({
+                  taskId: titleBarBrowserTaskId,
+                  sessionId: "default",
+                  requestId: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                });
+              }}
+              title="Open browser"
+              aria-label="Open browser"
+            >
+              <svg
+                aria-hidden="true"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#6b7280"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ display: "block", flexShrink: 0 }}
+              >
+                <circle cx="12" cy="12" r="9" />
+                <path d="M3 12h18" />
+                <path d="M12 3a13.5 13.5 0 0 1 0 18" />
+                <path d="M12 3a13.5 13.5 0 0 0 0 18" />
+              </svg>
+            </button>
+          )}
+          {showTitleBarTerminalToggle && (
+            <button
+              type="button"
+              className={`title-bar-btn title-bar-terminal-toggle ${terminalTabsOpen ? "active" : ""}`}
+              onClick={() => setTerminalTabsOpen((open) => !open)}
+              title={terminalTabsOpen ? "Close terminal" : "Open terminal"}
+              aria-label={terminalTabsOpen ? "Close terminal" : "Open terminal"}
+              aria-pressed={terminalTabsOpen}
+            >
+              <svg
+                aria-hidden="true"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#6b7280"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ display: "block", flexShrink: 0 }}
+              >
+                <path d="m7 11 2 2-2 2" />
+                <path d="M11 15h4" />
+                <rect x="3" y="4" width="18" height="16" rx="2" ry="2" />
+              </svg>
+            </button>
+          )}
           <button
             type="button"
             className="title-bar-btn title-bar-theme-toggle"
@@ -4750,7 +4880,7 @@ export function App() {
             <button
               type="button"
               className="title-bar-btn title-bar-panel-toggle"
-              onClick={() => setRightSidebarCollapsed(!rightSidebarCollapsed)}
+              onClick={handleRightSidebarToggle}
               title={effectiveRightCollapsed ? "Show panel" : "Hide panel"}
               aria-label={effectiveRightCollapsed ? "Show panel" : "Hide panel"}
             >
@@ -5081,8 +5211,9 @@ export function App() {
                 homeNextActionsEnabled={homeNextActionsEnabled}
                 rendererPerfLoggingEnabled={rendererPerfLoggingEnabled}
                 effectiveRightCollapsed={effectiveRightCollapsed}
+                terminalTabsOpen={terminalTabsOpen}
                 browserWorkbenchRequest={browserWorkbenchRequest}
-                rightPanelInput={deferredRightPanelInput}
+                rightPanelInput={visibleRightPanelInput}
                 onSelectChildTask={handleSelectChildTaskFromMainContent}
                 onSelectTask={handleSelectTaskFromShell}
                 onSendMessage={handleSendMessage}
@@ -5108,6 +5239,7 @@ export function App() {
                 onTasksChanged={loadTasks}
                 onCancelTaskById={handleCancelTaskById}
                 onHighlightConsumed={handleRightPanelHighlightConsumed}
+                onCloseTerminalTabs={handleCloseTerminalTabs}
                 onModelChange={handleModelChange}
                 />
               )}
