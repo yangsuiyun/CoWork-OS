@@ -119,6 +119,8 @@ function titleForType(type: ApprovalType): string {
       return "Network access";
     case "external_service":
       return "External service";
+    case "location_access":
+      return "Location access";
     case "risk_gate":
       return "Risk review";
     case "computer_use":
@@ -139,6 +141,8 @@ function iconForType(type: ApprovalType): string {
       return "🌐";
     case "external_service":
       return "🔗";
+    case "location_access":
+      return "📍";
     case "run_command":
       return "⌨️";
     default:
