@@ -520,6 +520,8 @@
 
 .cli-context-file {
   color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2836,91 +2838,126 @@ button {
 .collaborative-agents-section .cli-section-content {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .collab-agents-summary-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-bg-glass);
+  gap: 8px;
+  padding: 10px 0;
+  border-block: 1px solid var(--right-panel-row-border, var(--color-border-subtle));
+  background: transparent;
 }
 
 .collab-agents-summary-head {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
 }
 
 .collab-agents-summary-head strong {
   font-size: 12px;
-  color: var(--color-text);
+  font-weight: 650;
+  line-height: 1.25;
+  color: var(--right-panel-text-primary, var(--color-text));
 }
 
 .collab-agents-summary-head span {
   font-size: 11px;
-  color: var(--color-text-muted);
+  line-height: 1.3;
+  color: var(--right-panel-text-muted, var(--color-text-muted));
 }
 
 .collab-agents-stat-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 10px;
+  row-gap: 7px;
+  padding-top: 2px;
 }
 
 .collab-agents-stat-grid div {
   min-width: 0;
-  padding: 7px 8px;
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.04);
+  padding: 0;
+  background: transparent;
 }
 
 .collab-agents-stat-grid span,
 .collab-agent-summary-meta {
   font-size: 10px;
-  color: var(--color-text-muted);
+  color: var(--right-panel-text-muted, var(--color-text-muted));
 }
 
 .collab-agents-stat-grid strong {
   display: block;
   margin-top: 2px;
-  color: var(--color-text);
-  font-size: 12px;
+  color: var(--right-panel-text-secondary, var(--color-text-secondary));
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1.2;
 }
 
 .collab-agents-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
+  border-bottom: 1px solid var(--right-panel-row-border, var(--color-border-subtle));
 }
 
 .collab-agent-summary-row {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 8px;
-  border-left: 2px solid var(--color-border);
-  border-radius: 7px;
-  background: rgba(0, 0, 0, 0.14);
+  --collab-agent-state-color: var(--right-panel-row-border, var(--color-border));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px 46px;
+  align-items: center;
+  gap: 3px 8px;
+  min-height: 44px;
+  padding: 7px 0 7px 10px;
+  border-top: 1px solid var(--right-panel-row-border, var(--color-border-subtle));
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+  position: relative;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.collab-agent-summary-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 11px;
+  bottom: 11px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--collab-agent-state-color);
+  opacity: 0.72;
+}
+
+.collab-agent-summary-row:hover {
+  background: color-mix(in srgb, var(--right-panel-row-bg, var(--color-bg-glass)) 42%, transparent);
 }
 
 .collab-agent-summary-row.completed {
-  border-left-color: var(--color-success, #22c55e);
+  --collab-agent-state-color: color-mix(in srgb, var(--color-success, #22c55e) 78%, var(--right-panel-text-secondary, #ffffff));
 }
 
 .collab-agent-summary-row.warning {
-  border-left-color: var(--color-warning, #d97706);
+  --collab-agent-state-color: color-mix(in srgb, var(--color-warning, #d97706) 76%, var(--right-panel-text-secondary, #ffffff));
 }
 
 .collab-agent-summary-row.failed {
-  border-left-color: var(--color-error, #ef4444);
+  --collab-agent-state-color: color-mix(in srgb, var(--color-error, #ef4444) 80%, var(--right-panel-text-secondary, #ffffff));
 }
 
 .collab-agent-summary-row.running {
-  border-left-color: var(--color-accent);
+  --collab-agent-state-color: var(--right-panel-accent-text, var(--color-accent));
+}
+
+.collab-agent-summary-row.pending {
+  --collab-agent-state-color: var(--right-panel-text-muted, var(--color-text-muted));
 }
 
 .collab-agent-summary-main,
@@ -2931,53 +2968,89 @@ button {
   min-width: 0;
 }
 
+.collab-agent-summary-main {
+  grid-column: 1;
+  grid-row: 1;
+  padding-right: 2px;
+}
+
 .collab-agent-summary-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--color-text-secondary);
-  font-size: 11px;
+  color: var(--right-panel-text-secondary, var(--color-text-secondary));
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .collab-agent-summary-status {
-  flex-shrink: 0;
-  padding: 2px 6px;
-  border-radius: 999px;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: start;
+  align-self: center;
+  padding: 0;
+  border-radius: 0;
   font-size: 10px;
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-muted);
+  font-weight: 600;
+  background: transparent;
+  color: var(--right-panel-text-muted, var(--color-text-muted));
 }
 
 .collab-agent-summary-status.completed {
-  color: var(--color-success, #22c55e);
+  color: var(--collab-agent-state-color);
 }
 
 .collab-agent-summary-status.warning {
-  color: var(--color-warning, #d97706);
+  color: var(--collab-agent-state-color);
 }
 
 .collab-agent-summary-status.failed {
-  color: var(--color-error, #ef4444);
+  color: var(--collab-agent-state-color);
 }
 
 .collab-agent-summary-status.running {
-  color: var(--color-accent);
+  color: var(--collab-agent-state-color);
+}
+
+.collab-agent-summary-meta {
+  grid-column: 1;
+  grid-row: 2;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.2;
+}
+
+.collab-agent-summary-meta span {
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .collab-agent-open-task {
-  margin-left: auto;
-  padding: 3px 7px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-bg-secondary);
-  color: var(--color-text-secondary);
-  font-size: 10px;
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: center;
+  margin-left: 0;
+  padding: 3px 0 3px 10px;
+  border: 0;
+  border-left: 1px solid var(--right-panel-row-border, var(--color-border-subtle));
+  border-radius: 0;
+  background: transparent;
+  color: var(--right-panel-text-muted, var(--color-text-muted));
+  font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
+  transition:
+    color 0.16s ease,
+    transform 0.16s ease;
 }
 
 .collab-agent-open-task:hover {
-  color: var(--color-accent);
-  border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  color: var(--right-panel-accent-text, var(--color-accent));
+}
+
+.collab-agent-open-task:active {
+  transform: translateY(1px);
 }
