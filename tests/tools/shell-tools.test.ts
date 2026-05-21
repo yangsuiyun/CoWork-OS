@@ -322,6 +322,57 @@ describe('ShellTools auto-approval', () => {
     expect(shellTools.hasActiveProcess()).toBe(false);
   });
 
+  it('treats sandbox abort stderr as failure even when the outer shell exits zero', async () => {
+    sandboxMocks.sandbox.execute.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: 'later command returned ok',
+      stderr:
+        "/bin/sh: line 1: 12345 Abort trap: 6 sandbox-exec -f /tmp/cowork.sb /bin/sh -c mkdir -p out\n",
+      killed: false,
+      timedOut: false,
+    });
+
+    const result = await shellTools.runCommand('mkdir -p out; echo ok', { cwd: process.cwd() });
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(0);
+    expect(result.terminationReason).toBe('error');
+    expect(mockDaemon.logEvent).toHaveBeenCalledWith(
+      'task-1',
+      'tool_result',
+      expect.objectContaining({
+        tool: 'run_command',
+        success: false,
+        error: expect.stringMatching(/sandbox-exec aborted/i),
+      })
+    );
+  });
+
+  it('does not classify ordinary command permission errors as sandbox runtime failures', async () => {
+    sandboxMocks.sandbox.execute.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'mkdir: /root/out: Operation not permitted\n',
+      killed: false,
+      timedOut: false,
+    });
+
+    const result = await shellTools.runCommand('mkdir /root/out', { cwd: process.cwd() });
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(result.terminationReason).toBe('normal');
+    expect(mockDaemon.logEvent).toHaveBeenCalledWith(
+      'task-1',
+      'tool_result',
+      expect.objectContaining({
+        tool: 'run_command',
+        success: false,
+        error: 'Command exited with code 1',
+      })
+    );
+  });
+
   it('maps workspace cwd to /workspace for Docker sandbox execution', async () => {
     sandboxMocks.createSandbox.mockResolvedValueOnce({
       ...sandboxMocks.sandbox,
@@ -382,7 +433,7 @@ describe('ShellTools auto-approval', () => {
     );
   });
 
-  it('falls back without the explicit unsandboxed shell environment override when sandboxing is not required', async () => {
+  it('fails closed without the explicit unsandboxed shell environment override even when sandboxing is not required', async () => {
     vi.mocked(loadPolicies).mockReturnValueOnce({
       version: 1,
       updatedAt: new Date().toISOString(),
@@ -410,14 +461,15 @@ describe('ShellTools auto-approval', () => {
       cleanup: vi.fn(),
     });
 
-    const result = await shellTools.runCommand(`${SAFE_CMD_1} | cat`, { cwd: process.cwd() });
-
-    expect(result.success).toBe(true);
+    await expect(shellTools.runCommand(`${SAFE_CMD_1} | cat`, { cwd: process.cwd() })).rejects.toThrow(
+      /requires an OS-level sandbox/i
+    );
     expect(mockShellSessionManager.runCommand).not.toHaveBeenCalled();
     expect(mockDaemon.logEvent).toHaveBeenCalledWith(
       'task-1',
-      'shell_sandbox_unavailable',
+      'sandbox_denied',
       expect.objectContaining({
+        tool: 'run_command',
         reason: 'no_os_sandbox_available',
       })
     );
