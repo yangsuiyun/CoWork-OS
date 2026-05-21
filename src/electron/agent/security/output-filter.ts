@@ -50,11 +50,15 @@ export class OutputFilter {
     /\bEND[_\s]*TRANSMISSION\b/gi,
   ];
 
+  private static readonly SYSTEM_PROMPT_CONTEXT_RE =
+    /(?:system[_\s]*role|initial[_\s]*instructions?|agent[_\s]*(?:config|definition)|role[_\s]*(?:definition|spec))\s*:/gi;
+
   // Patterns that may indicate system prompt leakage
   private static readonly PROMPT_LEAKAGE_PATTERNS: Array<{
     pattern: RegExp;
     indicator: string;
     weight: number;
+    contextRequired?: boolean;
   }> = [
     {
       pattern: /system[_\s]*role\s*:/gi,
@@ -99,12 +103,14 @@ export class OutputFilter {
     {
       pattern: /constraints\s*:\s*\n\s*-/gi,
       indicator: "YAML constraints list",
-      weight: 3,
+      weight: 1,
+      contextRequired: true,
     },
     {
       pattern: /capabilities\s*:\s*\n\s*-/gi,
       indicator: "YAML capabilities list",
-      weight: 3,
+      weight: 1,
+      contextRequired: true,
     },
     {
       pattern: /```yaml\s*\n\s*system/gi,
@@ -169,8 +175,13 @@ export class OutputFilter {
     const indicators: string[] = [];
     let totalWeight = 0;
 
-    for (const { pattern, indicator, weight } of this.PROMPT_LEAKAGE_PATTERNS) {
+    const hasSystemContext = this.SYSTEM_PROMPT_CONTEXT_RE.test(response);
+    this.SYSTEM_PROMPT_CONTEXT_RE.lastIndex = 0;
+
+    for (const { pattern, indicator, weight, contextRequired } of this.PROMPT_LEAKAGE_PATTERNS) {
+      pattern.lastIndex = 0;
       if (pattern.test(response)) {
+        if (contextRequired && !hasSystemContext) continue;
         indicators.push(indicator);
         totalWeight += weight;
       }
