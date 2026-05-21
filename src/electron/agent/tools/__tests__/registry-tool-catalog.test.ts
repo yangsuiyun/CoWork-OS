@@ -295,6 +295,7 @@ describe("ToolRegistry tool catalog versioning", () => {
 
     expect((registry as Any).getApprovalTypeForTool("run_command")).toBe("run_command");
     expect((registry as Any).getApprovalTypeForTool("delete_file")).toBe("delete_file");
+    expect((registry as Any).getApprovalTypeForTool("get_current_location")).toBe("location_access");
     expect((registry as Any).getApprovalTypeForTool("analyze_image")).toBe("data_export");
     expect((registry as Any).getApprovalTypeForTool("read_pdf_visual")).toBe("data_export");
     expect((registry as Any).getApprovalTypeForTool("mcp_fetch_issue")).toBe("external_service");
