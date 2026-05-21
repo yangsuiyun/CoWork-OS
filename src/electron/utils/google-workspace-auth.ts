@@ -17,6 +17,7 @@ const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 const RECONNECT_HINT =
   "Reconnect Google Workspace in Settings > Integrations > Google Workspace.";
 const inFlightRefreshes = new Map<string, Promise<string>>();
+const recentTokenCache = new Map<string, { accessToken: string; expiresAt: number }>();
 
 function parseJsonSafe(text: string): Any | undefined {
   const trimmed = text.trim();
@@ -126,6 +127,7 @@ async function refreshGoogleWorkspaceAccessTokenUncached(
       };
       GoogleWorkspaceSettingsManager.saveSettings(nextSettings);
       GoogleWorkspaceSettingsManager.clearCache();
+      recentTokenCache.delete(getRefreshDedupeKey(settings));
     }
 
     throw Object.assign(
@@ -171,6 +173,11 @@ async function refreshGoogleWorkspaceAccessTokenUncached(
   GoogleWorkspaceSettingsManager.saveSettings(nextSettings);
   GoogleWorkspaceSettingsManager.clearCache();
 
+  recentTokenCache.set(getRefreshDedupeKey(settings), {
+    accessToken,
+    expiresAt: nextSettings.tokenExpiresAt ?? 0,
+  });
+
   return accessToken;
 }
 
@@ -185,6 +192,15 @@ export async function getGoogleWorkspaceAccessToken(
   }
 
   const now = Date.now();
+
+  // Check in-memory token cache first — the settings object passed by callers
+  // may be stale (captured before a previous refresh in the same sync loop).
+  const cacheKey = getRefreshDedupeKey(settings);
+  const cached = recentTokenCache.get(cacheKey);
+  if (cached && (!cached.expiresAt || now < cached.expiresAt - TOKEN_REFRESH_BUFFER_MS)) {
+    return cached.accessToken;
+  }
+
   if (effectiveSettings.accessToken) {
     if (
       !effectiveSettings.tokenExpiresAt ||
