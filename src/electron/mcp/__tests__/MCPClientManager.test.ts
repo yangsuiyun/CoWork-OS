@@ -196,7 +196,7 @@ describe("MCPClientManager startup optimizations", () => {
           enabled: true,
           transport: "stdio",
           command: process.execPath,
-          args: ["--runAsNode", "/tmp/connectors/salesforce-mcp/dist/index.js"],
+          args: ["/tmp/connectors/salesforce-mcp/dist/index.js"],
           env: {
             SALESFORCE_INSTANCE_URL: "",
             SALESFORCE_ACCESS_TOKEN: "",
@@ -208,7 +208,7 @@ describe("MCPClientManager startup optimizations", () => {
           enabled: true,
           transport: "stdio",
           command: process.execPath,
-          args: ["--runAsNode", "/tmp/connectors/jira-mcp/dist/index.js"],
+          args: ["/tmp/connectors/jira-mcp/dist/index.js"],
           env: {
             JIRA_BASE_URL: "",
             JIRA_ACCESS_TOKEN: "",
@@ -241,7 +241,7 @@ describe("MCPClientManager startup optimizations", () => {
           enabled: true,
           transport: "stdio",
           command: process.execPath,
-          args: ["--runAsNode", "/tmp/connectors/salesforce-mcp/dist/index.js"],
+          args: ["/tmp/connectors/salesforce-mcp/dist/index.js"],
           env: {
             SALESFORCE_INSTANCE_URL: "https://example.my.salesforce.com",
             SALESFORCE_ACCESS_TOKEN: "token",
