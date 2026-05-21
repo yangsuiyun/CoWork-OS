@@ -7,6 +7,7 @@ import {
   Suspense,
   useLayoutEffect,
 } from "react";
+import { GitFork } from "lucide-react";
 import type { QuotedAssistantMessage, IntegrationMentionSelection } from "../../../shared/types";
 import {
   COLLAPSED_USER_BUBBLE_MAX_HEIGHT,
@@ -208,6 +209,19 @@ export const MessageQuoteButton = memo(function MessageQuoteButton({
         <path d="M6 12h9a5 5 0 0 1 5 5v0" />
       </svg>
       <span>Quote</span>
+    </button>
+  );
+});
+
+export const MessageForkButton = memo(function MessageForkButton({
+  onFork,
+}: {
+  onFork: () => void;
+}) {
+  return (
+    <button type="button" className="message-fork-btn" onClick={onFork} title="Fork from this message">
+      <GitFork size={12} strokeWidth={2} aria-hidden="true" />
+      <span>Fork</span>
     </button>
   );
 });
