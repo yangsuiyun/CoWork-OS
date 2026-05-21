@@ -41,7 +41,7 @@ export function mergeTaskEventsByIdentity(
   existing: TaskEvent[],
   incoming: TaskEvent[],
 ): TaskEvent[] {
-  if (incoming.length === 0) return [...existing].sort(compareTaskEventOrder);
+  if (incoming.length === 0) return existing;
   if (existing.length === 0) return [...incoming].sort(compareTaskEventOrder);
 
   // Fast path: single-event insert (common for streaming updates)
@@ -55,6 +55,10 @@ export function mergeTaskEventsByIdentity(
     if (existingIndex >= 0) {
       const next = [...existing];
       next[existingIndex] = incomingEvent;
+      // Skip sort if replacement maintains order relative to neighbors
+      const prevOk = existingIndex === 0 || compareTaskEventOrder(next[existingIndex - 1], incomingEvent) <= 0;
+      const nextOk = existingIndex === next.length - 1 || compareTaskEventOrder(incomingEvent, next[existingIndex + 1]) <= 0;
+      if (prevOk && nextOk) return next;
       return next.sort(compareTaskEventOrder);
     }
 
