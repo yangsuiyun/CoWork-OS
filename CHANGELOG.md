@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.47] - 2026-05-21
+
+### Added
+- **Release notes for 0.5.47**: see [Release Notes 0.5.47](docs/release-notes-0.5.47.md).
+- **FTS worker memory search**: added an off-main-thread memory FTS worker for prompt recall, marker lookup, and memory search, with request timeouts, crash handling, exponential restart backoff, and teardown on app quit.
+- **Desktop location and maps tools**: added native desktop location helpers and maps MCP coverage for current location, geocoding, reverse geocoding, route estimates, and nearby-place search.
+
+### Changed
+- **Renderer event stability**: task-event appends now batch transient replacements, cap noisy renderer events, reduce stale-task reconciliation frequency, and avoid avoidable sidebar rerenders during large multi-agent/multi-task runs.
+- **Memory pressure analysis**: workspace memory-pressure scans now use async file reads so memory-nudge and heartbeat paths avoid synchronous filesystem pressure.
+- **Playbook recall**: playbook lookup now uses bounded marker search plus prompt-overlap scoring instead of broad main-thread recall.
+- **macOS unsigned distribution**: `0.5.47` continues the unsigned/ad hoc signed macOS artifact path; validate with the `--allow-unsigned` desktop smoke option.
+
+### Fixed
+- **Memory recall fallback**: async memory search falls back to the existing DB/hybrid paths when the FTS worker is unavailable, restarting, or returns no useful rows.
+- **Prompt recall filtering**: worker prompt-recall results include content so ignored imported-memory markers and prompt-suppression rules continue to apply.
+- **Timer and map cleanup**: Teams deduplication timers, tray status timers, managed briefing runs, subconscious evidence maps, and cross-signal mention maps are cleaned up or bounded to reduce long-session memory growth.
+- **WhatsApp listener cleanup**: preload WhatsApp listeners now return unsubscribe callbacks.
+- **Location approval safety**: location permission prompts cannot be auto-approved or persisted.
+- **Private memory marker search**: content-marker lookup excludes private memories.
+- **Timeline evidence privacy**: evidence links use local compact icons instead of fetching remote favicons.
+
 ## [0.5.45] - 2026-05-14
 
 ### Added
