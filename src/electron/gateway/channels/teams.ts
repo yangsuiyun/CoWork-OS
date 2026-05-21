@@ -36,11 +36,11 @@ import {
 class MessageDeduplicationCache {
   private cache: Map<string, number> = new Map();
   private readonly ttlMs: number;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(ttlMs: number = 60000) {
     this.ttlMs = ttlMs;
-    // Cleanup expired entries every minute
-    setInterval(() => this.cleanup(), 60000);
+    this.cleanupTimer = setInterval(() => this.cleanup(), 60000);
   }
 
   has(messageId: string): boolean {
@@ -64,6 +64,14 @@ class MessageDeduplicationCache {
         this.cache.delete(key);
       }
     }
+  }
+
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    this.cache.clear();
   }
 }
 
@@ -513,6 +521,7 @@ export class TeamsAdapter implements ChannelAdapter {
     this.adapter = null;
     this._botUsername = undefined;
     this._botId = undefined;
+    this.deduplicationCache.destroy();
     this.conversationReferences.clear();
     this.setStatus("disconnected");
   }
