@@ -7,6 +7,8 @@
 - `sqlite3` CLI (required for eval corpus/replay scripts)
 - macOS: Xcode Command Line Tools (needed for `better-sqlite3`): `xcode-select --install`
 - Windows: Visual Studio Build Tools 2022 (C++) and Python 3 (needed for native module builds)
+- macOS location helper: Swift toolchain (included with Xcode CLI tools) for compiling the Core Location helper binary
+- Linux location helper: `gdbus` (part of `glib2` / `libglib2.0-bin`) and a running GeoClue2 service for desktop location support
 - LLM provider credentials are optional for development, but AI task execution still needs a working route: ChatGPT sign-in, local Ollama, or provider credentials.
 
 ## Build from Source
