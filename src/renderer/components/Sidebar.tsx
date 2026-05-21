@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, Fragment, useDeferredValue } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, Fragment, useDeferredValue, memo } from "react";
 import { ChevronDown, ChevronRight, SlidersHorizontal, EyeOff, AppWindow, Bell, HardDrive, Rows3, Search, Server, Workflow, HeartPulse, Lightbulb, Inbox, Users, UsersRound, ListFilter, EllipsisVertical, Shapes, Plus, Sparkles, Repeat2 } from "lucide-react";
 import { resolveTwinIcon } from "../utils/twin-icons";
 import { stripAllEmojis } from "../utils/emoji-replacer";
@@ -484,7 +484,42 @@ function compareTaskTreeNodes(a: TaskTreeNode, b: TaskTreeNode): number {
   return compareTasksByPinAndRecency(a.task, b.task);
 }
 
-export function Sidebar({
+function getSidebarTaskListSignature(tasks: Task[]): string {
+  if (tasks.length === 0) return "";
+  const parts: string[] = [];
+  for (let i = 0; i < Math.min(tasks.length, 100); i++) {
+    const t = tasks[i];
+    parts.push(`${t.id}:${t.status}:${t.updatedAt ?? 0}`);
+  }
+  return `${tasks.length}|${parts.join(",")}`;
+}
+
+function areSidebarPropsEqual(prev: SidebarProps, next: SidebarProps): boolean {
+  return (
+    prev.workspace?.id === next.workspace?.id &&
+    prev.selectedTaskId === next.selectedTaskId &&
+    prev.isHomeActive === next.isHomeActive &&
+    prev.isIdeasActive === next.isIdeasActive &&
+    prev.isInboxAgentActive === next.isInboxAgentActive &&
+    prev.isAgentsActive === next.isAgentsActive &&
+    prev.isEverydayAgentActive === next.isEverydayAgentActive &&
+    prev.isMissionControlActive === next.isMissionControlActive &&
+    prev.isHealthActive === next.isHealthActive &&
+    prev.isDevicesActive === next.isDevicesActive &&
+    prev.isLoadingSessions === next.isLoadingSessions &&
+    prev.hasMoreTasks === next.hasMoreTasks &&
+    prev.uiDensity === next.uiDensity &&
+    getSidebarTaskListSignature(prev.tasks) === getSidebarTaskListSignature(next.tasks) &&
+    (prev.completionAttentionTaskIds || []).join(",") === (next.completionAttentionTaskIds || []).join(",") &&
+    prev.updateInfo?.latestVersion === next.updateInfo?.latestVersion &&
+    prev.onSelectTask === next.onSelectTask &&
+    prev.onTasksChanged === next.onTasksChanged &&
+    prev.onOpenSettings === next.onOpenSettings &&
+    prev.onOpenMissionControl === next.onOpenMissionControl
+  );
+}
+
+function SidebarComponent({
   workspace,
   tasks,
   selectedTaskId,
@@ -2300,3 +2335,5 @@ function InfraWalletBadge({ onOpenSettings }: { onOpenSettings: () => void }) {
     </button>
   );
 }
+
+export const Sidebar = memo(SidebarComponent, areSidebarPropsEqual);
