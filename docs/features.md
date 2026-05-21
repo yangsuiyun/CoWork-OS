@@ -136,6 +136,21 @@ CoWork includes `llm-wiki` as a bundled first-class research-vault workflow insp
 
 See [LLM Wiki](llm-wiki.md) for command syntax, layout, modes, and analyzer behavior.
 
+### Desktop Location
+
+Cross-platform location access for nearby-place, walking-distance, and local-errand queries. Use `get_current_location` to obtain the user's desktop coordinates before calling the Maps MCP connector for nearby search or route calculation.
+
+| Platform | Provider | How it works |
+|----------|----------|-------------|
+| **macOS** | Core Location | Compiled Swift helper with `com.apple.security.personal-information.location` entitlement |
+| **Windows** | Windows.Devices.Geolocation | Bundled PowerShell script using WinRT API |
+| **Linux** | GeoClue2 | Bundled Bash script using `gdbus` over system D-Bus |
+
+- **One-time permission**: Each request prompts the user via the OS permission dialog. Location access cannot be auto-approved or persisted across tasks.
+- **Accuracy modes**: `precise` (GPS/Wi-Fi best) or `coarse` (city-level)
+- **Timeout**: Configurable 1–60 seconds (default 15s). Failed requests are cached for 2 minutes to prevent retry storms.
+- **Maps integration**: Coordinates feed into `maps.search_places`, `maps.rank_nearby_options`, and `maps.route` from the bundled Maps MCP connector.
+
 ### Computer use
 
 Desktop automation for **native apps** on macOS and Windows when MCP, browser automation, and shell are not enough. **Full guide:** [Computer use](computer-use.md).
