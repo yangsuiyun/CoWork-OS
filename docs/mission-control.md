@@ -1,6 +1,6 @@
 # Mission Control
 
-Mission Control is a centralized, GUI-first agent orchestration and monitoring dashboard. It provides the main cockpit for managing many agents, tracking tasks across a Kanban board, monitoring real-time activity, reviewing approvals, and overseeing team-based collaboration without reducing agent operations to terminal output.
+Mission Control is a centralized, GUI-first agent orchestration and monitoring dashboard. It provides the main cockpit for managing many agents, tracking board work, monitoring the global runtime queue, reviewing approvals, and overseeing team-based collaboration without reducing agent operations to terminal output.
 
 Heartbeat v3 is the default background automation model exposed here. Mission Control should be read as pulse/defer/dispatch truth, not as a wake-queue monitor. Mission Control also surfaces the `Core Harness` and should eventually surface Dreaming runs/candidates as the reviewable memory-curation lane. See [Heartbeat v3](heartbeat-v3.md), [Dreaming](dreaming.md), and [Core Automation](core-automation.md) for the runtime model.
 
@@ -8,7 +8,7 @@ Access it from **Settings** > **Mission Control**. For company-ops workflows, yo
 
 <p align="center">
   <img src="../resources/branding/images/cowork-os-8.webp" alt="Mission Control board" width="700">
-  <br><em>Mission Control brings task queues, assigned work, live feed, and review state into one operations view.</em>
+  <br><em>Mission Control brings global runtime queue state, assigned board work, live feed, and review state into one operations view.</em>
 </p>
 
 Mission Control now sits alongside the other operational entry points:
@@ -24,23 +24,30 @@ Mission Control is split into three panels:
 
 | Panel | Purpose |
 |-------|---------|
-| **Left — Agents** | Active agents list with Pulse/Dispatch state, automation-profile-backed cadence, and manual trigger controls |
-| **Center — Mission Queue** | Kanban board with 5 columns for task lifecycle management |
+| **Left — Agents** | Heartbeat-enabled agent list with Pulse/Dispatch state, automation-profile-backed cadence, idle/running state, and manual trigger controls |
+| **Center — Mission Board** | Kanban board with 5 columns for tracked work lifecycle management |
 | **Right — Feed & Details** | Live activity feed and selected task details with comments/mentions |
 
-The header bar shows workspace selector, key stats (active agents, queued tasks, pending mentions), current time, and buttons for Teams, Reviews, and Standup.
+The header bar shows workspace selector, current time, and operational counters grouped by source:
+
+- **Heartbeat agents**: enabled background roles that may be monitoring or idle.
+- **Global runtime queue**: tasks currently running or waiting for an execution slot. This matches the chat/right-panel queue and can include work from another workspace.
+- **Board work**: open work items tracked on the Mission Control board.
+- **Mentions**: pending human or agent mentions.
+
+These numbers can differ. For example, two Heartbeat agents can be enabled while zero board items are open in the selected workspace and four global runtime tasks are waiting in chat. If the queue service is still loading or unavailable, Mission Control shows that state explicitly instead of reporting `0` or `All clear`.
 
 ---
 
 ## Agents Panel (Left)
 
-View and manage all active agents in the current workspace.
+View and manage enabled agents in the current workspace. An enabled agent is not necessarily executing a task; it may be monitoring, sleeping, or waiting for its next Heartbeat pulse.
 
 ### Agent Information
 
 Each agent card shows:
 - Display name, role description, and avatar
-- Current active task title (or "No active task")
+- Current running task title, tracked task title, or "No active task"
 - **Autonomy level badge**: LEAD, SPC (Specialist), or INT (Intern)
 - **Heartbeat profile**: `observer`, `operator`, or `dispatcher`
 - **Status indicator**: green dot (working), gray dot (idle), disabled (offline)
@@ -70,15 +77,15 @@ Heartbeat, Dreaming, and Workflow Intelligence ownership no longer live directly
 
 ---
 
-## Mission Queue — Kanban Board (Center)
+## Mission Board — Kanban Board (Center)
 
-A 5-column Kanban board for managing the full task lifecycle. Drag tasks between columns to change their status.
+A 5-column Kanban board for managing tracked work. Drag tasks between columns to change their status. This board is separate from the live global runtime queue: runtime tasks can be running or waiting even when the board has no open work in the current view.
 
 | Column | Status | Description |
 |--------|--------|-------------|
 | **INBOX** | Backlog | Unassigned items waiting for triage |
-| **ASSIGNED** | Todo | Queued and assigned to agents |
-| **IN PROGRESS** | Active | Currently being executed |
+| **ASSIGNED** | Todo | Assigned board work ready to start |
+| **IN PROGRESS** | Active | Board work currently being executed or planned |
 | **REVIEW** | Pending review | Awaiting approval or human review |
 | **DONE** | Completed | Finished tasks |
 
@@ -94,6 +101,20 @@ Each card shows:
 
 - **Drag and drop** tasks between columns to change status
 - **Click** a task card to view its details in the right panel
+
+---
+
+## Global Runtime Queue
+
+The Brief tab includes a **Global Runtime Queue** card. It is sourced from the same task executor queue used by chat and the right-panel lineup:
+
+- **Running** tasks are currently occupying execution slots.
+- **Waiting** tasks are queued for the next available execution slot.
+- **Unavailable** means the queue service could not be read, so Mission Control cannot truthfully claim the queue is empty.
+
+This queue is global to the local CoWork runtime. It can include tasks from workspaces outside the current Mission Control workspace selector. When a queued task belongs outside the visible workspace scope, Mission Control still includes it in the global queue count and marks the row as outside scope instead of hiding the discrepancy.
+
+The **Mission Board** remains workspace-scoped tracked work. A workspace can have no open board work while the global runtime queue still has running or waiting tasks.
 
 ---
 
@@ -295,6 +316,7 @@ Mission Control subscribes to live event streams — no manual refresh needed:
 | **Routing events** | Provider/model switches, fallback transitions, and route-reason updates |
 | **Task events** | New tasks, status changes on the Kanban board |
 | **Task board events** | Column moves, priority changes, label/date updates |
+| **Runtime queue events** | Global running/waiting counts and queue task summaries in the Brief tab |
 | **Team run events** | Team and member changes, run progress, item status |
 | **Mention events** | Pending mention count in header, mention list in task details |
 

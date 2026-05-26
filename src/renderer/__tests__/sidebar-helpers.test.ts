@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../../shared/types";
 import { capitalizeSidebarSessionTitle } from "../utils/sidebar-title";
 import {
+  buildSidebarVirtualRows,
   compareTasksByPinAndRecency,
   countHiddenFailedSessions,
   filterTaskTreeBySearch,
@@ -223,6 +224,54 @@ describe("flattenVisibleTaskRows", () => {
     const rows = flattenVisibleTaskRows(tree, new Set(["root-1"]));
 
     expect(rows.map((row) => row.node.task.id)).toEqual(["root-1"]);
+  });
+});
+
+describe("buildSidebarVirtualRows", () => {
+  it("adds date headers only before root task groups in focused mode", () => {
+    const now = new Date("2026-05-25T12:00:00.000Z");
+    const today = now.getTime() - 60_000;
+    const older = now.getTime() - 10 * 24 * 60 * 60 * 1000;
+    const tree = [
+      {
+        task: createTask({ id: "pinned-root", pinned: true, createdAt: older }),
+        children: [{ task: createTask({ id: "pinned-child", parentTaskId: "pinned-root", createdAt: today }), children: [] }],
+      },
+      {
+        task: createTask({ id: "today-root", createdAt: today }),
+        children: [],
+      },
+    ];
+    const taskRows = flattenVisibleTaskRows(tree, new Set());
+
+    const rows = buildSidebarVirtualRows(taskRows, { showDateHeaders: true, now });
+
+    expect(
+      rows.map((row) =>
+        row.kind === "date-header"
+          ? `header:${row.label}`
+          : row.kind === "task"
+            ? `task:${row.row.node.task.id}`
+            : row.kind,
+      ),
+    ).toEqual([
+      "header:Pinned",
+      "task:pinned-root",
+      "task:pinned-child",
+      "header:Today",
+      "task:today-root",
+    ]);
+  });
+
+  it("keeps full mode rows header-free for dense virtualization", () => {
+    const taskRows = flattenVisibleTaskRows(
+      [{ task: createTask({ id: "root-1", pinned: true }), children: [] }],
+      new Set(),
+    );
+
+    const rows = buildSidebarVirtualRows(taskRows, { showDateHeaders: false });
+
+    expect(rows).toEqual([{ kind: "task", row: taskRows[0], section: "user" }]);
   });
 });
 

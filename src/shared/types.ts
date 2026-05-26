@@ -1429,6 +1429,11 @@ export type ToolType =
   | "get_app_paths"
   // Network/Browser tools
   | "web_search"
+  | "youtube_ingest_video"
+  | "youtube_ask_video"
+  | "youtube_ask_or_ingest_video"
+  | "youtube_search_ingested_segments"
+  | "youtube_list_ingested_videos"
   | "x_search"
   | "voice_call"
   | "browser_navigate"
@@ -1595,6 +1600,9 @@ export const TOOL_GROUPS = {
     "channel_download_discord_attachment",
     // Session scratchpad (read)
     "scratchpad_read",
+    "youtube_ask_video",
+    "youtube_search_ingested_segments",
+    "youtube_list_ingested_videos",
   ],
   // Write operations - medium risk
   "group:write": [
@@ -1642,6 +1650,8 @@ export const TOOL_GROUPS = {
   // Network operations - requires network permission
   "group:network": [
     "web_search",
+    "youtube_ingest_video",
+    "youtube_ask_or_ingest_video",
     "x_search",
     "voice_call",
     "x_action",
@@ -1801,6 +1811,11 @@ export const TOOL_RISK_LEVELS: Record<ToolType, ToolRiskLevel> = {
   generate_image: "network",
   analyze_image: "network",
   web_search: "network",
+  youtube_ingest_video: "network",
+  youtube_ask_video: "read",
+  youtube_ask_or_ingest_video: "network",
+  youtube_search_ingested_segments: "read",
+  youtube_list_ingested_videos: "read",
   x_search: "network",
   voice_call: "network",
   browser_navigate: "network",
@@ -2396,6 +2411,7 @@ export interface Task {
   prompt: string;
   rawPrompt?: string; // Original prompt used for intent routing (without strategy decoration)
   userPrompt?: string; // Original user prompt (before agent dispatch formatting)
+  sidebarPromptPreview?: string; // Bounded prompt preview for sidebar title/search summaries
   status: TaskStatus;
   pinned?: boolean;
   workspaceId: string;
@@ -3150,6 +3166,52 @@ export interface TaskTimelineEventV2 extends TaskEvent {
   status: TimelineEventStatus;
   stepId: string;
   actor: TimelineEventActor;
+}
+
+export interface TaskTimelinePageCursor {
+  order: number;
+  timestamp: number;
+  id?: string;
+}
+
+export interface TaskTimelinePageRequest {
+  taskId: string;
+  cursor?: TaskTimelinePageCursor | null;
+  limit?: number;
+  byteLimit?: number;
+  singleEventByteLimit?: number;
+  additionalTaskIds?: string[];
+  additionalTaskEventTypes?: string[];
+}
+
+export interface TaskTimelinePageSummary {
+  eventCount: number;
+  payloadBytes: number;
+  truncatedEventCount: number;
+  largestEventPayloadBytes: number;
+  planStepCount?: number;
+  hasChecklist?: boolean;
+  outputEventCount?: number;
+  commandSessionCount?: number;
+}
+
+export interface TaskTimelinePageResult {
+  taskId: string;
+  events: TaskEvent[];
+  hasMoreHistory: boolean;
+  nextCursor: TaskTimelinePageCursor | null;
+  summary: TaskTimelinePageSummary;
+  warnings?: string[];
+}
+
+export interface TaskEventDetailResult {
+  event: TaskEvent | null;
+  payloadBytes: number;
+}
+
+export interface TaskEventDetailRequest {
+  taskId: string;
+  eventId: string;
 }
 
 export interface TaskTraceRunSibling {
@@ -7496,6 +7558,9 @@ export const IPC_CHANNELS = {
   TASK_CREATE: "task:create",
   TASK_GET: "task:get",
   TASK_LIST: "task:list",
+  TASK_LIST_SIDEBAR: "task:listSidebar",
+  TASK_TIMELINE_PAGE: "task:timelinePage",
+  TASK_EVENT_DETAIL: "task:eventDetail",
   TASK_EXPORT_JSON: "task:exportJSON",
   TASK_PIN: "task:pin",
   TASK_CANCEL: "task:cancel",
@@ -7542,6 +7607,10 @@ export const IPC_CHANNELS = {
   BROWSER_WORKBENCH_OPEN_REQUEST: "browserWorkbench:openRequest",
   BROWSER_WORKBENCH_CURSOR: "browserWorkbench:cursor",
   BROWSER_WORKBENCH_VIEWPORT: "browserWorkbench:viewport",
+  YOUTUBE_INGEST_VIDEO: "youtube:ingestVideo",
+  YOUTUBE_ASK_VIDEO: "youtube:askVideo",
+  YOUTUBE_SEARCH_SEGMENTS: "youtube:searchSegments",
+  YOUTUBE_LIST_VIDEOS: "youtube:listVideos",
   LLM_WIKI_GET_VAULT_SUMMARY: "llmWiki:getVaultSummary",
   FILE_IMPORT_TO_WORKSPACE: "file:importToWorkspace",
   FILE_IMPORT_DATA_TO_WORKSPACE: "file:importDataToWorkspace",

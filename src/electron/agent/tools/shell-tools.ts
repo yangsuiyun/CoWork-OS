@@ -175,6 +175,20 @@ function isSandboxRuntimeFailure(stderr: string, exitCode: number | null): boole
   return false;
 }
 
+function buildEmptyCommandFailureMessage(input: {
+  exitCode: number | null;
+  cwd: string;
+  workspacePath: string;
+  sandboxType: string;
+}): string {
+  const exitCode = input.exitCode === null ? "unknown" : String(input.exitCode);
+  return (
+    `Command exited with no output (exit ${exitCode}). ` +
+    `This can be normal for shell predicates such as test, false, or grep -q. ` +
+    `sandbox=${input.sandboxType}; cwd=${input.cwd}; workspace=${input.workspacePath}`
+  );
+}
+
 function getExecutableTokenIndex(tokens: string[]): number {
   const isEnvAssignment = (token: string): boolean =>
     /^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)$/.test(token);
@@ -723,7 +737,15 @@ export class ShellTools {
       });
 
       const stdout = this.sanitizeCommandOutput(result.stdout);
-      const stderr = this.sanitizeCommandOutput(result.stderr);
+      let stderr = this.sanitizeCommandOutput(result.stderr);
+      if (result.exitCode !== 0 && !stdout.trim() && !stderr.trim() && !result.error) {
+        stderr = buildEmptyCommandFailureMessage({
+          exitCode: result.exitCode,
+          cwd: options.cwd,
+          workspacePath: this.workspace.path,
+          sandboxType: sandbox.type,
+        });
+      }
       if (stdout) {
         this.daemon.logEvent(this.taskId, "command_output", {
           command,
@@ -1555,5 +1577,6 @@ export const _testUtils = {
   resolveCommandCwd,
   shouldUsePersistentShell,
   isSandboxRuntimeFailure,
+  buildEmptyCommandFailureMessage,
   buildSafeShellPath,
 };

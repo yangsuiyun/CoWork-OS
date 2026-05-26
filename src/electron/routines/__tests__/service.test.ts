@@ -307,6 +307,87 @@ describeWithSqlite("RoutineService", () => {
     expect(runs[0]?.backingTaskId).toBe("task-1");
   });
 
+  it("updates an existing execution run when a duplicate dispatch returns the same backing task", async () => {
+    let now = 1_779_000_000_000;
+    routineService = new RoutineServiceCtor({
+      db,
+      getCronService: () => cronService as Any,
+      getEventTriggerService: () => eventTriggerService,
+      loadHooksSettings: () => hooksSettings,
+      saveHooksSettings: (settings) => {
+        hooksSettings = settings;
+      },
+      createTask: vi.fn().mockResolvedValue({ id: "task-duplicate" }),
+      now: () => now++,
+    });
+
+    const routine = await routineService.create({
+      name: "Build Health",
+      enabled: true,
+      workspaceId: "ws-1",
+      prompt: "Check build health.",
+      connectors: [],
+      triggers: [{ id: "manual-1", type: "manual", enabled: true }],
+    });
+
+    await routineService.runNow(routine.id);
+    await routineService.runNow(routine.id);
+
+    const rowCount = db
+      .prepare("SELECT COUNT(*) AS count FROM routine_runs WHERE routine_id = ?")
+      .get(routine.id) as { count: number };
+    const run = db
+      .prepare("SELECT backing_task_id, run_key, dedupe_key FROM routine_runs WHERE routine_id = ?")
+      .get(routine.id) as { backing_task_id: string; run_key: string; dedupe_key: string };
+
+    expect(rowCount.count).toBe(1);
+    expect(run.backing_task_id).toBe("task-duplicate");
+    expect(run.dedupe_key).toBe(`task:${routine.id}:task-duplicate`);
+    expect(run.run_key).toContain(`manual:${routine.id}:`);
+  });
+
+  it("does not merge distinct thread follow-up runs that target the same task", async () => {
+    let now = 1_779_000_000_000;
+    const sendTaskMessage = vi.fn().mockResolvedValue({ queued: true });
+    routineService = new RoutineServiceCtor({
+      db,
+      getCronService: () => cronService as Any,
+      getEventTriggerService: () => eventTriggerService,
+      loadHooksSettings: () => hooksSettings,
+      saveHooksSettings: (settings) => {
+        hooksSettings = settings;
+      },
+      sendTaskMessage,
+      now: () => now++,
+    });
+
+    const routine = await routineService.create({
+      name: "Task Follow-up",
+      enabled: true,
+      workspaceId: "ws-1",
+      prompt: "Continue the existing task.",
+      connectors: [],
+      contextBindings: {
+        metadata: {
+          runMode: "thread_follow_up",
+          targetTaskId: "task-existing",
+          threadAutomation: "true",
+        },
+      },
+      triggers: [{ id: "manual-1", type: "manual", enabled: true }],
+    });
+
+    await routineService.runNow(routine.id);
+    await routineService.runNow(routine.id);
+
+    const rowCount = db
+      .prepare("SELECT COUNT(*) AS count FROM routine_runs WHERE routine_id = ?")
+      .get(routine.id) as { count: number };
+
+    expect(sendTaskMessage).toHaveBeenCalledTimes(2);
+    expect(rowCount.count).toBe(2);
+  });
+
   it("refreshes a task-backed routine run when the backing task finishes", async () => {
     let taskStatus = "executing";
     const getTaskSnapshot = vi.fn(() => ({
@@ -346,6 +427,308 @@ describeWithSqlite("RoutineService", () => {
     expect(runs[0]?.status).toBe("completed");
     expect(runs[0]?.finishedAt).toBe(1_779_000_000_100);
     expect(runs[0]?.artifactsSummary).toBe("Build checks passed.");
+  });
+
+  it("keeps a cron polling timeout non-terminal while its backing task is still running", async () => {
+    const routine = await routineService.create({
+      name: "Daily Plan",
+      enabled: true,
+      workspaceId: "ws-1",
+      prompt: "Build a daily plan.",
+      connectors: [],
+      triggers: [
+        {
+          id: "schedule-1",
+          type: "schedule",
+          enabled: true,
+          schedule: { kind: "every", everyMs: 86_400_000 },
+        },
+      ],
+    });
+    const trigger = routine.triggers.find((candidate) => candidate.type === "schedule");
+    expect(trigger?.managedCronJobId).toBe("cron-1");
+
+    routineService.recordScheduledEvent({
+      jobId: "cron-1",
+      action: "started",
+      runAtMs: 1_779_000_000_000,
+      taskId: "task-running",
+    });
+    routineService.recordScheduledEvent({
+      jobId: "cron-1",
+      action: "finished",
+      runAtMs: 1_779_000_000_000,
+      durationMs: 1_800_000,
+      status: "timeout",
+      error: "Timed out after 1800s",
+      taskId: "task-running",
+      taskStillRunning: true,
+    });
+
+    const runs = await routineService.listRuns(routine.id, 10);
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe("running");
+    expect(runs[0]?.outputStatus).toBe("queued");
+    expect(runs[0]?.finishedAt).toBeUndefined();
+    expect(runs[0]?.errorSummary).toBe("Timed out after 1800s");
+  });
+
+  it("repairs a stale cron timeout failure when the backing task later completes", async () => {
+    const getTaskSnapshot = vi.fn().mockReturnValue({
+      status: "completed",
+      terminalStatus: "partial_success",
+      resultSummary: "Daily plan completed with calendar unavailable.",
+      completedAt: 1_779_000_123_000,
+    });
+    routineService = new RoutineServiceCtor({
+      db,
+      getCronService: () => cronService as Any,
+      getEventTriggerService: () => eventTriggerService,
+      loadHooksSettings: () => hooksSettings,
+      saveHooksSettings: (settings) => {
+        hooksSettings = settings;
+      },
+      getTaskSnapshot,
+      now: () => 1_779_000_200_000,
+    });
+    const routine = await routineService.create({
+      name: "Daily Plan",
+      enabled: true,
+      workspaceId: "ws-1",
+      prompt: "Build a daily plan.",
+      connectors: [],
+      triggers: [{ id: "manual-1", type: "manual", enabled: true }],
+    });
+
+    db.prepare(
+      `INSERT INTO routine_runs
+       (id, routine_id, trigger_id, trigger_type, status, started_at, finished_at,
+        source_event_summary, backing_task_id, backing_managed_session_id, output_status,
+        error_summary, artifacts_summary, run_key, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "run-timeout",
+      routine.id,
+      "manual-1",
+      "manual",
+      "failed",
+      1_779_000_000_000,
+      1_779_001_800_000,
+      "Scheduled run finished: timeout",
+      "task-late-success",
+      null,
+      "failed",
+      "Timed out after 1800s",
+      null,
+      null,
+      1_779_000_000_000,
+      1_779_001_800_000,
+    );
+
+    const runs = await routineService.listRuns(routine.id, 10);
+
+    expect(getTaskSnapshot).toHaveBeenCalledWith("task-late-success");
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe("partial_success");
+    expect(runs[0]?.outputStatus).toBe("none");
+    expect(runs[0]?.errorSummary).toBeUndefined();
+    expect(runs[0]?.artifactsSummary).toBe("Daily plan completed with calendar unavailable.");
+    expect(runs[0]?.finishedAt).toBe(1_779_000_123_000);
+  });
+
+  it("prefers backing task reconciliation over a stale managed session for timeout rows", async () => {
+    const getTaskSnapshot = vi.fn().mockReturnValue({
+      status: "completed",
+      terminalStatus: "ok",
+      resultSummary: "Daily plan finished.",
+      completedAt: 1_779_000_123_000,
+    });
+    const getManagedSessionSnapshot = vi.fn().mockReturnValue({
+      status: "failed",
+      latestSummary: "Timed out after 1800s",
+      completedAt: 1_779_001_800_000,
+      backingTaskId: "task-late-success",
+    });
+    routineService = new RoutineServiceCtor({
+      db,
+      getCronService: () => cronService as Any,
+      getEventTriggerService: () => eventTriggerService,
+      loadHooksSettings: () => hooksSettings,
+      saveHooksSettings: (settings) => {
+        hooksSettings = settings;
+      },
+      getTaskSnapshot,
+      getManagedSessionSnapshot,
+      now: () => 1_779_000_200_000,
+    });
+    const routine = await routineService.create({
+      name: "Daily Plan",
+      enabled: true,
+      workspaceId: "ws-1",
+      prompt: "Build a daily plan.",
+      connectors: [],
+      triggers: [{ id: "manual-1", type: "manual", enabled: true }],
+    });
+
+    db.prepare(
+      `INSERT INTO routine_runs
+       (id, routine_id, trigger_id, trigger_type, status, started_at, finished_at,
+        source_event_summary, backing_task_id, backing_managed_session_id, output_status,
+        error_summary, artifacts_summary, run_key, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "run-timeout-managed",
+      routine.id,
+      "manual-1",
+      "manual",
+      "failed",
+      1_779_000_000_000,
+      1_779_001_800_000,
+      "Scheduled run finished: timeout",
+      "task-late-success",
+      "session-stale",
+      "failed",
+      "Timed out after 1800s",
+      null,
+      null,
+      1_779_000_000_000,
+      1_779_001_800_000,
+    );
+
+    const runs = await routineService.listRuns(routine.id, 10);
+
+    expect(getTaskSnapshot).toHaveBeenCalledWith("task-late-success");
+    expect(getManagedSessionSnapshot).not.toHaveBeenCalled();
+    expect(runs[0]?.status).toBe("completed");
+    expect(runs[0]?.errorSummary).toBeUndefined();
+    expect(runs[0]?.artifactsSummary).toBe("Daily plan finished.");
+  });
+
+  it("can proactively reconcile stale timeout rows without listing runs", async () => {
+    routineService = new RoutineServiceCtor({
+      db,
+      getCronService: () => cronService as Any,
+      getEventTriggerService: () => eventTriggerService,
+      loadHooksSettings: () => hooksSettings,
+      saveHooksSettings: (settings) => {
+        hooksSettings = settings;
+      },
+      getTaskSnapshot: vi.fn().mockReturnValue({
+        status: "completed",
+        terminalStatus: "ok",
+        resultSummary: "Daily plan finished.",
+        completedAt: 1_779_000_123_000,
+      }),
+      now: () => 1_779_000_200_000,
+    });
+    const routine = await routineService.create({
+      name: "Daily Plan",
+      enabled: true,
+      workspaceId: "ws-1",
+      prompt: "Build a daily plan.",
+      connectors: [],
+      triggers: [{ id: "manual-1", type: "manual", enabled: true }],
+    });
+
+    db.prepare(
+      `INSERT INTO routine_runs
+       (id, routine_id, trigger_id, trigger_type, status, started_at, finished_at,
+        source_event_summary, backing_task_id, backing_managed_session_id, output_status,
+        error_summary, artifacts_summary, run_key, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "run-timeout-backfill",
+      routine.id,
+      "manual-1",
+      "manual",
+      "failed",
+      1_779_000_000_000,
+      1_779_001_800_000,
+      "Scheduled run finished: timeout",
+      "task-late-success",
+      null,
+      "failed",
+      "Timed out after 1800s",
+      null,
+      null,
+      1_779_000_000_000,
+      1_779_001_800_000,
+    );
+
+    await routineService.reconcileStaleTimeoutRuns();
+
+    const row = db
+      .prepare("SELECT status, output_status, error_summary, artifacts_summary FROM routine_runs WHERE id = ?")
+      .get("run-timeout-backfill") as {
+      status: string;
+      output_status: string;
+      error_summary: string | null;
+      artifacts_summary: string | null;
+    };
+    expect(row.status).toBe("completed");
+    expect(row.output_status).toBe("none");
+    expect(row.error_summary).toBeNull();
+    expect(row.artifacts_summary).toBe("Daily plan finished.");
+  });
+
+  it("keeps a stale cron timeout failure failed when the backing task failed", async () => {
+    routineService = new RoutineServiceCtor({
+      db,
+      getCronService: () => cronService as Any,
+      getEventTriggerService: () => eventTriggerService,
+      loadHooksSettings: () => hooksSettings,
+      saveHooksSettings: (settings) => {
+        hooksSettings = settings;
+      },
+      getTaskSnapshot: vi.fn().mockReturnValue({
+        status: "failed",
+        terminalStatus: "failed",
+        error: "fetch failed",
+        completedAt: 1_779_000_100_000,
+      }),
+      now: () => 1_779_000_200_000,
+    });
+    const routine = await routineService.create({
+      name: "Daily Plan",
+      enabled: true,
+      workspaceId: "ws-1",
+      prompt: "Build a daily plan.",
+      connectors: [],
+      triggers: [{ id: "manual-1", type: "manual", enabled: true }],
+    });
+
+    db.prepare(
+      `INSERT INTO routine_runs
+       (id, routine_id, trigger_id, trigger_type, status, started_at, finished_at,
+        source_event_summary, backing_task_id, backing_managed_session_id, output_status,
+        error_summary, artifacts_summary, run_key, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "run-hard-failure",
+      routine.id,
+      "manual-1",
+      "manual",
+      "failed",
+      1_779_000_000_000,
+      1_779_001_800_000,
+      "Scheduled run finished: timeout",
+      "task-failed",
+      null,
+      "failed",
+      "Timed out after 1800s",
+      null,
+      null,
+      1_779_000_000_000,
+      1_779_001_800_000,
+    );
+
+    const runs = await routineService.listRuns(routine.id, 10);
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe("failed");
+    expect(runs[0]?.outputStatus).toBe("failed");
+    expect(runs[0]?.errorSummary).toBe("fetch failed");
   });
 
   it("collapses historical duplicate run rows that point at the same backing task", async () => {

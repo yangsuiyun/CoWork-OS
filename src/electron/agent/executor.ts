@@ -298,6 +298,7 @@ import {
   hasVerificationToolEvidence as hasVerificationToolEvidenceUtil,
   inferRequiredArtifactExtensions as inferRequiredArtifactExtensionsUtil,
   normalizePromptForContracts as normalizePromptForContractsUtil,
+  promptIsMultiFileWebAppCreation as promptIsMultiFileWebAppCreationUtil,
   promptRequestsArtifactOutput as promptRequestsArtifactOutputUtil,
   promptRequestsPresentationArtifactOutput as promptRequestsPresentationArtifactOutputUtil,
   responseDirectlyAddressesPrompt as responseDirectlyAddressesPromptUtil,
@@ -9646,11 +9647,11 @@ ${transcript}
     // Must involve web app work (require app/framework signals, not just html/css).
     // Vite and localhost are common implementation details for Electron renderer
     // development too, so do not treat them as standalone browser-QA signals.
-    const WEB_APP_SIGNALS = [
-      "web app", "webapp", "website", "frontend", "react", "vue", "svelte", "next.js", "nextjs",
-      "landing page", "dashboard", "spa", "vite app", "vite site", "webpack app", "create-react-app", "cra",
-    ];
-    const hasWebSignal = WEB_APP_SIGNALS.some((s) => lower.includes(s));
+    const hasWebSignal =
+      promptIsMultiFileWebAppCreationUtil(lower) ||
+      /\b(?:web\s+app|webapp|website|frontend|react|vue|svelte|next\.?js|nextjs|landing\s+page|vite\s+app|vite\s+site|webpack\s+app|create-react-app|cra)\b/.test(
+        lower,
+      );
     // Allow "html" + "css" only when combined with app-like context
     const hasHtmlCssOnly = (lower.includes("html") || lower.includes("css")) && !hasWebSignal;
     if (hasHtmlCssOnly || !hasWebSignal) return false;
@@ -11745,6 +11746,7 @@ ${transcript}
       lastAssistantText: this.lastAssistantText,
       lastNonVerificationOutput: this.lastNonVerificationOutput,
       lastAssistantOutput: this.lastAssistantOutput,
+      buildResultSummary: () => this.buildResultSummary(),
       minResultSummaryLength: TaskExecutor.MIN_RESULT_SUMMARY_LENGTH,
     });
   }
@@ -11774,7 +11776,8 @@ ${transcript}
     if (
       this.requiresVisualQARun &&
       contract.artifactKind === "canvas" &&
-      contract.requiredSuccessfulTools.length === 0
+      contract.requiredSuccessfulTools.length === 0 &&
+      contract.requiredArtifactExtensions.length === 0
     ) {
       return this.hasMaterializedWebAppArtifacts();
     }
@@ -11961,6 +11964,54 @@ ${transcript}
             this.getContractPrompt(),
           ).slice(0, 600),
           guardError: baseGuardError,
+        });
+      }
+      if (/Task missing direct answer|Task missing verification evidence/i.test(baseGuardError)) {
+        const fallbackHasDirectAnswer = this.fallbackContainsDirectAnswer(contract);
+        const successfulTools =
+          this.successfulToolUsageCounts instanceof Map
+            ? Array.from(this.successfulToolUsageCounts.entries())
+                .filter(([, count]) => count > 0)
+                .map(([tool, count]) => `${tool}:${count}`)
+            : [];
+        this.emitEvent("log", {
+          message:
+            "Completion guard blocked finalization due to answer/verification contract mismatch.",
+          guardError: baseGuardError,
+          contract: {
+            requiresDirectAnswer: contract.requiresDirectAnswer,
+            requiresDecisionSignal: contract.requiresDecisionSignal,
+            requiresVerificationEvidence: contract.requiresVerificationEvidence,
+            requiresExecutionEvidence: contract.requiresExecutionEvidence,
+            requiresArtifactEvidence: contract.requiresArtifactEvidence,
+            artifactKind: contract.artifactKind,
+          },
+          bestCandidateLength: bestCandidate.length,
+          bestCandidateHash: createHash("sha1").update(bestCandidate).digest("hex").slice(0, 12),
+          directAnswer: {
+            bestCandidatePasses: this.responseDirectlyAddressesPrompt(bestCandidate, contract),
+            fallbackPasses: fallbackHasDirectAnswer,
+            looksOperationalOnly: this.responseLooksOperationalOnly(bestCandidate),
+            hasDecisionSignal: this.responseHasDecisionSignal(bestCandidate),
+          },
+          verification: {
+            bestCandidatePasses: this.hasVerificationEvidence(bestCandidate),
+            hasVerificationSignal: this.responseHasVerificationSignal(bestCandidate),
+            hasReasonedConclusionSignal:
+              this.responseHasReasonedConclusionSignal(bestCandidate),
+            hasToolEvidence: this.hasVerificationToolEvidence(),
+          },
+          successfulTools,
+          completedStepsSample: (this.plan?.steps || [])
+            .filter((step) => step.status === "completed")
+            .slice(-8)
+            .map((step) => ({
+              descriptionHash: createHash("sha1")
+                .update(String(step.description || ""))
+                .digest("hex")
+                .slice(0, 12),
+              descriptionLength: String(step.description || "").length,
+            })),
         });
       }
       return baseGuardError;

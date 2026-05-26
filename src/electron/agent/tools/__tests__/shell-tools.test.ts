@@ -14,6 +14,8 @@ const {
   resolveCommandCwd,
   shouldUsePersistentShell,
   buildSafeShellPath,
+  isSandboxRuntimeFailure,
+  buildEmptyCommandFailureMessage,
 } =
   _testUtils;
 
@@ -334,6 +336,20 @@ describe("ShellTools Integration", () => {
         "/bin",
       ]);
       expect(built.indexOf("/opt/homebrew/bin")).toBe(built.lastIndexOf("/opt/homebrew/bin"));
+    });
+  });
+
+  describe("sandbox failure classification", () => {
+    it("does not classify ordinary empty command exits as sandbox runtime failures", () => {
+      const message = buildEmptyCommandFailureMessage({
+        exitCode: 1,
+        cwd: "/var/folders/session",
+        workspacePath: "/var/folders/session",
+        sandboxType: "macos",
+      });
+
+      expect(message).toContain("Command exited with no output");
+      expect(isSandboxRuntimeFailure(message, 1)).toBe(false);
     });
   });
 

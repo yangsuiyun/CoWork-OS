@@ -66,6 +66,7 @@ import {
   LLMProviderType,
   LLMReasoningEffort,
   IntegrationMentionSelection,
+  TaskTimelinePageCursor,
 } from "../shared/types";
 import { TASK_EVENT_STATUS_MAP } from "../shared/task-event-status-map";
 import { getEffectiveTaskEventType } from "./utils/task-event-compat";
@@ -103,6 +104,7 @@ import {
   noteRendererTaskEventsAppendDispatched,
   noteRendererTaskEventsAppended,
   flushRendererStartupMarks,
+  markRendererPerfEvent,
   markRendererStartup,
   measureRendererPerf,
   recordRendererPerfSample,
@@ -115,11 +117,19 @@ import {
 import { isTaskActivelyWorking } from "./utils/task-working-state";
 import { deriveReplayTaskSnapshot } from "./utils/task-replay-state";
 import {
-  hydrateSelectedTaskEvents,
+  getTaskEventIdentity,
   mergeTaskEventsByIdentity,
   shouldIncludeTaskEventInSelectedSession,
   shouldRefreshCanonicalEventsForTerminalUpdate,
 } from "./utils/task-event-stream";
+import {
+  hasTaskHydrationAttempted,
+  mergeSidebarInitialPageWithSelectedTask,
+  mergeSidebarTaskSummariesWithExisting,
+  pruneTaskHydrationAttemptKeys,
+  recordTaskHydrationAttemptSuccess,
+  shouldHydrateTaskSummary,
+} from "./utils/sidebar-task-summaries";
 import { classifyLiveTaskEvent } from "./utils/live-task-event-policy";
 
 const Settings = lazy(() =>
@@ -632,6 +642,12 @@ type SelectedTaskWorkspaceViewProps = {
   homeResearchVaultEnabled: boolean;
   homeNextActionsEnabled: boolean;
   rendererPerfLoggingEnabled: boolean;
+  taskSwitchId: string | null;
+  hasMoreTimelineHistory: boolean;
+  isLoadingTimelineHistory: boolean;
+  timelineHistoryError: string | null;
+  onLoadMoreTimelineHistory: () => void | Promise<void>;
+  onLoadTaskEventDetail: (eventId: string, taskId: string) => void | Promise<void>;
   effectiveRightCollapsed: boolean;
   terminalTabsOpen: boolean;
   browserWorkbenchRequest: BrowserWorkbenchOpenRequest | null;
@@ -747,6 +763,12 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   homeResearchVaultEnabled,
   homeNextActionsEnabled,
   rendererPerfLoggingEnabled,
+  taskSwitchId,
+  hasMoreTimelineHistory,
+  isLoadingTimelineHistory,
+  timelineHistoryError,
+  onLoadMoreTimelineHistory,
+  onLoadTaskEventDetail,
   effectiveRightCollapsed,
   terminalTabsOpen,
   browserWorkbenchRequest,
@@ -1365,6 +1387,12 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
           homeResearchVaultEnabled={homeResearchVaultEnabled}
           homeNextActionsEnabled={homeNextActionsEnabled}
           rendererPerfLoggingEnabled={rendererPerfLoggingEnabled}
+          taskSwitchId={taskSwitchId}
+          hasMoreTimelineHistory={hasMoreTimelineHistory}
+          isLoadingTimelineHistory={isLoadingTimelineHistory}
+          timelineHistoryError={timelineHistoryError}
+          onLoadMoreTimelineHistory={onLoadMoreTimelineHistory}
+          onLoadTaskEventDetail={onLoadTaskEventDetail}
           remoteSession={
             remoteTaskView
               ? { deviceId: remoteTaskView.deviceId, deviceName: remoteTaskView.deviceName }
@@ -1502,6 +1530,10 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
             queueStatus={rightPanelInput.queueStatus}
             onSelectTask={onSelectTask}
             onCancelTask={onCancelTaskById}
+            onOpenSpreadsheetArtifact={openSpreadsheetArtifact}
+            onOpenDocumentArtifact={openDocumentArtifact}
+            onOpenPresentationArtifact={openPresentationArtifact}
+            onOpenWebArtifact={openWebArtifact}
             rendererPerfLoggingEnabled={rendererPerfLoggingEnabled}
             highlightOutputPath={rightPanelInput.highlightOutputPath}
             onHighlightConsumed={onHighlightConsumed}
@@ -1550,6 +1582,11 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
 );
 
 const MAX_RENDERER_CHILD_EVENTS = 300;
+const MAX_TIMELINE_HISTORY_EVENTS = 1200;
+const MAX_TIMELINE_HISTORY_PAYLOAD_BYTES = 2 * 1024 * 1024;
+const MAX_TIMELINE_HISTORY_PAGE_PAYLOAD_BYTES = 512 * 1024;
+const MAX_EVENT_DETAIL_CACHE_ENTRIES = 120;
+const EVENT_DETAIL_NEGATIVE_CACHE_MS = 30 * 1000;
 const APPROVAL_TOAST_PREFIX = "approval-request-";
 const RENDERER_DROPPED_EVENT_TYPES = new Set(["log", "task_analysis"]);
 const RENDERER_THROTTLED_EVENT_TYPES = new Set(["llm_streaming"]);
@@ -1853,6 +1890,18 @@ export function App() {
   const [transparencyEffectsEnabled, setTransparencyEffectsEnabled] = useState(true);
   const [uiDensity, setUiDensity] = useState<UiDensity>("focused");
   const [devRunLoggingEnabled, setDevRunLoggingEnabled] = useState(false);
+  const [selectedTaskSwitchId, setSelectedTaskSwitchId] = useState<string | null>(null);
+  const [selectedTaskTimelineHistory, setSelectedTaskTimelineHistory] = useState<{
+    cursor: TaskTimelinePageCursor | null;
+    hasMoreHistory: boolean;
+    isLoadingMore: boolean;
+    error: string | null;
+  }>({
+    cursor: null,
+    hasMoreHistory: false,
+    isLoadingMore: false,
+    error: null,
+  });
   const [homeResearchVaultEnabled, setHomeResearchVaultEnabled] = useState(false);
   const [homeNextActionsEnabled, setHomeNextActionsEnabled] = useState(false);
 
@@ -1910,6 +1959,20 @@ export function App() {
   const lastBatchableAppendAtRef = useRef(0);
   const terminalEventRefreshInFlightRef = useRef<Set<string>>(new Set());
   const latestAttentionEventByTaskIdRef = useRef<Map<string, TaskEvent>>(new Map());
+  const taskSwitchStartedAtRef = useRef<Map<string, number>>(new Map());
+  const taskSwitchIdByTaskIdRef = useRef<Map<string, string>>(new Map());
+  const taskSwitchSequenceRef = useRef(0);
+  const taskHeaderMarkedRef = useRef<Set<string>>(new Set());
+  const sidebarFirstPaintMarkedRef = useRef(false);
+  const taskTimelinePageStateRef = useRef<
+    Map<string, { cursor: TaskTimelinePageCursor | null; hasMoreHistory: boolean }>
+  >(new Map());
+  const eventDetailInFlightRef = useRef<Set<string>>(new Set());
+  const eventDetailCacheRef = useRef<Map<string, TaskEvent>>(new Map());
+  const eventDetailMissingUntilRef = useRef<Map<string, number>>(new Map());
+  const timelineHistoryLoadInFlightRef = useRef(false);
+  const selectedTaskHydrationInFlightRef = useRef<Set<string>>(new Set());
+  const selectedTaskHydrationAttemptedRef = useRef<Set<string>>(new Set());
   /** Tracks output paths we've already shown completion toast for (suppresses repeat toasts on follow-ups) */
   const completionToastNotifiedPathsRef = useRef<Map<string, Set<string>>>(new Map());
 
@@ -1925,6 +1988,16 @@ export function App() {
     for (const key of completionToastNotifiedPathsRef.current.keys()) {
       if (!activeIds.has(key)) completionToastNotifiedPathsRef.current.delete(key);
     }
+    for (const key of taskSwitchStartedAtRef.current.keys()) {
+      if (!activeIds.has(key)) taskSwitchStartedAtRef.current.delete(key);
+    }
+    for (const key of taskSwitchIdByTaskIdRef.current.keys()) {
+      if (!activeIds.has(key)) taskSwitchIdByTaskIdRef.current.delete(key);
+    }
+    for (const key of taskTimelinePageStateRef.current.keys()) {
+      if (!activeIds.has(key)) taskTimelinePageStateRef.current.delete(key);
+    }
+    pruneTaskHydrationAttemptKeys(selectedTaskHydrationAttemptedRef.current, activeIds);
   }, [tasks]);
 
   // Disclaimer state (null = loading)
@@ -1949,6 +2022,83 @@ export function App() {
     [rendererPerfLoggingEnabled],
   );
 
+  const markTaskSwitchStart = useCallback(
+    (taskId: string | null) => {
+      if (!taskId) return;
+      const startedAt = performance.now();
+      const switchId = `${taskId}:${Date.now()}:${taskSwitchSequenceRef.current++}`;
+      taskSwitchStartedAtRef.current.set(taskId, startedAt);
+      taskSwitchIdByTaskIdRef.current.set(taskId, switchId);
+      setSelectedTaskSwitchId(switchId);
+      taskHeaderMarkedRef.current.delete(taskId);
+      markRendererPerfEvent("task_switch_start", rendererPerfLoggingEnabled, {
+        taskId,
+        switchId,
+      });
+    },
+    [rendererPerfLoggingEnabled],
+  );
+
+  const mergeSelectedTaskTimelineEvents = useCallback(
+    (taskId: string, existing: TaskEvent[], incoming: TaskEvent[]): TaskEvent[] => {
+      const incomingIdentities = new Set(incoming.map((event) => getTaskEventIdentity(event)));
+      const relevantExisting = existing.filter((event) =>
+        incomingIdentities.has(getTaskEventIdentity(event)) ||
+        shouldIncludeTaskEventInSelectedSession({
+          selectedTaskId: taskId,
+          event,
+          tasks: tasksRef.current,
+        }),
+      );
+      return mergeTaskEventsByIdentity(relevantExisting, incoming);
+    },
+    [],
+  );
+
+  const capTaskEventsPreservingIncoming = useCallback(
+    (eventsToCap: TaskEvent[], incomingEvents: TaskEvent[]): TaskEvent[] => {
+      const capped = capTaskEvents(
+        eventsToCap,
+        MAX_TIMELINE_HISTORY_EVENTS,
+        MAX_TIMELINE_HISTORY_PAYLOAD_BYTES,
+      );
+      if (incomingEvents.length === 0) return capped;
+
+      const incomingIds = new Set(incomingEvents.map((event) => getTaskEventIdentity(event)));
+      const cappedIds = new Set(capped.map((event) => getTaskEventIdentity(event)));
+      const missingIncoming = incomingEvents.filter(
+        (event) => !cappedIds.has(getTaskEventIdentity(event)),
+      );
+      if (missingIncoming.length === 0) return capped;
+
+      const preservedIncoming = capTaskEvents(
+        incomingEvents,
+        Math.min(incomingEvents.length, MAX_TIMELINE_HISTORY_EVENTS),
+        MAX_TIMELINE_HISTORY_PAGE_PAYLOAD_BYTES,
+      );
+      const preservedIncomingIds = new Set(
+        preservedIncoming.map((event) => getTaskEventIdentity(event)),
+      );
+      const nonIncomingBudget = Math.max(0, MAX_TIMELINE_HISTORY_EVENTS - preservedIncoming.length);
+      const nonIncoming =
+        nonIncomingBudget > 0
+          ? capTaskEvents(
+              capped.filter((event) => !incomingIds.has(getTaskEventIdentity(event))),
+              nonIncomingBudget,
+              Math.max(
+                MAX_TIMELINE_HISTORY_PAGE_PAYLOAD_BYTES,
+                MAX_TIMELINE_HISTORY_PAYLOAD_BYTES - MAX_TIMELINE_HISTORY_PAGE_PAYLOAD_BYTES,
+              ),
+            )
+              .filter((event) => !preservedIncomingIds.has(getTaskEventIdentity(event)))
+              .slice(-nonIncomingBudget)
+          : [];
+
+      return mergeTaskEventsByIdentity(preservedIncoming, nonIncoming);
+    },
+    [],
+  );
+
   useEffect(() => {
     markStartupOnce("app_shell_ready", { view: currentView });
   }, [currentView, markStartupOnce]);
@@ -1958,6 +2108,41 @@ export function App() {
       markStartupOnce("sidebar_ready", { taskCount: tasks.length });
     }
   }, [isInitialTaskListLoading, leftSidebarCollapsed, markStartupOnce, tasks.length]);
+
+  useEffect(() => {
+    if (
+      sidebarFirstPaintMarkedRef.current ||
+      leftSidebarCollapsed ||
+      isInitialTaskListLoading ||
+      tasks.length === 0
+    ) {
+      return;
+    }
+    sidebarFirstPaintMarkedRef.current = true;
+    markRendererPerfEvent("sidebar_first_paint", rendererPerfLoggingEnabled, {
+      taskCount: tasks.length,
+    });
+  }, [isInitialTaskListLoading, leftSidebarCollapsed, rendererPerfLoggingEnabled, tasks.length]);
+
+  useEffect(() => {
+    if (!selectedTaskId || !selectedTask || taskHeaderMarkedRef.current.has(selectedTaskId)) {
+      return;
+    }
+    taskHeaderMarkedRef.current.add(selectedTaskId);
+    const startedAt = taskSwitchStartedAtRef.current.get(selectedTaskId);
+    if (startedAt != null) {
+      recordRendererPerfSample(
+        "task-switch.header_ready_ms",
+        performance.now() - startedAt,
+        rendererPerfLoggingEnabled,
+      );
+    }
+    markRendererPerfEvent("task_header_ready", rendererPerfLoggingEnabled, {
+      taskId: selectedTaskId,
+      switchId: taskSwitchIdByTaskIdRef.current.get(selectedTaskId),
+      taskStatus: selectedTask.status,
+    });
+  }, [rendererPerfLoggingEnabled, selectedTask, selectedTaskId]);
 
   useEffect(() => {
     flushRendererStartupMarks(rendererPerfLoggingEnabled);
@@ -2000,15 +2185,40 @@ export function App() {
         if (
           options?.refreshEventsWhenTerminal &&
           !isTaskPossiblyRunning(canonicalTask.status) &&
-          window.electronAPI?.getTaskEvents
+          (window.electronAPI?.getTaskTimelinePage || window.electronAPI?.getTaskEvents)
         ) {
-          const refreshedEvents = await window.electronAPI.getTaskEvents(taskId);
+          const timelinePage = window.electronAPI.getTaskTimelinePage
+            ? await window.electronAPI.getTaskTimelinePage({
+                taskId,
+                limit: 160,
+                byteLimit: 512 * 1024,
+                singleEventByteLimit: 64 * 1024,
+              })
+            : null;
+          const refreshedEvents =
+            timelinePage?.events ?? (await window.electronAPI.getTaskEvents(taskId));
+          if (timelinePage) {
+            taskTimelinePageStateRef.current.set(taskId, {
+              cursor: timelinePage.nextCursor,
+              hasMoreHistory: timelinePage.hasMoreHistory,
+            });
+            if (taskId === selectedTaskIdRef.current) {
+              setSelectedTaskTimelineHistory({
+                cursor: timelinePage.nextCursor,
+                hasMoreHistory: timelinePage.hasMoreHistory,
+                isLoadingMore: false,
+                error: null,
+              });
+            }
+          }
           pendingToolEventsRef.current = [];
           if (pendingToolEventsFlushTimerRef.current) {
             clearTimeout(pendingToolEventsFlushTimerRef.current);
             pendingToolEventsFlushTimerRef.current = null;
           }
-          setEvents(capTaskEvents(refreshedEvents));
+          setEvents((prev) =>
+            capTaskEvents(mergeSelectedTaskTimelineEvents(taskId, prev, refreshedEvents)),
+          );
           const latestTimestamp = getLatestEventTimestamp(refreshedEvents);
           taskLastEventTimestampRef.current.set(
             taskId,
@@ -2021,7 +2231,7 @@ export function App() {
         terminalEventRefreshInFlightRef.current.delete(taskId);
       }
     },
-    [],
+    [mergeSelectedTaskTimelineEvents],
   );
 
   // Platform detection for Windows-specific UI (custom window controls, opaque backgrounds)
@@ -2582,6 +2792,50 @@ export function App() {
   useEffect(() => {
     noiseEventThrottleRef.current.clear();
   }, [selectedTaskId]);
+
+  useEffect(() => {
+    if (!selectedTaskId || remoteTaskView || !window.electronAPI?.getTask) return;
+    if (selectedTask && !shouldHydrateTaskSummary(selectedTask)) return;
+
+    if (
+      selectedTaskHydrationInFlightRef.current.has(selectedTaskId) ||
+      hasTaskHydrationAttempted(
+        selectedTaskHydrationAttemptedRef.current,
+        selectedTaskId,
+        selectedTask,
+      )
+    ) {
+      return;
+    }
+
+    selectedTaskHydrationInFlightRef.current.add(selectedTaskId);
+    let cancelled = false;
+
+    void window.electronAPI
+      .getTask(selectedTaskId)
+      .then((task: Task | null) => {
+        if (cancelled || !task || task.id !== selectedTaskId) return;
+        recordTaskHydrationAttemptSuccess(
+          selectedTaskHydrationAttemptedRef.current,
+          selectedTaskId,
+          selectedTask,
+          new Set(tasksRef.current.map((currentTask) => currentTask.id)),
+        );
+        setTasks((prev) => upsertTaskPreservingIdentity(prev, task, { prependIfMissing: true }));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error("Failed to hydrate selected task:", error);
+        }
+      })
+      .finally(() => {
+        selectedTaskHydrationInFlightRef.current.delete(selectedTaskId);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [remoteTaskView, selectedTask, selectedTaskId]);
 
   useEffect(() => {
     currentViewRef.current = currentView;
@@ -3338,10 +3592,22 @@ export function App() {
     }
     if (!selectedTaskId) {
       setEvents([]);
+      setSelectedTaskTimelineHistory({
+        cursor: null,
+        hasMoreHistory: false,
+        isLoadingMore: false,
+        error: null,
+      });
       return;
     }
     if (remoteTaskView) {
       setEvents(capTaskEvents(remoteTaskView.events));
+      setSelectedTaskTimelineHistory({
+        cursor: null,
+        hasMoreHistory: false,
+        isLoadingMore: false,
+        error: null,
+      });
       const latestTimestamp = getLatestEventTimestamp(remoteTaskView.events);
       if (latestTimestamp > 0) {
         taskLastEventTimestampRef.current.set(selectedTaskId, latestTimestamp);
@@ -3349,8 +3615,9 @@ export function App() {
       return;
     }
 
-    // Load historical events from database
-    if (!window.electronAPI?.getTaskEvents) {
+    // Load the initial projected timeline page from the database. The legacy
+    // event history endpoint remains as a fallback for older preload bundles.
+    if (!window.electronAPI?.getTaskTimelinePage && !window.electronAPI?.getTaskEvents) {
       setEvents([]);
       return;
     }
@@ -3362,11 +3629,61 @@ export function App() {
 
     const loadHistoricalEvents = async () => {
       try {
-        const historicalEvents = await window.electronAPI.getTaskEvents(requestedTaskId);
+        const startedAt = performance.now();
+        const timelinePage = window.electronAPI.getTaskTimelinePage
+          ? await window.electronAPI.getTaskTimelinePage({
+              taskId: requestedTaskId,
+              limit: 160,
+              byteLimit: 512 * 1024,
+              singleEventByteLimit: 64 * 1024,
+            })
+          : null;
+        const historicalEvents =
+          timelinePage?.events ?? (await window.electronAPI.getTaskEvents(requestedTaskId));
         if (cancelled) return;
-        setEvents((prev) =>
-          capTaskEvents(hydrateSelectedTaskEvents(requestedTaskId, prev, historicalEvents)),
+        const receiveMs = performance.now() - startedAt;
+        taskTimelinePageStateRef.current.set(requestedTaskId, {
+          cursor: timelinePage?.nextCursor ?? null,
+          hasMoreHistory: timelinePage?.hasMoreHistory === true,
+        });
+        setSelectedTaskTimelineHistory({
+          cursor: timelinePage?.nextCursor ?? null,
+          hasMoreHistory: timelinePage?.hasMoreHistory === true,
+          isLoadingMore: false,
+          error: null,
+        });
+        recordRendererPerfSample(
+          "task-switch.timeline_receive_ms",
+          receiveMs,
+          rendererPerfLoggingEnabled,
         );
+        const switchStartedAt = taskSwitchStartedAtRef.current.get(requestedTaskId);
+        if (switchStartedAt != null) {
+          recordRendererPerfSample(
+            "task-switch.timeline_data_received_ms",
+            performance.now() - switchStartedAt,
+            rendererPerfLoggingEnabled,
+          );
+        }
+        markRendererPerfEvent("timeline_data_received", rendererPerfLoggingEnabled, {
+          taskId: requestedTaskId,
+          switchId: taskSwitchIdByTaskIdRef.current.get(requestedTaskId),
+          eventCount: historicalEvents.length,
+          payloadBytes: timelinePage?.summary.payloadBytes,
+          serializedPayloadBytes: timelinePage
+            ? undefined
+            : new Blob([JSON.stringify(historicalEvents)]).size,
+          truncatedEventCount: timelinePage?.summary.truncatedEventCount,
+          hasMoreHistory: timelinePage?.hasMoreHistory,
+          receiveMs: Number(receiveMs.toFixed(1)),
+        });
+        startTransition(() => {
+          setEvents((prev) =>
+            capTaskEvents(
+              mergeSelectedTaskTimelineEvents(requestedTaskId, prev, historicalEvents),
+            ),
+          );
+        });
         const latestTimestamp = getLatestEventTimestamp(historicalEvents);
         if (latestTimestamp > 0) {
           taskLastEventTimestampRef.current.set(requestedTaskId, latestTimestamp);
@@ -3382,7 +3699,135 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedTaskId, remoteTaskView]);
+  }, [mergeSelectedTaskTimelineEvents, rendererPerfLoggingEnabled, selectedTaskId, remoteTaskView]);
+
+  const handleLoadTaskEventDetail = useCallback(async (eventId: string, taskId: string) => {
+    const normalizedEventId = typeof eventId === "string" ? eventId.trim() : "";
+    const normalizedTaskId = typeof taskId === "string" ? taskId.trim() : "";
+    const cacheKey = `${normalizedTaskId}:${normalizedEventId}`;
+    if (!normalizedTaskId || !normalizedEventId || eventDetailInFlightRef.current.has(cacheKey)) return;
+    if (!window.electronAPI?.getTaskEventDetail) return;
+    const missingUntil = eventDetailMissingUntilRef.current.get(cacheKey);
+    if (missingUntil && missingUntil > Date.now()) return;
+    if (missingUntil) eventDetailMissingUntilRef.current.delete(cacheKey);
+    const cachedEvent = eventDetailCacheRef.current.get(cacheKey);
+    if (cachedEvent) {
+      setEvents((prev) =>
+        prev.map((event) => {
+          if (
+            event.id === cachedEvent.id ||
+            event.eventId === cachedEvent.eventId ||
+            event.id === normalizedEventId ||
+            event.eventId === normalizedEventId
+          ) {
+            return cachedEvent;
+          }
+          return event;
+        }),
+      );
+      return;
+    }
+    eventDetailInFlightRef.current.add(cacheKey);
+    try {
+      const detail = await window.electronAPI.getTaskEventDetail({
+        taskId: normalizedTaskId,
+        eventId: normalizedEventId,
+      });
+      const detailedEvent = detail?.event;
+      if (!detailedEvent) {
+        const missing = eventDetailMissingUntilRef.current;
+        missing.set(cacheKey, Date.now() + EVENT_DETAIL_NEGATIVE_CACHE_MS);
+        while (missing.size > MAX_EVENT_DETAIL_CACHE_ENTRIES) {
+          const oldestKey = missing.keys().next().value;
+          if (!oldestKey) break;
+          missing.delete(oldestKey);
+        }
+        return;
+      }
+      eventDetailMissingUntilRef.current.delete(cacheKey);
+      const cache = eventDetailCacheRef.current;
+      cache.set(cacheKey, detailedEvent);
+      while (cache.size > MAX_EVENT_DETAIL_CACHE_ENTRIES) {
+        const oldestKey = cache.keys().next().value;
+        if (!oldestKey) break;
+        cache.delete(oldestKey);
+      }
+      setEvents((prev) =>
+        prev.map((event) => {
+          if (
+            event.id === detailedEvent.id ||
+            event.eventId === detailedEvent.eventId ||
+            event.id === normalizedEventId ||
+            event.eventId === normalizedEventId
+          ) {
+            return detailedEvent;
+          }
+          return event;
+        }),
+      );
+    } catch (error) {
+      console.error("Failed to load event detail:", error);
+    } finally {
+      eventDetailInFlightRef.current.delete(cacheKey);
+    }
+  }, []);
+
+  const handleLoadMoreTaskTimelineHistory = useCallback(async () => {
+    if (timelineHistoryLoadInFlightRef.current) return;
+    const taskId = selectedTaskIdRef.current;
+    const state = taskId ? taskTimelinePageStateRef.current.get(taskId) : null;
+    if (!taskId || !state?.hasMoreHistory || !state.cursor) return;
+    if (!window.electronAPI?.getTaskTimelinePage) return;
+    timelineHistoryLoadInFlightRef.current = true;
+    setSelectedTaskTimelineHistory((current) => ({
+      ...current,
+      isLoadingMore: true,
+      error: null,
+    }));
+    try {
+      const timelinePage = await window.electronAPI.getTaskTimelinePage({
+        taskId,
+        cursor: state.cursor,
+        limit: 160,
+        byteLimit: 512 * 1024,
+        singleEventByteLimit: 64 * 1024,
+      });
+      if (selectedTaskIdRef.current !== taskId) return;
+      taskTimelinePageStateRef.current.set(taskId, {
+        cursor: timelinePage.nextCursor,
+        hasMoreHistory: timelinePage.hasMoreHistory,
+      });
+      setSelectedTaskTimelineHistory({
+        cursor: timelinePage.nextCursor,
+        hasMoreHistory: timelinePage.hasMoreHistory,
+        isLoadingMore: false,
+        error: null,
+      });
+      setEvents((prev) => {
+        const merged = mergeSelectedTaskTimelineEvents(taskId, prev, timelinePage.events);
+        return capTaskEventsPreservingIncoming(merged, timelinePage.events);
+      });
+      markRendererPerfEvent("timeline_history_page_received", rendererPerfLoggingEnabled, {
+        taskId,
+        eventCount: timelinePage.events.length,
+        hasMoreHistory: timelinePage.hasMoreHistory,
+        payloadBytes: timelinePage.summary.payloadBytes,
+        truncatedEventCount: timelinePage.summary.truncatedEventCount,
+      });
+    } catch (error) {
+      console.error("Failed to load older timeline history:", error);
+      setSelectedTaskTimelineHistory((current) => ({
+        ...current,
+        isLoadingMore: false,
+        error:
+          error instanceof Error && error.message.trim()
+            ? error.message
+            : "Failed to load earlier history.",
+      }));
+    } finally {
+      timelineHistoryLoadInFlightRef.current = false;
+    }
+  }, [capTaskEventsPreservingIncoming, mergeSelectedTaskTimelineEvents, rendererPerfLoggingEnabled]);
 
   // Reconcile stale executing/interrupted task state if event delivery falls behind.
   useEffect(() => {
@@ -3522,8 +3967,8 @@ export function App() {
   // Keep startup light: load the first sidebar page, then page in more sessions
   // only when the user scrolls. The sidebar-prioritized DB order keeps pinned
   // and active sessions visible even if they are older than the recent page.
-  const INITIAL_TASK_LOAD = 100;
-  const TASK_LOAD_MORE = 100;
+  const INITIAL_TASK_LOAD = 60;
+  const TASK_LOAD_MORE = 80;
   const TASK_PAGE_LOOKAHEAD = 1;
   const MAIN_SIDEBAR_EXCLUDED_TASK_SOURCES: Array<NonNullable<Task["source"]>> = [
     "managed_agent_panel",
@@ -3535,10 +3980,29 @@ export function App() {
   const taskOffsetRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
   const hasMoreTasksRef = useRef(false);
+  const sidebarTaskCursorRef = useRef<{
+    id: string;
+    pinned?: boolean;
+    status?: Task["status"];
+    updatedAt?: number;
+    createdAt?: number;
+  } | null>(null);
+
+  const toSidebarTaskCursor = useCallback((task: Task | undefined) => {
+    if (!task?.id) return null;
+    return {
+      id: task.id,
+      pinned: task.pinned,
+      status: task.status,
+      updatedAt: task.updatedAt,
+      createdAt: task.createdAt,
+    };
+  }, []);
 
   const loadTasks = useCallback(async () => {
     setIsInitialTaskListLoading(true);
-    if (!window.electronAPI?.listTasks) {
+    const listSidebarTasks = window.electronAPI?.listSidebarTasks ?? window.electronAPI?.listTasks;
+    if (!listSidebarTasks) {
       setTasks([]);
       setHasMoreTasks(false);
       hasMoreTasksRef.current = false;
@@ -3547,47 +4011,84 @@ export function App() {
     }
     try {
       taskOffsetRef.current = 0;
+      sidebarTaskCursorRef.current = null;
       isLoadingMoreRef.current = false;
-      const loadedTaskPage = await window.electronAPI.listTasks({
+      const startedAt = performance.now();
+      markRendererPerfEvent("sidebar_request_start", rendererPerfLoggingEnabled, {
+        limit: INITIAL_TASK_LOAD + TASK_PAGE_LOOKAHEAD,
+        offset: 0,
+      });
+      const loadedTaskPage = await listSidebarTasks({
         limit: INITIAL_TASK_LOAD + TASK_PAGE_LOOKAHEAD,
         offset: 0,
         prioritizeSidebar: true,
         excludeSources: MAIN_SIDEBAR_EXCLUDED_TASK_SOURCES,
       });
+      const receiveMs = performance.now() - startedAt;
+      recordRendererPerfSample(
+        "sidebar.data_receive_ms",
+        receiveMs,
+        rendererPerfLoggingEnabled,
+      );
+      markRendererPerfEvent("sidebar_data_received", rendererPerfLoggingEnabled, {
+        rowCount: loadedTaskPage.length,
+        receiveMs: Number(receiveMs.toFixed(1)),
+      });
       const loadedTasks = loadedTaskPage.slice(0, INITIAL_TASK_LOAD);
-      setTasks(loadedTasks);
+      setTasks((prev) =>
+        mergeSidebarInitialPageWithSelectedTask(
+          prev,
+          loadedTasks,
+          selectedTaskIdRef.current,
+        ),
+      );
       const more = loadedTaskPage.length > INITIAL_TASK_LOAD;
       setHasMoreTasks(more);
       hasMoreTasksRef.current = more;
       taskOffsetRef.current = loadedTasks.length;
+      sidebarTaskCursorRef.current = toSidebarTaskCursor(loadedTasks.at(-1));
     } catch (error) {
       console.error("Failed to load tasks:", error);
     } finally {
       setIsInitialTaskListLoading(false);
     }
-  }, []);
+  }, [rendererPerfLoggingEnabled, toSidebarTaskCursor]);
 
   const loadMoreTasks = useCallback(async () => {
-    if (!window.electronAPI?.listTasks || isLoadingMoreRef.current || !hasMoreTasksRef.current) {
+    const listSidebarTasks = window.electronAPI?.listSidebarTasks ?? window.electronAPI?.listTasks;
+    if (!listSidebarTasks || isLoadingMoreRef.current || !hasMoreTasksRef.current) {
       return;
     }
     isLoadingMoreRef.current = true;
     try {
       const offset = taskOffsetRef.current;
-      const moreTaskPage = await window.electronAPI.listTasks({
+      const cursor = sidebarTaskCursorRef.current;
+      const moreTaskPage = await listSidebarTasks({
         limit: TASK_LOAD_MORE + TASK_PAGE_LOOKAHEAD,
-        offset,
+        offset: cursor ? undefined : offset,
+        cursor: cursor ?? undefined,
         prioritizeSidebar: true,
         excludeSources: MAIN_SIDEBAR_EXCLUDED_TASK_SOURCES,
       });
       const moreTasks = moreTaskPage.slice(0, TASK_LOAD_MORE);
       if (moreTasks.length > 0) {
         setTasks((prev) => {
+          const mergedPage = mergeSidebarTaskSummariesWithExisting(prev, moreTasks);
+          const mergedById = new Map(mergedPage.map((task) => [task.id, task]));
           const existingIds = new Set(prev.map((t) => t.id));
-          const fresh = moreTasks.filter((t: Task) => !existingIds.has(t.id));
-          return fresh.length > 0 ? [...prev, ...fresh] : prev;
+          let changed = false;
+          const updatedPrev = prev.map((task) => {
+            const merged = mergedById.get(task.id);
+            if (!merged) return task;
+            const updated = mergeTaskPreservingIdentity(task, merged);
+            if (updated !== task) changed = true;
+            return updated;
+          });
+          const fresh = mergedPage.filter((task) => !existingIds.has(task.id));
+          return changed || fresh.length > 0 ? [...updatedPrev, ...fresh] : prev;
         });
         taskOffsetRef.current = offset + moreTasks.length;
+        sidebarTaskCursorRef.current = toSidebarTaskCursor(moreTasks.at(-1));
       }
       const more = moreTaskPage.length > TASK_LOAD_MORE;
       setHasMoreTasks(more);
@@ -4442,13 +4943,14 @@ export function App() {
   const handleSelectTaskFromShell = useCallback(
     (taskId: string | null) => {
       clearRemoteTaskView();
+      markTaskSwitchStart(taskId);
       setSelectedTaskId(taskId);
       if (taskId) {
         setUnseenCompletedTaskIds((prev) => removeTaskId(prev, taskId));
       }
       setCurrentView("main");
     },
-    [clearRemoteTaskView],
+    [clearRemoteTaskView, markTaskSwitchStart],
   );
   const handleOpenSettings = useCallback(() => setCurrentView("settings"), []);
   const handleOpenMissionControl = useCallback(() => {
@@ -4460,8 +4962,9 @@ export function App() {
   const handleSelectChildTaskFromMainContent = useCallback((taskId: string) => {
     const task = tasksRef.current.find((candidate) => candidate.id === taskId);
     if (task && isSynthesisChildTask(task)) return;
+    markTaskSwitchStart(taskId);
     setSelectedTaskId(taskId);
-  }, []);
+  }, [markTaskSwitchStart]);
   const handleSubmitInputRequestFromMainContent = useCallback(
     (requestId: string, answers: Record<string, { optionLabel?: string; otherText?: string }>) => {
       void handleInputRequestResponse({
@@ -4485,6 +4988,7 @@ export function App() {
     (taskId: string, primaryOutputPath?: string) => {
       setCurrentView("main");
       clearRemoteTaskView();
+      markTaskSwitchStart(taskId);
       setSelectedTaskId(taskId);
       setRightSidebarCollapsed(false);
       if (primaryOutputPath) {
@@ -4493,7 +4997,7 @@ export function App() {
       setUnseenOutputTaskIds((prev) => prev.filter((id) => id !== taskId));
       setUnseenCompletedTaskIds((prev) => prev.filter((id) => id !== taskId));
     },
-    [clearRemoteTaskView],
+    [clearRemoteTaskView, markTaskSwitchStart],
   );
   const handleRightPanelHighlightConsumed = useCallback(() => {
     setRightPanelHighlight((prev) =>
@@ -4545,6 +5049,7 @@ export function App() {
 
       const existingTask = tasksRef.current.find((task) => task.id === taskId);
       if (existingTask) {
+        markTaskSwitchStart(taskId);
         setSelectedTaskId(taskId);
         return;
       }
@@ -4556,12 +5061,13 @@ export function App() {
         if (!task) return;
 
         setTasks((prev) => upsertTaskPreservingIdentity(prev, task, { prependIfMissing: true }));
+        markTaskSwitchStart(task.id);
         setSelectedTaskId(task.id);
       } catch (error) {
         console.error("Failed to open task from shell navigation:", error);
       }
     },
-    [clearRemoteTaskView],
+    [clearRemoteTaskView, markTaskSwitchStart],
   );
 
   useEffect(() => {
@@ -5210,6 +5716,12 @@ export function App() {
                 homeResearchVaultEnabled={homeResearchVaultEnabled}
                 homeNextActionsEnabled={homeNextActionsEnabled}
                 rendererPerfLoggingEnabled={rendererPerfLoggingEnabled}
+                taskSwitchId={selectedTaskSwitchId}
+                hasMoreTimelineHistory={selectedTaskTimelineHistory.hasMoreHistory}
+                isLoadingTimelineHistory={selectedTaskTimelineHistory.isLoadingMore}
+                timelineHistoryError={selectedTaskTimelineHistory.error}
+                onLoadMoreTimelineHistory={handleLoadMoreTaskTimelineHistory}
+                onLoadTaskEventDetail={handleLoadTaskEventDetail}
                 effectiveRightCollapsed={effectiveRightCollapsed}
                 terminalTabsOpen={terminalTabsOpen}
                 browserWorkbenchRequest={browserWorkbenchRequest}

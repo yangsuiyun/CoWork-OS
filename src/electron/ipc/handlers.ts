@@ -67,6 +67,20 @@ import {
 import type { RoutineService } from "../routines/service";
 import type { RoutineCreate, RoutineTrigger } from "../routines/types";
 
+function isEnvFlagEnabled(name: string): boolean {
+  return /^(1|true|yes|on)$/i.test(String(process.env[name] || "").trim());
+}
+
+function shouldDisableBackgroundAutostart(): boolean {
+  return (
+    isEnvFlagEnabled("COWORK_STARTUP_QUIET") ||
+    isEnvFlagEnabled("COWORK_PROFILE_QUIET") ||
+    /^(0|false|no|off)$/i.test(
+      String(process.env.COWORK_BACKGROUND_AUTOSTART || "").trim(),
+    )
+  );
+}
+
 import { DatabaseManager } from "../database/schema";
 import {
   WorkspaceRepository,
@@ -143,6 +157,10 @@ import {
   GithubPullRequestReviewSummary,
   TerminalTabCompletionResult,
   TerminalTabRunResult,
+  TaskEvent,
+  TaskEventDetailRequest,
+  TaskEventDetailResult,
+  TaskTimelinePageRequest,
 } from "../../shared/types";
 import { isTerminalTaskStatus } from "../../shared/task-status";
 import type { MailboxCommitmentState } from "../../shared/mailbox";
@@ -273,6 +291,11 @@ import {
 } from "../../shared/google-workspace";
 import { setupTaskTraceHandlers } from "./task-trace-handlers";
 import { buildVideoPreviewTranscodeArgs } from "./video-preview-transcode";
+import {
+  YouTubeIngestionService,
+  YouTubeQuestionService,
+  YouTubeTranscriptStore,
+} from "../youtube";
 
 import { XSettingsManager } from "../settings/x-manager";
 import { testXConnection, checkBirdInstalled } from "../utils/x-cli";
@@ -486,6 +509,77 @@ const MemoryObservationRebuildSchema = z.object({
   force: z.boolean().optional(),
 }).strict();
 const logger = createLogger("IPC");
+const IPC_SELECTED_TASK_PAYLOAD_WARNING_BYTES = 1024 * 1024;
+const IPC_SINGLE_EVENT_PAYLOAD_WARNING_BYTES = 1024 * 1024;
+const COLLABORATIVE_CHILD_TIMELINE_EVENT_TYPES = [
+  "file_created",
+  "file_modified",
+  "file_deleted",
+  "artifact_created",
+  "timeline_artifact_emitted",
+] as const;
+
+function isIpcPerfTelemetryEnabled(): boolean {
+  return process.env.COWORK_DEV_LOG_CAPTURE === "1" || getDevLogCaptureEnabled();
+}
+
+function getSerializedByteSize(value: unknown): number {
+  if (!isIpcPerfTelemetryEnabled()) return 0;
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8");
+  } catch {
+    return 0;
+  }
+}
+
+function getEventPayloadByteSize(event: Pick<TaskEvent, "payload">): number {
+  return getSerializedByteSize(event.payload ?? null);
+}
+
+function summarizeEventPayloads(events: Array<Pick<TaskEvent, "payload">>): {
+  payloadBytes: number;
+  largestEventPayloadBytes: number;
+} {
+  let payloadBytes = 0;
+  let largestEventPayloadBytes = 0;
+  for (const event of events) {
+    const eventBytes = getEventPayloadByteSize(event);
+    payloadBytes += eventBytes;
+    largestEventPayloadBytes = Math.max(largestEventPayloadBytes, eventBytes);
+  }
+  return { payloadBytes, largestEventPayloadBytes };
+}
+
+function logIpcPerf(channel: string, metrics: Record<string, unknown>): void {
+  if (!isIpcPerfTelemetryEnabled()) return;
+  logger.info(`[IpcPerf] ${JSON.stringify({ channel, ...metrics })}`);
+}
+
+function warnLargeTaskEventPayloads(
+  channel: string,
+  taskId: string,
+  eventCount: number,
+  payloadBytes: number,
+  largestEventPayloadBytes: number,
+): void {
+  if (
+    payloadBytes <= IPC_SELECTED_TASK_PAYLOAD_WARNING_BYTES &&
+    largestEventPayloadBytes <= IPC_SINGLE_EVENT_PAYLOAD_WARNING_BYTES
+  ) {
+    return;
+  }
+  logger.warn(
+    `[IpcPayloadWarning] ${JSON.stringify({
+      channel,
+      taskId,
+      eventCount,
+      payloadBytes,
+      largestEventPayloadBytes,
+      selectedTaskPayloadWarningBytes: IPC_SELECTED_TASK_PAYLOAD_WARNING_BYTES,
+      singleEventPayloadWarningBytes: IPC_SINGLE_EVENT_PAYLOAD_WARNING_BYTES,
+    })}`,
+  );
+}
 const ProfileNameSchema = z.string().trim().min(1).max(80);
 const VIDEO_PREVIEW_CACHE_DIR = path.join(
   os.tmpdir(),
@@ -1451,7 +1545,9 @@ export async function setupIpcHandlers(
     artifactRepo,
     agentDaemon,
   );
-  const mailboxService = new MailboxService(db, { autoSync: true });
+  const mailboxService = new MailboxService(db, {
+    autoSync: !shouldDisableBackgroundAutostart(),
+  });
   const agentMailRealtimeService = new AgentMailRealtimeService(db, mailboxService);
   const agentMailAdminService = new AgentMailAdminService(
     db,
@@ -2126,6 +2222,115 @@ export async function setupIpcHandlers(
     },
   );
 
+  const getValidatedYoutubeWorkspacePath = (
+    workspaceId: unknown,
+    options: { requireNetwork?: boolean } = {},
+  ): string => {
+    const id = validateInput(WorkspaceIdSchema, workspaceId, "workspace id");
+    const workspace = workspaceRepo.findById(id);
+    if (!workspace) throw new Error(`Workspace not found: ${id}`);
+    if (!workspace.permissions.read) throw new Error("Read permission not granted for workspace");
+    if (options.requireNetwork && !workspace.permissions.network) {
+      throw new Error("Network permission not granted for workspace");
+    }
+    return workspace.path;
+  };
+
+  ipcMain.handle(
+    IPC_CHANNELS.YOUTUBE_INGEST_VIDEO,
+    async (_, data: { workspaceId: string; url: string; language?: string; force?: boolean }) => {
+      checkRateLimit(IPC_CHANNELS.YOUTUBE_INGEST_VIDEO, RATE_LIMIT_CONFIGS.expensive);
+      const payload = validateInput(
+        z.object({
+          workspaceId: WorkspaceIdSchema,
+          url: z.string().trim().min(1).max(2000),
+          language: z.string().trim().min(2).max(12).optional(),
+          force: z.boolean().optional(),
+        }),
+        data,
+        "YouTube ingest request",
+      );
+      const workspacePath = getValidatedYoutubeWorkspacePath(payload.workspaceId, {
+        requireNetwork: true,
+      });
+      return new YouTubeIngestionService(payload.workspaceId, workspacePath).ingest(payload);
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.YOUTUBE_ASK_VIDEO,
+    async (_, data: {
+      workspaceId: string;
+      question: string;
+      url?: string;
+      videoIds?: string[];
+      language?: string;
+      limit?: number;
+      force?: boolean;
+    }) => {
+      checkRateLimit(IPC_CHANNELS.YOUTUBE_ASK_VIDEO, RATE_LIMIT_CONFIGS.standard);
+      const payload = validateInput(
+        z.object({
+          workspaceId: WorkspaceIdSchema,
+          question: z.string().trim().min(1).max(2000),
+          url: z.string().trim().min(1).max(2000).optional(),
+          videoIds: z.array(z.string().trim().min(1).max(32)).max(20).optional(),
+          language: z.string().trim().min(2).max(12).optional(),
+          limit: z.number().int().min(1).max(20).optional(),
+          force: z.boolean().optional(),
+        }),
+        data,
+        "YouTube ask request",
+      );
+      const workspacePath = getValidatedYoutubeWorkspacePath(payload.workspaceId, {
+        requireNetwork: Boolean(payload.url),
+      });
+      return new YouTubeQuestionService(payload.workspaceId, workspacePath).ask(payload);
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.YOUTUBE_SEARCH_SEGMENTS,
+    async (_, data: { workspaceId: string; query: string; videoIds?: string[]; limit?: number }) => {
+      checkRateLimit(IPC_CHANNELS.YOUTUBE_SEARCH_SEGMENTS, RATE_LIMIT_CONFIGS.standard);
+      const payload = validateInput(
+        z.object({
+          workspaceId: WorkspaceIdSchema,
+          query: z.string().trim().min(1).max(1000),
+          videoIds: z.array(z.string().trim().min(1).max(32)).max(50).optional(),
+          limit: z.number().int().min(1).max(50).optional(),
+        }),
+        data,
+        "YouTube transcript search request",
+      );
+      getValidatedYoutubeWorkspacePath(payload.workspaceId);
+      return {
+        ok: true,
+        results: YouTubeTranscriptStore.search(payload),
+      };
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.YOUTUBE_LIST_VIDEOS,
+    async (_, data: { workspaceId: string; limit?: number }) => {
+      checkRateLimit(IPC_CHANNELS.YOUTUBE_LIST_VIDEOS, RATE_LIMIT_CONFIGS.standard);
+      const payload = validateInput(
+        z.object({
+          workspaceId: WorkspaceIdSchema,
+          limit: z.number().int().min(1).max(200).optional(),
+        }),
+        data,
+        "YouTube list videos request",
+      );
+      getValidatedYoutubeWorkspacePath(payload.workspaceId);
+      return {
+        ok: true,
+        videos: YouTubeTranscriptStore.listVideos(payload.workspaceId, payload.limit ?? 50),
+      };
+    },
+  );
+
   // Open external URL in system browser
   ipcMain.handle(IPC_CHANNELS.SHELL_OPEN_EXTERNAL, async (_, url: string) => {
     // Validate URL to prevent security issues
@@ -2362,7 +2567,15 @@ export async function setupIpcHandlers(
           ext === ".pages"
         ) return "document";
         if (ext === ".pdf") return "pdf";
-        if (ext === ".pptx") return "pptx";
+        if (
+          ext === ".pptx" ||
+          ext === ".ppt" ||
+          ext === ".pptm" ||
+          ext === ".potx" ||
+          ext === ".potm" ||
+          ext === ".ppsx" ||
+          ext === ".ppsm"
+        ) return "pptx";
         if (ext === ".xlsx" || ext === ".xls" || ext === ".xlsm") return "xlsx";
         if (ext === ".json" || ext === ".jsonl" || ext === ".geojson") return "json";
         if (ext === ".csv" || ext === ".tsv") return "csv";
@@ -4870,7 +5083,19 @@ export async function setupIpcHandlers(
   });
 
   ipcMain.handle(IPC_CHANNELS.TASK_GET, async (_, id: string) => {
-    return taskRepo.findById(id);
+    const startedAt = Date.now();
+    const task = taskRepo.findById(id);
+    const dbMs = Date.now() - startedAt;
+    const jsonStartedAt = Date.now();
+    const serializedBytes = getSerializedByteSize(task);
+    logIpcPerf(IPC_CHANNELS.TASK_GET, {
+      taskId: id,
+      rowCount: task ? 1 : 0,
+      dbMs,
+      jsonMs: Date.now() - jsonStartedAt,
+      serializedBytes,
+    });
+    return task;
   });
 
   ipcMain.handle(
@@ -4882,16 +5107,80 @@ export async function setupIpcHandlers(
         offset?: number;
         prioritizeSidebar?: boolean;
         excludeSources?: Array<NonNullable<Task["source"]>>;
+        cursor?: {
+          id?: string;
+          pinned?: boolean;
+          status?: string;
+          updatedAt?: number;
+          createdAt?: number;
+        };
       },
     ) => {
       const limit =
         typeof opts?.limit === "number" && opts.limit > 0 ? opts.limit : 100;
       const offset =
         typeof opts?.offset === "number" && opts.offset >= 0 ? opts.offset : 0;
-      return taskRepo.findAll(limit, offset, {
+      const startedAt = Date.now();
+      const tasks = taskRepo.findAll(limit, offset, {
         prioritizeSidebar: opts?.prioritizeSidebar === true,
         excludeSources: opts?.excludeSources,
+        cursor: opts?.cursor,
       });
+      const dbMs = Date.now() - startedAt;
+      const jsonStartedAt = Date.now();
+      const serializedBytes = getSerializedByteSize(tasks);
+      logIpcPerf(IPC_CHANNELS.TASK_LIST, {
+        rowCount: tasks.length,
+        limit,
+        offset,
+        dbMs,
+        jsonMs: Date.now() - jsonStartedAt,
+        serializedBytes,
+      });
+      return tasks;
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_LIST_SIDEBAR,
+    async (
+      _,
+      opts?: {
+        limit?: number;
+        offset?: number;
+        prioritizeSidebar?: boolean;
+        excludeSources?: Array<NonNullable<Task["source"]>>;
+        cursor?: {
+          id?: string;
+          pinned?: boolean;
+          status?: string;
+          updatedAt?: number;
+          createdAt?: number;
+        };
+      },
+    ) => {
+      const limit =
+        typeof opts?.limit === "number" && opts.limit > 0 ? opts.limit : 100;
+      const offset =
+        typeof opts?.offset === "number" && opts.offset >= 0 ? opts.offset : 0;
+      const startedAt = Date.now();
+      const tasks = taskRepo.findSidebarSummaries(limit, offset, {
+        prioritizeSidebar: opts?.prioritizeSidebar === true,
+        excludeSources: opts?.excludeSources,
+        cursor: opts?.cursor,
+      });
+      const dbMs = Date.now() - startedAt;
+      const jsonStartedAt = Date.now();
+      const serializedBytes = getSerializedByteSize(tasks);
+      logIpcPerf(IPC_CHANNELS.TASK_LIST_SIDEBAR, {
+        rowCount: tasks.length,
+        limit,
+        offset,
+        dbMs,
+        jsonMs: Date.now() - jsonStartedAt,
+        serializedBytes,
+      });
+      return tasks;
     },
   );
 
@@ -5144,6 +5433,7 @@ export async function setupIpcHandlers(
   // Task events handler - get historical events from database
   // For collaborative root tasks, also include file events from child tasks.
   ipcMain.handle(IPC_CHANNELS.TASK_EVENTS, async (_, taskId: string) => {
+    const startedAt = Date.now();
     const maxEvents = 600;
     const events = taskEventRepo.findRecentByTaskId(taskId, maxEvents);
 
@@ -5171,17 +5461,164 @@ export async function setupIpcHandlers(
         events.sort((a, b) => a.timestamp - b.timestamp);
       }
     }
-    return events.length > maxEvents ? events.slice(-maxEvents) : events;
+    const result = events.length > maxEvents ? events.slice(-maxEvents) : events;
+    const dbMs = Date.now() - startedAt;
+    const jsonStartedAt = Date.now();
+    const serializedBytes = getSerializedByteSize(result);
+    const jsonMs = Date.now() - jsonStartedAt;
+    const { payloadBytes, largestEventPayloadBytes } = summarizeEventPayloads(result);
+    logIpcPerf(IPC_CHANNELS.TASK_EVENTS, {
+      taskId,
+      rowCount: result.length,
+      dbMs,
+      jsonMs,
+      mapMs: dbMs,
+      payloadBytes,
+      largestEventPayloadBytes,
+      serializedBytes,
+    });
+    warnLargeTaskEventPayloads(
+      IPC_CHANNELS.TASK_EVENTS,
+      taskId,
+      result.length,
+      payloadBytes,
+      largestEventPayloadBytes,
+    );
+    return result;
   });
+
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_TIMELINE_PAGE,
+    async (_, request: TaskTimelinePageRequest) => {
+      const startedAt = Date.now();
+      const taskId = typeof request?.taskId === "string" ? request.taskId.trim() : "";
+      const task = taskId ? taskRepo.findById(taskId) : undefined;
+      const childTaskIds =
+        task?.agentConfig?.collaborativeMode || task?.agentConfig?.multiLlmMode
+          ? taskRepo.findByParent(taskId).map((child) => child.id)
+          : [];
+      const page = taskEventRepo.findTimelinePage({
+        taskId,
+        cursor: request?.cursor ?? null,
+        limit: request?.limit,
+        byteLimit: request?.byteLimit,
+        singleEventByteLimit: request?.singleEventByteLimit,
+        ...(childTaskIds.length > 0
+          ? {
+              additionalTaskIds: childTaskIds,
+              additionalTaskEventTypes: [...COLLABORATIVE_CHILD_TIMELINE_EVENT_TYPES],
+            }
+          : {}),
+      });
+      const dbMs = Date.now() - startedAt;
+      const jsonStartedAt = Date.now();
+      const serializedBytes = getSerializedByteSize(page);
+      const jsonMs = Date.now() - jsonStartedAt;
+      logIpcPerf(IPC_CHANNELS.TASK_TIMELINE_PAGE, {
+        taskId: page.taskId,
+        rowCount: page.events.length,
+        hasMoreHistory: page.hasMoreHistory,
+        dbMs,
+        jsonMs,
+        mapMs: dbMs,
+        payloadBytes: page.summary.payloadBytes,
+        largestEventPayloadBytes: page.summary.largestEventPayloadBytes,
+        truncatedEventCount: page.summary.truncatedEventCount,
+        serializedBytes,
+      });
+      if (page.warnings?.length) {
+        logger.warn(
+          `[IpcPayloadWarning] ${JSON.stringify({
+            channel: IPC_CHANNELS.TASK_TIMELINE_PAGE,
+            taskId: page.taskId,
+            warnings: page.warnings,
+          })}`,
+        );
+      }
+      return page;
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_EVENT_DETAIL,
+    async (_, request: TaskEventDetailRequest): Promise<TaskEventDetailResult> => {
+      const startedAt = Date.now();
+      const taskId = typeof request?.taskId === "string" ? request.taskId.trim() : "";
+      const eventId = typeof request?.eventId === "string" ? request.eventId.trim() : "";
+      const task = taskId ? taskRepo.findById(taskId) : undefined;
+      const childTaskIds =
+        task?.agentConfig?.collaborativeMode || task?.agentConfig?.multiLlmMode
+          ? taskRepo.findByParent(taskId).map((child) => child.id)
+          : [];
+      const result = taskEventRepo.findEventDetailById(eventId, {
+        taskId,
+        ...(childTaskIds.length > 0
+          ? {
+              additionalTaskIds: childTaskIds,
+              additionalTaskEventTypes: [...COLLABORATIVE_CHILD_TIMELINE_EVENT_TYPES],
+            }
+          : {}),
+      });
+      const dbMs = Date.now() - startedAt;
+      const jsonStartedAt = Date.now();
+      const serializedBytes = getSerializedByteSize(result);
+      logIpcPerf(IPC_CHANNELS.TASK_EVENT_DETAIL, {
+        eventId,
+        taskId,
+        rowCount: result.event ? 1 : 0,
+        dbMs,
+        jsonMs: Date.now() - jsonStartedAt,
+        payloadBytes: result.payloadBytes,
+        largestEventPayloadBytes: result.payloadBytes,
+        serializedBytes,
+      });
+      if (result.payloadBytes > IPC_SINGLE_EVENT_PAYLOAD_WARNING_BYTES) {
+        logger.warn(
+          `[IpcPayloadWarning] ${JSON.stringify({
+            channel: IPC_CHANNELS.TASK_EVENT_DETAIL,
+            eventId,
+            payloadBytes: result.payloadBytes,
+            singleEventPayloadWarningBytes: IPC_SINGLE_EVENT_PAYLOAD_WARNING_BYTES,
+          })}`,
+        );
+      }
+      return result;
+    },
+  );
 
   // Semantic timeline projection — normalizer runs on the read path, no DB changes needed
   ipcMain.handle(
     IPC_CHANNELS.TASK_SEMANTIC_TIMELINE,
     async (_, taskId: string) => {
+      const startedAt = Date.now();
       const maxEvents = 1200;
       const events = taskEventRepo.findRecentByTaskId(taskId, maxEvents);
       const sorted = [...events].sort((a, b) => a.timestamp - b.timestamp);
-      return normalizeTaskEvents(sorted);
+      const timeline = normalizeTaskEvents(sorted);
+      const dbMs = Date.now() - startedAt;
+      const jsonStartedAt = Date.now();
+      const serializedBytes = getSerializedByteSize(timeline);
+      const jsonMs = Date.now() - jsonStartedAt;
+      const { payloadBytes, largestEventPayloadBytes } = summarizeEventPayloads(sorted);
+      logIpcPerf(IPC_CHANNELS.TASK_SEMANTIC_TIMELINE, {
+        taskId,
+        rowCount: sorted.length,
+        projectedRowCount: timeline.length,
+        dbMs,
+        jsonMs,
+        mapMs: dbMs,
+        payloadBytes,
+        largestEventPayloadBytes,
+        serializedBytes,
+      });
+      warnLargeTaskEventPayloads(
+        IPC_CHANNELS.TASK_SEMANTIC_TIMELINE,
+        taskId,
+        sorted.length,
+        payloadBytes,
+        largestEventPayloadBytes,
+      );
+      return timeline;
     },
   );
 

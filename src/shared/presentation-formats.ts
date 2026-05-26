@@ -1,5 +1,3 @@
-const IN_APP_PRESENTATION_EXTENSIONS = new Set([".pptx"]);
-
 const PRESENTATION_ARTIFACT_EXTENSIONS = new Set([
   ".pptx",
   ".ppt",
@@ -53,7 +51,7 @@ export function isPresentationArtifactFile(filePath: string): boolean {
 }
 
 export function canPreviewPresentationInApp(filePath: string): boolean {
-  return IN_APP_PRESENTATION_EXTENSIONS.has(getPresentationFileExtension(filePath));
+  return isPresentationArtifactFile(filePath);
 }
 
 export function isPresentationMimeType(mimeType: string): boolean {

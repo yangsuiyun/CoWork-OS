@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, Fragment, useDeferredValue, memo } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, useDeferredValue, memo } from "react";
 import { ChevronDown, ChevronRight, SlidersHorizontal, EyeOff, AppWindow, Bell, HardDrive, Rows3, Search, Server, Workflow, HeartPulse, Lightbulb, Inbox, Users, UsersRound, ListFilter, EllipsisVertical, Shapes, Plus, Sparkles, Repeat2 } from "lucide-react";
 import { resolveTwinIcon } from "../utils/twin-icons";
 import { stripAllEmojis } from "../utils/emoji-replacer";
@@ -6,11 +6,16 @@ import { Task, Workspace, UiDensity, InfraStatus, UpdateInfo } from "../../share
 import type { MailboxDigestSnapshot, MailboxSyncStatus } from "../../shared/mailbox";
 import { isAutomatedTaskLike } from "../../shared/automated-task-detection";
 import { VirtualList } from "./VirtualList";
-import { isPretextEnabled } from "../utils/pretext-adapter";
 import { capitalizeSidebarSessionTitle } from "../utils/sidebar-title";
 import { deriveSlashCommandTaskTitle } from "../utils/slash-command-title";
 
 const SIDEBAR_ITEM_HEIGHT = 22;
+const SIDEBAR_DATE_HEADER_HEIGHT = 20;
+const SIDEBAR_FOCUSED_ITEM_HEIGHT = 28;
+const SIDEBAR_FOCUSED_DATE_HEADER_HEIGHT = 26;
+const SIDEBAR_AUTOMATED_HEADER_HEIGHT = 30;
+const SIDEBAR_LOAD_MORE_HEIGHT = 32;
+const SIDEBAR_VIRTUALIZATION_MIN_ROWS = 30;
 const SIDEBAR_LOAD_MORE_THRESHOLD_PX = 320;
 
 interface AgentRoleInfo {
@@ -271,6 +276,7 @@ export function getSidebarSessionTitle(node: Pick<TaskTreeNode, "displayTitle" |
   }
 
   const fallbackCandidates = [
+    node.task.sidebarPromptPreview,
     node.task.userPrompt,
     node.task.rawPrompt,
     node.task.prompt,
@@ -411,9 +417,13 @@ function getTaskTreeNodeSearchText(node: TaskTreeNode): string {
       getSidebarSessionTitle(node),
       node.displayTitle,
       node.task.title,
+      node.task.sidebarPromptPreview,
       node.task.userPrompt,
       node.task.rawPrompt,
       node.task.prompt,
+      node.task.semanticSummary,
+      node.task.resultSummary,
+      node.task.branchLabel,
       node.task.id,
     ]
       .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
@@ -454,6 +464,29 @@ export interface SidebarVisibleRow {
   rootIndex: number;
 }
 
+export type SidebarVirtualRow =
+  | {
+      kind: "date-header";
+      id: string;
+      label: string;
+    }
+  | {
+      kind: "automated-header";
+      id: string;
+      count: number;
+      expanded: boolean;
+      hasActive: boolean;
+    }
+  | {
+      kind: "task";
+      row: SidebarVisibleRow;
+      section?: "user" | "automated";
+    }
+  | {
+      kind: "load-more";
+      id: string;
+    };
+
 export function flattenVisibleTaskRows(
   nodes: TaskTreeNode[],
   collapsedTaskIds: ReadonlySet<string>,
@@ -477,6 +510,36 @@ export function flattenVisibleTaskRows(
   };
 
   visit(nodes, 0, 0);
+  return rows;
+}
+
+export function buildSidebarVirtualRows(
+  taskRows: SidebarVisibleRow[],
+  options: { showDateHeaders: boolean; now?: Date },
+): SidebarVirtualRow[] {
+  if (!options.showDateHeaders) {
+    return taskRows.map((row) => ({ kind: "task", row, section: "user" }));
+  }
+
+  const rows: SidebarVirtualRow[] = [];
+  const now = options.now ?? new Date();
+  let previousRootGroup = "";
+
+  taskRows.forEach((row, index) => {
+    if (row.depth === 0) {
+      const group = getSidebarDateGroup(row.node.task, now);
+      if (group !== previousRootGroup) {
+        rows.push({
+          kind: "date-header",
+          id: `date:${group}:${row.node.task.id}:${index}`,
+          label: group,
+        });
+        previousRootGroup = group;
+      }
+    }
+    rows.push({ kind: "task", row, section: "user" });
+  });
+
   return rows;
 }
 
@@ -873,38 +936,55 @@ function SidebarComponent({
     };
   }, []);
 
-  const focusedTaskEntries = useMemo(() => {
-    if (uiDensity !== "focused") return [];
-    return filteredTaskTree.reduce<
-      Array<{
-        node: TaskTreeNode;
-        index: number;
-        group: string;
-        showHeader: boolean;
-        isLast: boolean;
-      }>
-    >((acc, node, index) => {
-      const group = getSidebarDateGroup(node.task);
-      const previousGroup = acc.length > 0 ? acc[acc.length - 1].group : "";
-      const isLast = index === filteredTaskTree.length - 1;
-      acc.push({
-        node,
-        index,
-        group,
-        showHeader: group !== previousGroup,
-        isLast,
-      });
-      return acc;
-    }, []);
-  }, [filteredTaskTree, uiDensity]);
-
   const virtualizedTaskRows = useMemo(
     () => flattenVisibleTaskRows(filteredTaskTree, effectiveCollapsedTasks),
     [effectiveCollapsedTasks, filteredTaskTree],
   );
+  const automatedTaskRows = useMemo(
+    () => flattenVisibleTaskRows(visibleAutomatedTaskTree, effectiveCollapsedTasks),
+    [effectiveCollapsedTasks, visibleAutomatedTaskTree],
+  );
+  const automatedRowsExpanded = hasSessionSearch || !automatedFolderCollapsed;
+  const sidebarVirtualRows = useMemo(
+    () => {
+      const rows: SidebarVirtualRow[] = [];
+      if (visibleAutomatedTaskTree.length > 0) {
+        rows.push({
+          kind: "automated-header",
+          id: "automated-header",
+          count: visibleAutomatedTaskTree.length,
+          expanded: automatedRowsExpanded,
+          hasActive: visibleAutomatedTaskTree.some((node) => isActiveSessionStatus(node.task.status)),
+        });
+        if (automatedRowsExpanded) {
+          rows.push(
+            ...automatedTaskRows.map(
+              (row): SidebarVirtualRow => ({ kind: "task", row, section: "automated" }),
+            ),
+          );
+        }
+      }
+      rows.push(
+        ...buildSidebarVirtualRows(virtualizedTaskRows, {
+          showDateHeaders: uiDensity === "focused",
+        }),
+      );
+      if (hasMoreTasks) {
+        rows.push({ kind: "load-more", id: "load-more" });
+      }
+      return rows;
+    },
+    [
+      automatedRowsExpanded,
+      automatedTaskRows,
+      hasMoreTasks,
+      uiDensity,
+      virtualizedTaskRows,
+      visibleAutomatedTaskTree,
+    ],
+  );
 
-  const useVirtualizedTaskRows =
-    uiDensity !== "focused" && isPretextEnabled() && virtualizedTaskRows.length > 30;
+  const useVirtualizedTaskRows = sidebarVirtualRows.length > SIDEBAR_VIRTUALIZATION_MIN_ROWS;
 
   // Auto-collapse sub-agent trees in focused mode
   const hasInitializedCollapse = useRef(false);
@@ -1491,6 +1571,7 @@ function SidebarComponent({
     return (
       <div
         className={`task-item cli-task-item ${selectedTaskId === task.id ? "task-item-selected" : ""} ${isSubAgent ? "task-item-subagent" : ""} ${node.synthetic ? "task-item-group-root" : ""} ${modeClass} ${hasChildren ? "task-item-has-children" : ""} ${showCompletionAttention ? "task-completion-unread" : ""}`}
+        data-task-id={node.synthetic ? undefined : task.id}
         onClick={() => {
           if (node.synthetic) return;
           if (renameTaskId === task.id) return;
@@ -1668,6 +1749,54 @@ function SidebarComponent({
             )}
           </div>
         )}
+      </div>
+    );
+  };
+
+  const renderSidebarVirtualRow = (row: SidebarVirtualRow): React.ReactNode => {
+    if (row.kind === "date-header") {
+      return <div className="sidebar-date-group">{row.label}</div>;
+    }
+    if (row.kind === "automated-header") {
+      return (
+        <button
+          type="button"
+          className="automated-folder-header"
+          onClick={() => setAutomatedFolderCollapsed((value) => !value)}
+          aria-expanded={row.expanded}
+          title={row.expanded ? "Hide automated sessions" : "Show automated sessions"}
+        >
+          <span className="automated-folder-label">
+            <span className="terminal-only">AUTOMATED</span>
+            <span className="modern-only">Automated</span>
+            <span className="automated-folder-chevron" aria-hidden="true">
+              {row.expanded ? "▾" : "▸"}
+            </span>
+          </span>
+          <span className="automated-folder-count">{row.count}</span>
+          {row.hasActive && (
+            <span
+              className="cli-session-indicator cli-session-indicator-active automated-folder-active"
+              aria-label="Has active session"
+            />
+          )}
+        </button>
+      );
+    }
+    if (row.kind === "load-more") {
+      return (
+        <div className="task-list-load-more">
+          <span className="terminal-only">loading more...</span>
+          <span className="modern-only">Loading more sessions…</span>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        className={`task-tree-node ${row.row.depth > 0 ? "task-tree-node-child" : ""} ${row.section === "automated" ? "task-tree-node-automated" : ""} ${menuOpenTaskId === row.row.node.task.id ? "task-item-menu-open" : ""}`}
+      >
+        {renderTaskRow(row.row.node, row.row.rootIndex, row.row.depth, row.row.isLast)}
       </div>
     );
   };
@@ -2118,47 +2247,6 @@ function SidebarComponent({
           >
             {!sessionsCollapsed && (
               <>
-            {/* Automated sessions folder — collapsed by default, shown at top */}
-            {visibleAutomatedTaskTree.length > 0 && (
-              <div className="automated-sessions-folder">
-                <button
-                  type="button"
-                  className="automated-folder-header"
-                  onClick={() => setAutomatedFolderCollapsed((v) => !v)}
-                  aria-expanded={hasSessionSearch || !automatedFolderCollapsed}
-                  title={
-                    hasSessionSearch
-                      ? "Automated session matches"
-                      : automatedFolderCollapsed
-                        ? "Show automated sessions"
-                        : "Hide automated sessions"
-                  }
-                >
-                  <span className="automated-folder-label">
-                    <span className="terminal-only">AUTOMATED</span>
-                    <span className="modern-only">Automated</span>
-                    <span className="automated-folder-chevron" aria-hidden="true">
-                      {hasSessionSearch || !automatedFolderCollapsed ? "▾" : "▸"}
-                    </span>
-                  </span>
-                  <span className="automated-folder-count">{visibleAutomatedTaskTree.length}</span>
-                  {visibleAutomatedTaskTree.some((n) => isActiveSessionStatus(n.task.status)) && (
-                    <span
-                      className="cli-session-indicator cli-session-indicator-active automated-folder-active"
-                      aria-label="Has active session"
-                    />
-                  )}
-                </button>
-                {(hasSessionSearch || !automatedFolderCollapsed) && (
-                  <div className="automated-folder-body">
-                    {visibleAutomatedTaskTree.map((node, index) =>
-                      renderTaskNode(node, index, 0, index === visibleAutomatedTaskTree.length - 1),
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
             {filteredTaskTree.length === 0 && visibleAutomatedTaskTree.length === 0 ? (
               isLoadingSessions && !hasSessionSearch && activeModeFilters.size === 0 ? (
                 <div className="sidebar-session-skeleton" aria-label="Loading sessions">
@@ -2196,26 +2284,30 @@ function SidebarComponent({
                   )}
                 </div>
               )
-            ) : uiDensity === "focused" ? (
-              focusedTaskEntries.map((entry) => (
-                <Fragment key={entry.node.task.id}>
-                  {entry.showHeader && <div className="sidebar-date-group">{entry.group}</div>}
-                  {renderTaskNode(entry.node, entry.index, 0, entry.isLast)}
-                </Fragment>
-              ))
             ) : useVirtualizedTaskRows ? (
               <VirtualList
-                items={virtualizedTaskRows}
-                getItemKey={(row) => row.node.task.id}
-                getItemHeight={() => SIDEBAR_ITEM_HEIGHT}
-                renderItem={(row) => (
-                  <div
-                    className={`task-tree-node ${menuOpenTaskId === row.node.task.id ? "task-item-menu-open" : ""}`}
-                  >
-                    {renderTaskRow(row.node, row.rootIndex, row.depth, row.isLast)}
-                  </div>
-                )}
-                estimatedItemHeight={SIDEBAR_ITEM_HEIGHT}
+                items={sidebarVirtualRows}
+                getItemKey={(row) => {
+                  if (row.kind === "task") return `${row.section ?? "user"}:${row.row.node.task.id}`;
+                  return row.id;
+                }}
+                getItemHeight={(row) =>
+                  row.kind === "date-header"
+                    ? uiDensity === "focused"
+                      ? SIDEBAR_FOCUSED_DATE_HEADER_HEIGHT
+                      : SIDEBAR_DATE_HEADER_HEIGHT
+                    : row.kind === "automated-header"
+                      ? SIDEBAR_AUTOMATED_HEADER_HEIGHT
+                      : row.kind === "load-more"
+                        ? SIDEBAR_LOAD_MORE_HEIGHT
+                        : uiDensity === "focused"
+                          ? SIDEBAR_FOCUSED_ITEM_HEIGHT
+                          : SIDEBAR_ITEM_HEIGHT
+                }
+                renderItem={(row) => renderSidebarVirtualRow(row)}
+                estimatedItemHeight={
+                  uiDensity === "focused" ? SIDEBAR_FOCUSED_ITEM_HEIGHT : SIDEBAR_ITEM_HEIGHT
+                }
                 overscan={10}
                 enabled
                 className="sidebar-virtual-list"
@@ -2224,18 +2316,17 @@ function SidebarComponent({
                 onScrollNearEnd={onLoadMoreTasks}
               />
             ) : (
-              filteredTaskTree.map((node, index) =>
-                renderTaskNode(node, index, 0, index === filteredTaskTree.length - 1),
-              )
+              sidebarVirtualRows.map((row) => (
+                <div
+                  key={
+                    row.kind === "task" ? `${row.section ?? "user"}:${row.row.node.task.id}` : row.id
+                  }
+                >
+                  {renderSidebarVirtualRow(row)}
+                </div>
+              ))
             )}
 
-            {/* Pagination footer — shown while more tasks exist below the fold */}
-            {hasMoreTasks && (
-              <div className="task-list-load-more">
-                <span className="terminal-only">loading more...</span>
-                <span className="modern-only">Loading more sessions…</span>
-              </div>
-            )}
               </>
             )}
           </div>

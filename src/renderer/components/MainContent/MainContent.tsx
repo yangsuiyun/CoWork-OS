@@ -91,6 +91,7 @@ import { normalizeEventsForTimelineUi } from "../../utils/timeline-projection";
 import { getEffectiveTaskEventType } from "../../utils/task-event-compat";
 import {
   incrementRendererPerfCounter,
+  markRendererPerfEvent,
   markRendererStartup,
   markTaskEventRenderable,
   markTaskEventVisible,
@@ -458,8 +459,34 @@ interface MainContentProps {
   homeResearchVaultEnabled?: boolean;
   homeNextActionsEnabled?: boolean;
   rendererPerfLoggingEnabled?: boolean;
+  taskSwitchId?: string | null;
+  hasMoreTimelineHistory?: boolean;
+  isLoadingTimelineHistory?: boolean;
+  timelineHistoryError?: string | null;
+  onLoadMoreTimelineHistory?: () => void | Promise<void>;
+  onLoadTaskEventDetail?: (eventId: string, taskId: string) => void | Promise<void>;
   remoteSession?: { deviceId: string; deviceName: string } | null;
   replayControls?: ReplayControls;
+}
+
+function getTruncatedTaskEventDetailId(event: TaskEvent): string | null {
+  const payload =
+    event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+      ? (event.payload as Record<string, unknown>)
+      : null;
+  if (!payload || payload.__coworkPayloadTruncated !== true) return null;
+  if (typeof payload.eventDetailId === "string" && payload.eventDetailId.trim().length > 0) {
+    return payload.eventDetailId.trim();
+  }
+  if (typeof payload.eventId === "string" && payload.eventId.trim().length > 0) {
+    return payload.eventId.trim();
+  }
+  return event.eventId || event.id;
+}
+
+function getTaskEventPayloadRenderSignature(event: TaskEvent): string {
+  const detailId = getTruncatedTaskEventDetailId(event);
+  return detailId ? `truncated:${detailId}` : "full";
 }
 
 function AgentReasoningPanel(props: {
@@ -716,6 +743,11 @@ export function TaskSessionLineageFooter({
 
 const TaskConversationRenderedRows = memo(function TaskConversationRenderedRows({
   taskId,
+  taskSwitchId,
+  hasMoreTimelineHistory,
+  isLoadingTimelineHistory,
+  timelineHistoryError,
+  onLoadMoreTimelineHistory,
   rendererPerfLoggingEnabled,
   visibleFeedRows,
   isChatTask,
@@ -735,6 +767,11 @@ const TaskConversationRenderedRows = memo(function TaskConversationRenderedRows(
   getRenderedFeedRow,
 }: {
   taskId: string | undefined;
+  taskSwitchId?: string | null;
+  hasMoreTimelineHistory?: boolean;
+  isLoadingTimelineHistory?: boolean;
+  timelineHistoryError?: string | null;
+  onLoadMoreTimelineHistory?: () => void | Promise<void>;
   rendererPerfLoggingEnabled: boolean;
   visibleFeedRows: TaskFeedRow[];
   isChatTask: boolean;
@@ -759,28 +796,38 @@ const TaskConversationRenderedRows = memo(function TaskConversationRenderedRows(
     rendererPerfLoggingEnabled,
   );
   void reasoningPanelSignature;
+  void hasMoreTimelineHistory;
+  void timelineHistoryError;
 
-  const renderedFeedEntries = useMemo(
-    () =>
-      visibleFeedRows.reduce<Array<{ row: TaskFeedRow; node: React.ReactNode }>>((acc, row) => {
-        const node = getRenderedFeedRow(row);
-        if (node === null || node === undefined || node === false) {
-          return acc;
-        }
-        acc.push({ row, node });
-        return acc;
-      }, []),
-    [getRenderedFeedRow, visibleFeedRows],
-  );
+  const historyPrependAnchorRef = useRef<{
+    taskId: string | undefined;
+    scrollTop: number;
+    scrollHeight: number;
+    rowCount: number;
+    observedLoading: boolean;
+  } | null>(null);
+  const [suppressVirtualAutoScroll, setSuppressVirtualAutoScroll] = useState(false);
+
   const renderableFeedRows = useMemo(
-    () => renderedFeedEntries.map((entry) => entry.row),
-    [renderedFeedEntries],
+    () => visibleFeedRows,
+    [visibleFeedRows],
   );
-  const renderedFeedNodeByKey = useMemo(
-    () => new Map(renderedFeedEntries.map((entry) => [entry.row.key, entry.node])),
-    [renderedFeedEntries],
-  );
+  const handleLoadMoreTimelineHistory = useCallback(() => {
+    const container = mainBodyRef.current;
+    if (container) {
+      historyPrependAnchorRef.current = {
+        taskId,
+        scrollTop: container.scrollTop,
+        scrollHeight: container.scrollHeight,
+        rowCount: renderableFeedRows.length,
+        observedLoading: false,
+      };
+    }
+    setSuppressVirtualAutoScroll(true);
+    void onLoadMoreTimelineHistory?.();
+  }, [mainBodyRef, onLoadMoreTimelineHistory, renderableFeedRows.length, taskId]);
   const startupRowsMarkedRef = useRef(false);
+  const timelineRowsMarkedTaskIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (startupRowsMarkedRef.current || visibleFeedRows.length === 0) return;
     startupRowsMarkedRef.current = true;
@@ -789,8 +836,20 @@ const TaskConversationRenderedRows = memo(function TaskConversationRenderedRows(
       taskId: taskId ?? "none",
     });
   }, [rendererPerfLoggingEnabled, taskId, visibleFeedRows.length]);
+  useEffect(() => {
+    const markKey = `${taskId ?? "none"}:${taskSwitchId ?? "initial"}`;
+    if (!taskId || visibleFeedRows.length === 0 || timelineRowsMarkedTaskIdsRef.current.has(markKey)) {
+      return;
+    }
+    timelineRowsMarkedTaskIdsRef.current.add(markKey);
+    markRendererPerfEvent("timeline_first_rows_ready", rendererPerfLoggingEnabled, {
+      rows: visibleFeedRows.length,
+      taskId,
+      switchId: taskSwitchId,
+    });
+  }, [rendererPerfLoggingEnabled, taskId, taskSwitchId, visibleFeedRows.length]);
   const useVirtualizedFeed =
-    transcriptMode === "live" &&
+    transcriptMode !== "delivery" &&
     renderableFeedRows.length >= VIRTUALIZED_FEED_ROW_THRESHOLD &&
     !isReplayMode;
   const [feedRowHeights, setFeedRowHeights] = useState<Map<string, number>>(() => new Map());
@@ -925,14 +984,78 @@ const TaskConversationRenderedRows = memo(function TaskConversationRenderedRows(
     overscan: 4,
     enabled: useVirtualizedFeed,
     scrollOffsetTop: conversationFlowOffsetTop,
+    suppressAutoScrollOnItemsChange: suppressVirtualAutoScroll,
   });
   const renderedFeedRows = useMemo(
     () => (useVirtualizedFeed ? virtualFeedRows.map((row) => row.item) : renderableFeedRows),
     [useVirtualizedFeed, virtualFeedRows, renderableFeedRows],
   );
+  const renderedFeedNodeByKey = useMemo(
+    () =>
+      new Map(
+        renderedFeedRows.map((row) => {
+          const node =
+            row.kind === "history-control" ? (
+              <div className="timeline-history-control">
+                {row.error ? <span className="timeline-history-error">{row.error}</span> : null}
+                {row.hasMoreHistory ? (
+                  <button
+                    type="button"
+                    className="action-block-show-all-btn"
+                    disabled={row.isLoading}
+                    onClick={handleLoadMoreTimelineHistory}
+                  >
+                    {row.isLoading ? "Loading earlier history..." : "Load earlier history"}
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              getRenderedFeedRow(row)
+            );
+          return [row.key, node] as const;
+        }),
+      ),
+    [getRenderedFeedRow, handleLoadMoreTimelineHistory, renderedFeedRows],
+  );
+  useEffect(() => {
+    if (isLoadingTimelineHistory && historyPrependAnchorRef.current) {
+      historyPrependAnchorRef.current.observedLoading = true;
+    }
+  }, [isLoadingTimelineHistory]);
+  useLayoutEffect(() => {
+    if (isLoadingTimelineHistory) return;
+    const anchor = historyPrependAnchorRef.current;
+    const container = mainBodyRef.current;
+    if (!anchor || !container) {
+      if (suppressVirtualAutoScroll) setSuppressVirtualAutoScroll(false);
+      return;
+    }
+    if (!anchor.observedLoading && renderableFeedRows.length === anchor.rowCount) {
+      return;
+    }
+    historyPrependAnchorRef.current = null;
+    if (anchor.taskId !== taskId) {
+      if (suppressVirtualAutoScroll) setSuppressVirtualAutoScroll(false);
+      return;
+    }
+
+    const delta = container.scrollHeight - anchor.scrollHeight;
+    if (delta > 0) {
+      container.scrollTop = anchor.scrollTop + delta;
+    }
+    if (suppressVirtualAutoScroll) setSuppressVirtualAutoScroll(false);
+  }, [
+    isLoadingTimelineHistory,
+    mainBodyRef,
+    renderableFeedRows.length,
+    suppressVirtualAutoScroll,
+    taskId,
+    useVirtualizedFeed,
+    virtualFeedTotalHeight,
+  ]);
   const showBootstrapProgress = shouldShowBootstrapProgressRow({
     isTaskWorking,
-    visibleRenderableFeedRowsLength: renderedFeedEntries.length,
+    visibleRenderableFeedRowsLength: renderableFeedRows.length,
     isChatTask,
   });
   const bootstrapProgressTitle = getBootstrapProgressTitle(task);
@@ -1039,6 +1162,11 @@ const TaskConversationRenderedRows = memo(function TaskConversationRenderedRows(
   );
 }, (prev, next) =>
   prev.taskId === next.taskId &&
+  prev.taskSwitchId === next.taskSwitchId &&
+  prev.hasMoreTimelineHistory === next.hasMoreTimelineHistory &&
+  prev.isLoadingTimelineHistory === next.isLoadingTimelineHistory &&
+  prev.timelineHistoryError === next.timelineHistoryError &&
+  prev.onLoadMoreTimelineHistory === next.onLoadMoreTimelineHistory &&
   prev.rendererPerfLoggingEnabled === next.rendererPerfLoggingEnabled &&
   prev.isChatTask === next.isChatTask &&
   prev.isTaskWorking === next.isTaskWorking &&
@@ -1061,6 +1189,13 @@ const TaskConversationRenderedRows = memo(function TaskConversationRenderedRows(
 
 const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
   const rendererPerfLoggingEnabled = props.rendererPerfLoggingEnabled as boolean | undefined;
+  const taskSwitchId = props.taskSwitchId as string | null | undefined;
+  const hasMoreTimelineHistory = props.hasMoreTimelineHistory as boolean | undefined;
+  const isLoadingTimelineHistory = props.isLoadingTimelineHistory as boolean | undefined;
+  const timelineHistoryError = props.timelineHistoryError as string | null | undefined;
+  const onLoadMoreTimelineHistory = props.onLoadMoreTimelineHistory as
+    | (() => void | Promise<void>)
+    | undefined;
   const agentContext = props.agentContext as AgentContext;
   const childEvents = props.childEvents as TaskEvent[];
   const childTasks = props.childTasks as Task[];
@@ -1315,6 +1450,23 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
       });
     }
 
+    if (hasMoreTimelineHistory || timelineHistoryError) {
+      rows.unshift({
+        kind: "history-control",
+        key: "timeline-history-control",
+        estimatedHeight: timelineHistoryError ? 64 : 44,
+        hasMoreHistory: Boolean(hasMoreTimelineHistory),
+        isLoading: Boolean(isLoadingTimelineHistory),
+        error: timelineHistoryError ?? null,
+        revision: [
+          hasMoreTimelineHistory ? "more" : "done",
+          isLoadingTimelineHistory ? "loading" : "idle",
+          timelineHistoryError ?? "none",
+        ].join(":"),
+        visiblePerfEventId: null,
+      });
+    }
+
     timelineItems.forEach((item, timelineIndex) => {
       let visiblePerfEventId: string | null = null;
       const key =
@@ -1417,6 +1569,9 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
     collaborativeRun?.id,
     commandOutputSessionsByInsertIndex,
     leadingCommandOutputSessions,
+    hasMoreTimelineHistory,
+    isLoadingTimelineHistory,
+    timelineHistoryError,
     timelineItems,
     showAllActionBlocks,
     expandedActionBlocks,
@@ -1430,9 +1585,73 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
     events,
     expandedArtifactStacks,
   ]);
+  const displayFeedRows = useMemo(
+    () =>
+      feedRows.filter((row) => {
+        if (row.kind === "history-control") return true;
+        if (row.kind === "leading-command-outputs") return row.sessions.length > 0;
+        if (row.kind === "artifact-stack") return Boolean(workspace?.path);
+        if (row.kind !== "timeline") return true;
+
+        const { item } = row;
+        if (item.kind === "canvas" || item.kind === "cli-agent-frame" || item.kind === "dispatched-agents") {
+          return true;
+        }
+        if (item.kind === "action_block") {
+          return !isChatTask;
+        }
+        if (item.kind !== "event") return true;
+
+        const event = item.event as TaskEvent;
+        const effectiveType = getEffectiveTaskEventType(event);
+        const isUserMessage = effectiveType === "user_message";
+        const isAssistantMessage = effectiveType === "assistant_message";
+        const isCompletionSummaryMessage = getCompletionSummaryText(event).length > 0;
+        const commandOutputsAfterEvent = commandOutputSessionsByInsertIndex.get(item.eventIndex);
+        const hasCommandOutputs = Boolean(commandOutputsAfterEvent?.length);
+
+        if (isChatTask && !isUserMessage && !isAssistantMessage && !isCompletionSummaryMessage) {
+          return (effectiveType === "llm_streaming" && isTaskWorking) || hasCommandOutputs;
+        }
+
+        if (isUserMessage) {
+          const suppressedInitialPrompt = shouldSuppressInitialPromptUserEvent({
+            event,
+            initialPromptEventId,
+            trimmedPrompt,
+            taskCreatedAt: task?.createdAt,
+          });
+          return !suppressedInitialPrompt || hasCommandOutputs;
+        }
+
+        if (isAssistantMessage || isCompletionSummaryMessage) return true;
+
+        const parallelGroup = parallelGroupsByAnchorEventId.get(event.id);
+        if (suppressedParallelEventIds.has(event.id) && !parallelGroup) {
+          return hasCommandOutputs;
+        }
+        if (!parallelGroup && !shouldRenderTimelineEventInStepFeed(event)) {
+          return hasCommandOutputs;
+        }
+        return true;
+      }),
+    [
+      commandOutputSessionsByInsertIndex,
+      feedRows,
+      initialPromptEventId,
+      isChatTask,
+      isTaskWorking,
+      parallelGroupsByAnchorEventId,
+      shouldRenderTimelineEventInStepFeed,
+      suppressedParallelEventIds,
+      task?.createdAt,
+      trimmedPrompt,
+      workspace?.path,
+    ],
+  );
   const { visibleFeedRows, hiddenLiveFeedRowCount } = useMemo(
-    () => selectVisibleTaskFeedRows(feedRows, transcriptMode),
-    [feedRows, transcriptMode],
+    () => selectVisibleTaskFeedRows(displayFeedRows, transcriptMode),
+    [displayFeedRows, transcriptMode],
   );
   const reasoningPanelState = useMemo(
     () =>
@@ -1495,6 +1714,9 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
         {(events.length > 0 || (collaborativeRun && childTasks.length > 0) || isTaskWorking) &&
           (() => {
                 const getRowRenderSignature = (row: TaskFeedRow): string => {
+                  if (row.kind === "history-control") {
+                    return row.revision;
+                  }
                   if (row.kind === "leading-command-outputs") {
                     return row.revision;
                   }
@@ -1515,7 +1737,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                         const toggled = toggledEvents.has(event.id) ? 1 : 0;
                         const parallel = parallelGroupsByAnchorEventId.has(event.id) ? 1 : 0;
                         const suppressed = suppressedParallelEventIds.has(event.id) ? 1 : 0;
-                        return `${event.id}:${toggled}:${parallel}:${suppressed}`;
+                        return `${event.id}:${getTaskEventPayloadRenderSignature(event)}:${toggled}:${parallel}:${suppressed}`;
                       })
                       .join("|");
                     return [
@@ -1547,12 +1769,16 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                     isTaskWorking ? 1 : 0,
                     verboseSteps ? 1 : 0,
                     effectiveType,
+                    getTaskEventPayloadRenderSignature(event),
                     parallelGroupsByAnchorEventId.has(event.id) ? 1 : 0,
                     suppressedParallelEventIds.has(event.id) ? 1 : 0,
                   ].join(":");
                 };
 
                 const renderFeedRow = (row: TaskFeedRow) => {
+                  if (row.kind === "history-control") {
+                    return null;
+                  }
                   if (row.kind === "leading-command-outputs") {
                     return renderCommandOutputs(row.sessions);
                   }
@@ -2593,6 +2819,11 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                 return (
                   <TaskConversationRenderedRows
                     taskId={task?.id}
+                    taskSwitchId={taskSwitchId}
+                    hasMoreTimelineHistory={Boolean(hasMoreTimelineHistory)}
+                    isLoadingTimelineHistory={Boolean(isLoadingTimelineHistory)}
+                    timelineHistoryError={timelineHistoryError}
+                    onLoadMoreTimelineHistory={onLoadMoreTimelineHistory}
                     rendererPerfLoggingEnabled={Boolean(rendererPerfLoggingEnabled)}
                     visibleFeedRows={visibleFeedRows}
                     isChatTask={isChatTask}
@@ -2635,6 +2866,9 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
       handleMessageFeedback,
       onQuoteAssistantMessage,
       handleStepFeedback,
+      hasMoreTimelineHistory,
+      isLoadingTimelineHistory,
+      timelineHistoryError,
       isChatTask,
       isTaskWorking,
       isReplayMode,
@@ -2650,6 +2884,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
       onSelectChildTask,
       onOpenChildAgentSidebar,
       onViewTaskOutputs,
+      onLoadMoreTimelineHistory,
       parallelGroupsByAnchorEventId,
       rejectMenuOpenFor,
       rejectMenuRef,
@@ -2693,6 +2928,11 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
 function areTaskConversationFlowPropsEqual(prev: any, next: any): boolean {
   return (
     prev.rendererPerfLoggingEnabled === next.rendererPerfLoggingEnabled &&
+    prev.taskSwitchId === next.taskSwitchId &&
+    prev.hasMoreTimelineHistory === next.hasMoreTimelineHistory &&
+    prev.isLoadingTimelineHistory === next.isLoadingTimelineHistory &&
+    prev.timelineHistoryError === next.timelineHistoryError &&
+    prev.onLoadMoreTimelineHistory === next.onLoadMoreTimelineHistory &&
     prev.agentContext === next.agentContext &&
     prev.childEvents === next.childEvents &&
     prev.childTasks === next.childTasks &&
@@ -2922,6 +3162,12 @@ function MainContentComponent({
   homeResearchVaultEnabled = false,
   homeNextActionsEnabled = false,
   rendererPerfLoggingEnabled = false,
+  taskSwitchId = null,
+  hasMoreTimelineHistory = false,
+  isLoadingTimelineHistory = false,
+  timelineHistoryError = null,
+  onLoadMoreTimelineHistory,
+  onLoadTaskEventDetail,
   remoteSession = null,
   replayControls,
 }: MainContentProps) {
@@ -5175,10 +5421,15 @@ function MainContentComponent({
         next.delete(eventId);
       } else {
         next.add(eventId);
+        const event = events.find((candidate) => candidate.id === eventId);
+        const detailId = event ? getTruncatedTaskEventDetailId(event) : null;
+        if (detailId && task?.id) {
+          void onLoadTaskEventDetail?.(detailId, task.id);
+        }
       }
       return next;
     });
-  }, []);
+  }, [events, onLoadTaskEventDetail]);
 
   const isImageFileEvent = useCallback((event: TaskEvent): boolean => {
     return getInlinePreviewKindForTaskEvent(event) === "image";
@@ -5250,6 +5501,7 @@ function MainContentComponent({
   // Check if an event has details to show
   const hasEventDetails = useCallback((event: TaskEvent): boolean => {
     const effectiveType = getEffectiveTaskEventType(event);
+    if (getTruncatedTaskEventDetailId(event)) return true;
     if (isImageFileEvent(event)) return true;
     if (isHtmlFileEvent(event)) return shouldExposeEndOfTaskArtifactCard(event);
     if (isVideoFileEvent(event)) return true;
@@ -8865,6 +9117,11 @@ function MainContentComponent({
       verboseSteps={verboseSteps}
       voiceEnabled={voiceEnabled}
       rendererPerfLoggingEnabled={rendererPerfLoggingEnabled}
+      taskSwitchId={taskSwitchId}
+      hasMoreTimelineHistory={hasMoreTimelineHistory}
+      isLoadingTimelineHistory={isLoadingTimelineHistory}
+      timelineHistoryError={timelineHistoryError}
+      onLoadMoreTimelineHistory={onLoadMoreTimelineHistory}
       wrappingUp={wrappingUp}
       workspace={workspace}
     />
@@ -10046,6 +10303,12 @@ function areMainContentPropsEqual(prev: MainContentProps, next: MainContentProps
     prev.homeResearchVaultEnabled === next.homeResearchVaultEnabled &&
     prev.homeNextActionsEnabled === next.homeNextActionsEnabled &&
     prev.rendererPerfLoggingEnabled === next.rendererPerfLoggingEnabled &&
+    prev.taskSwitchId === next.taskSwitchId &&
+    prev.hasMoreTimelineHistory === next.hasMoreTimelineHistory &&
+    prev.isLoadingTimelineHistory === next.isLoadingTimelineHistory &&
+    prev.timelineHistoryError === next.timelineHistoryError &&
+    prev.onLoadMoreTimelineHistory === next.onLoadMoreTimelineHistory &&
+    prev.onLoadTaskEventDetail === next.onLoadTaskEventDetail &&
     getRemoteSessionSignature(prev.remoteSession) === getRemoteSessionSignature(next.remoteSession) &&
     prev.replayControls === next.replayControls &&
     prev.onOpenSpreadsheetArtifact === next.onOpenSpreadsheetArtifact &&

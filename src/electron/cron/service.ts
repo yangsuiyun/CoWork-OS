@@ -586,6 +586,7 @@ export class CronService {
     let workspaceContext: CronWorkspaceContext | null = null;
     let workspaceIdForRun = job.workspaceId;
     let shouldPollTaskStatus = true;
+    let taskStillRunning = false;
 
     try {
       workspaceContext = await this.resolveWorkspaceContext(job, nowMs, "run");
@@ -745,9 +746,19 @@ export class CronService {
           } else if (finalStatus === "failed" || finalStatus === "cancelled") {
             status = "error";
             errorMsg = finalTask?.error || `Task ${finalStatus || "failed"}`;
+          } else if (finalStatus === "paused" || finalStatus === "blocked") {
+            status = "needs_user_action";
+            errorMsg = finalTask?.error || `Task ${finalStatus}`;
+          } else if (finalStatus === "interrupted") {
+            status = finalTask?.terminalStatus === "resume_available" ? "partial_success" : "error";
+            errorMsg = finalTask?.error || "Task interrupted";
+          } else if (!finalTask) {
+            status = "error";
+            errorMsg = "Task not found";
           } else {
             status = "timeout";
             errorMsg = `Timed out after ${Math.round(timeoutMs / 1000)}s`;
+            taskStillRunning = Boolean(finalTask && taskId);
           }
         }
 
@@ -795,6 +806,7 @@ export class CronService {
       status,
       error: errorMsg,
       taskId,
+      taskStillRunning,
       runMode: job.runMode ?? "new_task",
       workspaceId: workspaceIdForRun,
       runWorkspacePath: workspaceContext?.runWorkspacePath,
@@ -863,6 +875,7 @@ export class CronService {
       status,
       error: errorMsg,
       taskId,
+      taskStillRunning,
       nextRunAtMs: job.state.nextRunAtMs,
     });
 

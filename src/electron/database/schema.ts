@@ -4,6 +4,10 @@ import fs from "fs";
 import { getUserDataDir } from "../utils/user-data-dir";
 import { createLogger } from "../utils/logger";
 import { ensureEverydayAgentSchema } from "../everyday-agent/schema";
+import {
+  sanitizeTimelinePayloadForStorage,
+  TIMELINE_PAYLOAD_STORAGE_BYTE_LIMIT,
+} from "../agent/timeline-payload-sanitizer";
 
 const schemaLogger = createLogger("DatabaseManager");
 
@@ -24,9 +28,349 @@ export class DatabaseManager {
     this.db.pragma("busy_timeout = 5000");
     this.ensureRestrictedFile(dbPath);
     this.initializeSchema();
+    this.repairLegacyHeartbeatRunReferences();
+    this.repairControlPlaneForeignKeyOrphans();
+    this.db.pragma("foreign_keys = ON");
 
     // Store as singleton instance
     DatabaseManager.instance = this;
+  }
+
+  private repairLegacyHeartbeatRunReferences(): void {
+    try {
+      const issuesSchema = this.db
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'issues'")
+        .get() as { sql?: string } | undefined;
+      if (!issuesSchema?.sql?.includes("heartbeat_runs_legacy")) return;
+
+      schemaLogger.info("Fixing broken issues FK reference (heartbeat_runs_legacy -> active_run_id metadata)...");
+      const foreignKeysEnabled = this.db.pragma("foreign_keys", { simple: true }) as number;
+      this.db.pragma("foreign_keys = OFF");
+      try {
+        const fixedSql = issuesSchema.sql
+          .replace(
+            /active_run_id\s+TEXT\s+REFERENCES\s+["'`]?heartbeat_runs_legacy["'`]?\(id\)\s+ON\s+DELETE\s+SET\s+NULL/i,
+            "active_run_id TEXT",
+          )
+          .replace(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?issues["'`]?/i, "CREATE TABLE issues_rebuild");
+        this.db.exec(fixedSql);
+        const columns = (
+          this.db.prepare("PRAGMA table_info(issues)").all() as Array<{ name: string }>
+        )
+          .map((column) => `"${column.name}"`)
+          .join(", ");
+        this.db.exec(`INSERT INTO issues_rebuild (${columns}) SELECT ${columns} FROM issues`);
+        this.db.exec("DROP TABLE issues");
+        this.db.exec("ALTER TABLE issues_rebuild RENAME TO issues");
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_issues_company ON issues(company_id, updated_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_issues_goal ON issues(goal_id, updated_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_issues_project ON issues(project_id, updated_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_issues_workspace ON issues(workspace_id, updated_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_issues_assignee ON issues(assignee_agent_role_id, updated_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status, updated_at DESC);
+        `);
+      } catch (error) {
+        try {
+          this.db.exec("DROP TABLE IF EXISTS issues_rebuild");
+        } catch {
+          // ignore cleanup error
+        }
+        throw error;
+      } finally {
+        this.db.pragma(`foreign_keys = ${foreignKeysEnabled ? "ON" : "OFF"}`);
+      }
+    } catch (error) {
+      schemaLogger.error("Failed to fix broken issues FK reference:", error);
+    }
+  }
+
+  private repairControlPlaneForeignKeyOrphans(): void {
+    const statements: Array<{ label: string; tables: string[]; sql: string }> = [
+      {
+        label: "company default workspaces",
+        tables: ["companies", "workspaces"],
+        sql: `
+          UPDATE companies
+          SET default_workspace_id = NULL
+          WHERE default_workspace_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM workspaces WHERE workspaces.id = companies.default_workspace_id
+            )
+        `,
+      },
+      {
+        label: "strategic planner config references",
+        tables: ["strategic_planner_configs", "workspaces", "agent_roles"],
+        sql: `
+          UPDATE strategic_planner_configs
+          SET planning_workspace_id = CASE
+                WHEN planning_workspace_id IS NULL
+                  OR EXISTS (
+                    SELECT 1 FROM workspaces
+                    WHERE workspaces.id = strategic_planner_configs.planning_workspace_id
+                  )
+                THEN planning_workspace_id
+                ELSE NULL
+              END,
+              planner_agent_role_id = CASE
+                WHEN planner_agent_role_id IS NULL
+                  OR EXISTS (
+                    SELECT 1 FROM agent_roles
+                    WHERE agent_roles.id = strategic_planner_configs.planner_agent_role_id
+                  )
+                THEN planner_agent_role_id
+                ELSE NULL
+              END
+          WHERE (planning_workspace_id IS NOT NULL AND NOT EXISTS (
+                  SELECT 1 FROM workspaces
+                  WHERE workspaces.id = strategic_planner_configs.planning_workspace_id
+                ))
+             OR (planner_agent_role_id IS NOT NULL AND NOT EXISTS (
+                  SELECT 1 FROM agent_roles
+                  WHERE agent_roles.id = strategic_planner_configs.planner_agent_role_id
+                ))
+        `,
+      },
+      {
+        label: "issue references",
+        tables: ["issues", "goals", "projects", "workspaces", "tasks", "heartbeat_runs", "agent_roles"],
+        sql: `
+          UPDATE issues
+          SET goal_id = CASE
+                WHEN goal_id IS NULL OR EXISTS (SELECT 1 FROM goals WHERE goals.id = issues.goal_id)
+                THEN goal_id ELSE NULL END,
+              project_id = CASE
+                WHEN project_id IS NULL OR EXISTS (SELECT 1 FROM projects WHERE projects.id = issues.project_id)
+                THEN project_id ELSE NULL END,
+              parent_issue_id = CASE
+                WHEN parent_issue_id IS NULL OR EXISTS (SELECT 1 FROM issues parent WHERE parent.id = issues.parent_issue_id)
+                THEN parent_issue_id ELSE NULL END,
+              workspace_id = CASE
+                WHEN workspace_id IS NULL OR EXISTS (SELECT 1 FROM workspaces WHERE workspaces.id = issues.workspace_id)
+                THEN workspace_id ELSE NULL END,
+              task_id = CASE
+                WHEN task_id IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE tasks.id = issues.task_id)
+                THEN task_id ELSE NULL END,
+              active_run_id = CASE
+                WHEN active_run_id IS NULL OR EXISTS (SELECT 1 FROM heartbeat_runs WHERE heartbeat_runs.id = issues.active_run_id)
+                THEN active_run_id ELSE NULL END,
+              assignee_agent_role_id = CASE
+                WHEN assignee_agent_role_id IS NULL
+                  OR EXISTS (SELECT 1 FROM agent_roles WHERE agent_roles.id = issues.assignee_agent_role_id)
+                THEN assignee_agent_role_id ELSE NULL END,
+              reporter_agent_role_id = CASE
+                WHEN reporter_agent_role_id IS NULL
+                  OR EXISTS (SELECT 1 FROM agent_roles WHERE agent_roles.id = issues.reporter_agent_role_id)
+                THEN reporter_agent_role_id ELSE NULL END
+          WHERE (goal_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM goals WHERE goals.id = issues.goal_id))
+             OR (project_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM projects WHERE projects.id = issues.project_id))
+             OR (parent_issue_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM issues parent WHERE parent.id = issues.parent_issue_id))
+             OR (workspace_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workspaces WHERE workspaces.id = issues.workspace_id))
+             OR (task_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.id = issues.task_id))
+             OR (active_run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM heartbeat_runs WHERE heartbeat_runs.id = issues.active_run_id))
+             OR (assignee_agent_role_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM agent_roles WHERE agent_roles.id = issues.assignee_agent_role_id))
+             OR (reporter_agent_role_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM agent_roles WHERE agent_roles.id = issues.reporter_agent_role_id))
+        `,
+      },
+      {
+        label: "issue comment author references",
+        tables: ["issue_comments", "agent_roles"],
+        sql: `
+          UPDATE issue_comments
+          SET author_agent_role_id = NULL
+          WHERE author_agent_role_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM agent_roles
+              WHERE agent_roles.id = issue_comments.author_agent_role_id
+            )
+        `,
+      },
+      {
+        label: "heartbeat run references",
+        tables: ["heartbeat_runs", "issues", "tasks", "agent_roles", "workspaces"],
+        sql: `
+          UPDATE heartbeat_runs
+          SET issue_id = CASE
+                WHEN issue_id IS NULL OR EXISTS (SELECT 1 FROM issues WHERE issues.id = heartbeat_runs.issue_id)
+                THEN issue_id ELSE NULL END,
+              task_id = CASE
+                WHEN task_id IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE tasks.id = heartbeat_runs.task_id)
+                THEN task_id ELSE NULL END,
+              agent_role_id = CASE
+                WHEN agent_role_id IS NULL OR EXISTS (SELECT 1 FROM agent_roles WHERE agent_roles.id = heartbeat_runs.agent_role_id)
+                THEN agent_role_id ELSE NULL END,
+              workspace_id = CASE
+                WHEN workspace_id IS NULL OR EXISTS (SELECT 1 FROM workspaces WHERE workspaces.id = heartbeat_runs.workspace_id)
+                THEN workspace_id ELSE NULL END,
+              resumed_from_run_id = CASE
+                WHEN resumed_from_run_id IS NULL
+                  OR EXISTS (SELECT 1 FROM heartbeat_runs parent WHERE parent.id = heartbeat_runs.resumed_from_run_id)
+                THEN resumed_from_run_id ELSE NULL END
+          WHERE (issue_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM issues WHERE issues.id = heartbeat_runs.issue_id))
+             OR (task_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.id = heartbeat_runs.task_id))
+             OR (agent_role_id IS NOT NULL AND NOT EXISTS (
+                  SELECT 1 FROM agent_roles WHERE agent_roles.id = heartbeat_runs.agent_role_id
+                ))
+             OR (workspace_id IS NOT NULL AND NOT EXISTS (
+                  SELECT 1 FROM workspaces WHERE workspaces.id = heartbeat_runs.workspace_id
+                ))
+             OR (resumed_from_run_id IS NOT NULL AND NOT EXISTS (
+                  SELECT 1 FROM heartbeat_runs parent WHERE parent.id = heartbeat_runs.resumed_from_run_id
+                ))
+        `,
+      },
+      {
+        label: "orphan task events",
+        tables: ["task_events", "tasks"],
+        sql: `
+          DELETE FROM task_events
+          WHERE NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.id = task_events.task_id)
+        `,
+      },
+      {
+        label: "activity feed rows with missing workspaces",
+        tables: ["activity_feed", "workspaces"],
+        sql: `
+          DELETE FROM activity_feed
+          WHERE NOT EXISTS (SELECT 1 FROM workspaces WHERE workspaces.id = activity_feed.workspace_id)
+        `,
+      },
+      {
+        label: "activity feed nullable references",
+        tables: ["activity_feed", "tasks", "agent_roles"],
+        sql: `
+          UPDATE activity_feed
+          SET task_id = CASE
+                WHEN task_id IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE tasks.id = activity_feed.task_id)
+                THEN task_id ELSE NULL END,
+              agent_role_id = CASE
+                WHEN agent_role_id IS NULL
+                  OR EXISTS (SELECT 1 FROM agent_roles WHERE agent_roles.id = activity_feed.agent_role_id)
+                THEN agent_role_id ELSE NULL END
+          WHERE (task_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.id = activity_feed.task_id))
+             OR (agent_role_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM agent_roles WHERE agent_roles.id = activity_feed.agent_role_id))
+        `,
+      },
+      {
+        label: "agent teams with missing required references",
+        tables: ["agent_teams", "workspaces", "agent_roles"],
+        sql: `
+          DELETE FROM agent_teams
+          WHERE NOT EXISTS (SELECT 1 FROM workspaces WHERE workspaces.id = agent_teams.workspace_id)
+             OR NOT EXISTS (SELECT 1 FROM agent_roles WHERE agent_roles.id = agent_teams.lead_agent_role_id)
+        `,
+      },
+      {
+        label: "agent team members with missing required references",
+        tables: ["agent_team_members", "agent_teams", "agent_roles"],
+        sql: `
+          DELETE FROM agent_team_members
+          WHERE NOT EXISTS (SELECT 1 FROM agent_teams WHERE agent_teams.id = agent_team_members.team_id)
+             OR NOT EXISTS (SELECT 1 FROM agent_roles WHERE agent_roles.id = agent_team_members.agent_role_id)
+        `,
+      },
+      {
+        label: "agent team runs with missing required references",
+        tables: ["agent_team_runs", "agent_teams", "tasks"],
+        sql: `
+          DELETE FROM agent_team_runs
+          WHERE NOT EXISTS (SELECT 1 FROM agent_teams WHERE agent_teams.id = agent_team_runs.team_id)
+             OR NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.id = agent_team_runs.root_task_id)
+        `,
+      },
+      {
+        label: "agent team items with missing required references",
+        tables: ["agent_team_items", "agent_team_runs"],
+        sql: `
+          DELETE FROM agent_team_items
+          WHERE NOT EXISTS (
+            SELECT 1 FROM agent_team_runs
+            WHERE agent_team_runs.id = agent_team_items.team_run_id
+          )
+        `,
+      },
+      {
+        label: "agent team item nullable references",
+        tables: ["agent_team_items", "agent_roles", "tasks"],
+        sql: `
+          UPDATE agent_team_items
+          SET parent_item_id = CASE
+                WHEN parent_item_id IS NULL
+                  OR EXISTS (SELECT 1 FROM agent_team_items parent WHERE parent.id = agent_team_items.parent_item_id)
+                THEN parent_item_id ELSE NULL END,
+              owner_agent_role_id = CASE
+                WHEN owner_agent_role_id IS NULL
+                  OR EXISTS (SELECT 1 FROM agent_roles WHERE agent_roles.id = agent_team_items.owner_agent_role_id)
+                THEN owner_agent_role_id ELSE NULL END,
+              source_task_id = CASE
+                WHEN source_task_id IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE tasks.id = agent_team_items.source_task_id)
+                THEN source_task_id ELSE NULL END
+          WHERE (parent_item_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM agent_team_items parent WHERE parent.id = agent_team_items.parent_item_id))
+             OR (owner_agent_role_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM agent_roles WHERE agent_roles.id = agent_team_items.owner_agent_role_id))
+             OR (source_task_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.id = agent_team_items.source_task_id))
+        `,
+      },
+      {
+        label: "agent team thoughts with missing required references",
+        tables: ["agent_team_thoughts", "agent_team_runs", "agent_roles"],
+        sql: `
+          DELETE FROM agent_team_thoughts
+          WHERE NOT EXISTS (SELECT 1 FROM agent_team_runs WHERE agent_team_runs.id = agent_team_thoughts.team_run_id)
+             OR NOT EXISTS (SELECT 1 FROM agent_roles WHERE agent_roles.id = agent_team_thoughts.agent_role_id)
+        `,
+      },
+      {
+        label: "agent team thought nullable references",
+        tables: ["agent_team_thoughts", "agent_team_items", "tasks"],
+        sql: `
+          UPDATE agent_team_thoughts
+          SET team_item_id = CASE
+                WHEN team_item_id IS NULL
+                  OR EXISTS (SELECT 1 FROM agent_team_items WHERE agent_team_items.id = agent_team_thoughts.team_item_id)
+                THEN team_item_id ELSE NULL END,
+              source_task_id = CASE
+                WHEN source_task_id IS NULL
+                  OR EXISTS (SELECT 1 FROM tasks WHERE tasks.id = agent_team_thoughts.source_task_id)
+                THEN source_task_id ELSE NULL END
+          WHERE (team_item_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM agent_team_items WHERE agent_team_items.id = agent_team_thoughts.team_item_id))
+             OR (source_task_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.id = agent_team_thoughts.source_task_id))
+        `,
+      },
+    ];
+
+    try {
+      let repaired = 0;
+      for (const { label, tables, sql } of statements) {
+        if (tables.some((table) => !this.tableExists(table))) continue;
+        const result = this.db.prepare(sql).run();
+        if (result.changes > 0) {
+          repaired += result.changes;
+          schemaLogger.info(`[DatabaseManager] Repaired ${result.changes} orphaned ${label}.`);
+        }
+      }
+      if (repaired > 0) {
+        schemaLogger.info(`[DatabaseManager] Repaired ${repaired} control-plane FK orphan(s).`);
+      }
+    } catch (error) {
+      schemaLogger.error("Failed to repair control-plane FK orphans:", error);
+    }
+  }
+
+  private tableExists(name: string): boolean {
+    return Boolean(
+      this.db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+        .get(name),
+    );
   }
 
   /**
@@ -207,6 +551,52 @@ export class DatabaseManager {
       }
     });
     runBackfill();
+  }
+
+  private sanitizeLargeTaskEventPayloads(): void {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT id, payload
+          FROM task_events
+          WHERE payload IS NOT NULL
+            AND LENGTH(payload) > ?
+          ORDER BY LENGTH(payload) DESC
+          LIMIT 500
+        `,
+      )
+      .all(TIMELINE_PAYLOAD_STORAGE_BYTE_LIMIT) as Array<{ id: string; payload: string }>;
+    if (rows.length === 0) return;
+
+    const updateStmt = this.db.prepare("UPDATE task_events SET payload = ? WHERE id = ?");
+    let updated = 0;
+    const tx = this.db.transaction(() => {
+      for (const row of rows) {
+        try {
+          const parsed = JSON.parse(row.payload);
+          const sanitized = sanitizeTimelinePayloadForStorage(parsed);
+          const nextPayload = JSON.stringify(sanitized ?? {});
+          if (nextPayload !== row.payload) {
+            updateStmt.run(nextPayload, row.id);
+            updated += 1;
+          }
+        } catch {
+          const sanitized = sanitizeTimelinePayloadForStorage({
+            message: "Malformed timeline payload omitted during storage hygiene migration",
+            originalPayloadBytes: Buffer.byteLength(String(row.payload || ""), "utf8"),
+          });
+          updateStmt.run(JSON.stringify(sanitized ?? {}), row.id);
+          updated += 1;
+        }
+      }
+    });
+    tx();
+
+    if (updated > 0) {
+      schemaLogger.info(
+        `[DatabaseManager] Sanitized ${updated} oversized task_event payload(s) during startup hygiene`,
+      );
+    }
   }
 
   // Migration version - increment this to force re-migration for users with partial migrations
@@ -1000,6 +1390,13 @@ export class DatabaseManager {
         ON tasks(workspace_id, completed_at DESC);
       CREATE INDEX IF NOT EXISTS idx_tasks_completed_at
         ON tasks(completed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_tasks_sidebar_order
+        ON tasks(
+          CASE WHEN COALESCE(is_pinned, 0) = 1 THEN 0 ELSE 1 END,
+          CASE WHEN status IN ('executing', 'planning', 'interrupted', 'paused', 'blocked') THEN 0 ELSE 1 END,
+          COALESCE(updated_at, created_at) DESC,
+          created_at DESC
+        );
       CREATE INDEX IF NOT EXISTS idx_hook_sessions_task ON hook_sessions(task_id);
       CREATE INDEX IF NOT EXISTS idx_hook_session_locks_expires ON hook_session_locks(expires_at);
       CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id);
@@ -1009,6 +1406,10 @@ export class DatabaseManager {
         ON task_events(type, timestamp DESC, task_id);
       CREATE INDEX IF NOT EXISTS idx_task_events_task_type_timestamp
         ON task_events(task_id, type, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_task_events_task_order_expr
+        ON task_events(task_id, COALESCE(seq, timestamp) DESC, timestamp DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_task_events_task_effective_type_order_expr
+        ON task_events(task_id, COALESCE(legacy_type, type), COALESCE(seq, timestamp) DESC, timestamp DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id);
       CREATE INDEX IF NOT EXISTS idx_approvals_task ON approvals(task_id);
       CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
@@ -2289,6 +2690,12 @@ export class DatabaseManager {
     }
 
     try {
+      this.sanitizeLargeTaskEventPayloads();
+    } catch (err) {
+      schemaLogger.warn("sanitizeLargeTaskEventPayloads failed:", err);
+    }
+
+    try {
       this.db.exec("CREATE INDEX IF NOT EXISTS idx_task_events_task_seq ON task_events(task_id, seq)");
     } catch {
       // Index already exists, ignore
@@ -2415,12 +2822,27 @@ export class DatabaseManager {
     // These indexes depend on the timeline-v2 legacy_type column, so create them
     // only after the migration above has had a chance to add the column on older DBs.
     try {
+      const startedAt = Date.now();
       this.db.exec(`
         CREATE INDEX IF NOT EXISTS idx_task_events_legacy_type_timestamp_task
           ON task_events(legacy_type, timestamp DESC, task_id);
         CREATE INDEX IF NOT EXISTS idx_task_events_task_legacy_type_timestamp
           ON task_events(task_id, legacy_type, timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_task_events_task_order_expr
+          ON task_events(task_id, COALESCE(seq, timestamp) DESC, timestamp DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_task_events_task_effective_type_order_expr
+          ON task_events(task_id, COALESCE(legacy_type, type), COALESCE(seq, timestamp) DESC, timestamp DESC, id DESC);
       `);
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs > 250) {
+        schemaLogger.warn(
+          `[DatabaseManager] task_events timeline index migration took ${elapsedMs}ms`,
+        );
+      } else {
+        schemaLogger.debug(
+          `[DatabaseManager] task_events timeline index migration took ${elapsedMs}ms`,
+        );
+      }
     } catch {
       // Column may still be unavailable on partially-corrupt DBs; a later repair can retry.
     }
@@ -3313,6 +3735,7 @@ export class DatabaseManager {
         schemaLogger.info(
           "Fixing broken tasks FK reference (heartbeat_runs_legacy -> heartbeat_runs)...",
         );
+        const foreignKeysEnabled = this.db.pragma("foreign_keys", { simple: true }) as number;
         this.db.exec("PRAGMA foreign_keys = OFF");
         try {
           // writable_schema is blocked in this SQLite build — use standard table reconstruction instead.
@@ -3337,7 +3760,7 @@ export class DatabaseManager {
           }
           throw rebuildErr;
         } finally {
-          this.db.exec("PRAGMA foreign_keys = OFF");
+          this.db.exec(`PRAGMA foreign_keys = ${foreignKeysEnabled ? "ON" : "OFF"}`);
         }
       }
     } catch (error) {

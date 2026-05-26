@@ -94,6 +94,7 @@ import {
   isTimelineEventType,
   normalizeTaskEventToTimelineV2,
 } from "../../shared/timeline-v2";
+import { sanitizeTimelinePayloadForStorage } from "./timeline-payload-sanitizer";
 import { deriveCanonicalTaskStatus, isTerminalTaskStatus } from "../../shared/task-status";
 import { createTimelineEmitter } from "./timeline-emitter";
 import { TaskExecutor } from "./executor";
@@ -5224,7 +5225,7 @@ export class AgentDaemon extends EventEmitter {
     const effectiveLegacyPayload = options.legacyPayload || (event.payload as Record<string, unknown>);
     const effectiveType = effectiveLegacyType || event.type;
 
-    this.eventRepo.create({
+    const storedEvent = this.eventRepo.create({
       id: event.id,
       taskId: event.taskId,
       timestamp: event.timestamp,
@@ -5240,10 +5241,13 @@ export class AgentDaemon extends EventEmitter {
       actor: event.actor,
       legacyType: effectiveLegacyType as Any,
     });
+    const storedLegacyPayload = sanitizeTimelinePayloadForStorage(
+      effectiveLegacyPayload,
+    ) as Record<string, unknown>;
 
     const task = this.taskRepo.findById(event.taskId);
     if (task && effectiveType === "llm_usage") {
-      const usagePayload = effectiveLegacyPayload as {
+      const usagePayload = storedLegacyPayload as {
         providerType?: string;
         modelKey?: string;
         modelId?: string;
@@ -5271,7 +5275,7 @@ export class AgentDaemon extends EventEmitter {
         },
       );
     } else if (task && effectiveType === "llm_error") {
-      const errorPayload = effectiveLegacyPayload as {
+      const errorPayload = storedLegacyPayload as {
         providerType?: string;
         modelKey?: string;
         modelId?: string;
@@ -5300,12 +5304,12 @@ export class AgentDaemon extends EventEmitter {
     }
 
     if (effectiveLegacyType) {
-      this.logActivityForEvent(event.taskId, effectiveLegacyType, effectiveLegacyPayload);
+      this.logActivityForEvent(event.taskId, effectiveLegacyType, storedLegacyPayload);
     } else {
-      this.logActivityForEvent(event.taskId, event.type, event.payload);
+      this.logActivityForEvent(event.taskId, event.type, storedEvent.payload);
     }
 
-    this.emitTaskEvent(event);
+    this.emitTaskEvent(storedEvent);
 
     const teamThoughtEventTypes = new Set([
       "assistant_message",
@@ -5315,11 +5319,11 @@ export class AgentDaemon extends EventEmitter {
       "file_modified",
     ]);
     if (effectiveLegacyType && teamThoughtEventTypes.has(effectiveLegacyType)) {
-      this.maybeEmitTeamThought(event.taskId, effectiveLegacyType, effectiveLegacyPayload);
+      this.maybeEmitTeamThought(event.taskId, effectiveLegacyType, storedLegacyPayload);
     }
 
     const memoryType = effectiveLegacyType || event.type;
-    this.captureToMemory(event.taskId, memoryType, effectiveLegacyPayload).catch((error) => {
+    this.captureToMemory(event.taskId, memoryType, storedLegacyPayload).catch((error) => {
       console.debug("[AgentDaemon] Memory capture failed:", error);
     });
   }

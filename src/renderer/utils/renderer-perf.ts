@@ -42,12 +42,19 @@ type StartupMark = {
   emitted: boolean;
 };
 
+type PerfMark = {
+  name: string;
+  atMs: number;
+  details?: Record<string, unknown>;
+};
+
 type RendererPerfState = {
   schemaVersion: number;
   metrics: Map<string, MetricBucket>;
   renders: Map<string, RenderBucket>;
   counters: Map<string, CounterBucket>;
   startupMarks: Map<string, StartupMark>;
+  perfMarks: PerfMark[];
   taskEvents: Map<string, TaskEventTrace>;
   taskEventAliases: Map<string, string>;
   settledVisibleEvents: Map<string, number>;
@@ -71,13 +78,14 @@ declare global {
 
 const MAX_METRIC_SAMPLES = 240;
 const MAX_RENDER_KEYS = 120;
+const MAX_PERF_MARKS = 500;
 const MAX_PENDING_VISIBLE_EVENTS = 240;
 const MAX_PENDING_VISIBLE_ATTEMPTS = 4;
 const PENDING_VISIBLE_TTL_MS = 5_000;
 const REPORT_INTERVAL_MS = 10_000;
 const TASK_EVENT_TTL_MS = 60_000;
 const MAX_ACTIONABLE_FRAME_GAP_MS = 1_000;
-const RENDERER_PERF_STATE_SCHEMA_VERSION = 2;
+const RENDERER_PERF_STATE_SCHEMA_VERSION = 3;
 
 function isRendererPerfEnabled(enabled?: boolean): boolean {
   return Boolean(enabled && typeof window !== "undefined" && typeof performance !== "undefined");
@@ -92,6 +100,7 @@ function getState(): RendererPerfState | null {
       renders: new Map(),
       counters: new Map(),
       startupMarks: new Map(),
+      perfMarks: [],
       taskEvents: new Map(),
       taskEventAliases: new Map(),
       settledVisibleEvents: new Map(),
@@ -117,6 +126,7 @@ function migrateRendererPerfState(state: RendererPerfState): void {
   state.metrics.clear();
   state.renders.clear();
   state.counters.clear();
+  state.perfMarks = [];
 }
 
 function percentile(sorted: number[], ratio: number): number {
@@ -229,6 +239,22 @@ function formatStartupMark(mark: StartupMark): string {
     }
   }
   return `[Startup] ${mark.name} at ${mark.atMs.toFixed(1)}ms${details}`;
+}
+
+function formatPerfMark(
+  name: string,
+  atMs: number,
+  details?: Record<string, unknown>,
+): string {
+  let suffix = "";
+  if (details && Object.keys(details).length > 0) {
+    try {
+      suffix = ` ${JSON.stringify(details)}`;
+    } catch {
+      suffix = "";
+    }
+  }
+  return `[Mark] ${name} at ${atMs.toFixed(1)}ms${suffix}`;
 }
 
 function addRendererPerfSample(state: RendererPerfState, name: string, valueMs: number): void {
@@ -415,6 +441,24 @@ export function markRendererStartup(
     });
   }
   flushRendererStartupMarks(enabled);
+}
+
+export function markRendererPerfEvent(
+  name: string,
+  enabled?: boolean,
+  details?: Record<string, unknown>,
+): void {
+  if (!isRendererPerfEnabled(enabled)) return;
+  const state = getState();
+  if (!state) return;
+  const atMs = performance.now();
+  state.perfMarks.push({ name, atMs, details });
+  if (state.perfMarks.length > MAX_PERF_MARKS) {
+    state.perfMarks.splice(0, state.perfMarks.length - MAX_PERF_MARKS);
+  }
+  addRendererPerfSample(state, `mark.${name}_at_ms`, atMs);
+  emitRendererPerfLog(formatPerfMark(name, atMs, details));
+  scheduleRendererPerfReport(state);
 }
 
 export function flushRendererStartupMarks(enabled?: boolean): void {

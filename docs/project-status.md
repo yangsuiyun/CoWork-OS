@@ -578,7 +578,7 @@ Expected behavior:
 - **Security**: 4,932 automated tests across 390 test files, configurable guardrails, layered permission rules, approval workflows, and brute-force protection
 - **Multi-Channel**: WhatsApp, Telegram, Discord, Slack, iMessage integration
 - **Multi-Provider**: 35 LLM provider options and compatible gateways, including Claude, GPT, Gemini, Bedrock, OpenRouter Pareto Code routing, Ollama, and Grok through xAI API key or SuperGrok OAuth
-- **GUI-first Agents**: Agents Hub, Mission Control, visual task timelines, boards, and approval dialogs for creating, spawning, assigning, and monitoring many agents
+- **GUI-first Agents**: Agents Hub, Mission Control, visual task timelines, boards, and approval dialogs for creating, spawning, assigning, and monitoring many agents, with Mission Control separating Heartbeat-agent state, global runtime queue pressure, and workspace board work
 - **Local-First**: Your data stays on your machine, BYOK model
 - **Extensible**: MCP support (Client, Host, Registry), 150 built-in skills, and plugin packs
 

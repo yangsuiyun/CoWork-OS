@@ -18,6 +18,16 @@ export const VIRTUALIZED_FEED_ROW_THRESHOLD = 18;
 
 export type TaskFeedRow =
   | {
+      kind: "history-control";
+      key: string;
+      estimatedHeight: number;
+      hasMoreHistory: boolean;
+      isLoading: boolean;
+      error: string | null;
+      revision: string;
+      visiblePerfEventId: null;
+    }
+  | {
       kind: "leading-command-outputs";
       key: string;
       estimatedHeight: number;
@@ -54,13 +64,13 @@ export type SelectedSkillModalState = {
 export type TranscriptMode = "live" | "inspect" | "delivery";
 
 export function getTaskFeedRowEventType(row: TaskFeedRow): string | null {
-  if (row.kind === "artifact-stack") return null;
+  if (row.kind === "artifact-stack" || row.kind === "history-control") return null;
   if (row.kind !== "timeline" || row.item.kind !== "event") return null;
   return getEffectiveTaskEventType(row.item.event as TaskEvent);
 }
 
 export function getTaskFeedRowEvent(row: TaskFeedRow): TaskEvent | null {
-  if (row.kind === "artifact-stack") return null;
+  if (row.kind === "artifact-stack" || row.kind === "history-control") return null;
   if (row.kind !== "timeline" || row.item.kind !== "event") return null;
   return row.item.event as TaskEvent;
 }
@@ -250,7 +260,7 @@ export function getTaskFeedRowEvents(row: TaskFeedRow): Array<{
   eventIndex?: number;
   eventOrder: number;
 }> {
-  if (row.kind === "artifact-stack") return [];
+  if (row.kind === "artifact-stack" || row.kind === "history-control") return [];
   if (row.kind !== "timeline") return [];
   if (row.item.kind === "event") {
     return [{ event: row.item.event as TaskEvent, eventIndex: row.item.eventIndex, eventOrder: 0 }];
@@ -318,6 +328,7 @@ export function createDeliveryEventRow(
 }
 
 export function isMeaningfulLiveTranscriptRow(row: TaskFeedRow): boolean {
+  if (row.kind === "history-control") return false;
   if (row.kind === "leading-command-outputs") return false;
   if (row.kind !== "timeline") return true;
   if (row.item.kind !== "event") return true;
@@ -341,6 +352,12 @@ export function selectVisibleTaskFeedRows(
   feedRows: TaskFeedRow[],
   transcriptMode: TranscriptMode,
 ): { visibleFeedRows: TaskFeedRow[]; hiddenLiveFeedRowCount: number } {
+  const getHiddenContentRowCount = (visibleRows: TaskFeedRow[]) => {
+    const totalContentRows = feedRows.filter((row) => row.kind !== "history-control").length;
+    const visibleContentRows = visibleRows.filter((row) => row.kind !== "history-control").length;
+    return Math.max(0, totalContentRows - visibleContentRows);
+  };
+
   if (transcriptMode === "delivery") {
     const eventStream = collectTaskFeedRowEventStream(feedRows);
     const candidates: Array<{ order: number; row: TaskFeedRow }> = [];
@@ -386,12 +403,19 @@ export function selectVisibleTaskFeedRows(
 
     return {
       visibleFeedRows,
-      hiddenLiveFeedRowCount: Math.max(0, feedRows.length - visibleFeedRows.length),
+      hiddenLiveFeedRowCount: getHiddenContentRowCount(visibleFeedRows),
     };
   }
 
-  if (transcriptMode !== "live" || feedRows.length <= 8) {
+  if (transcriptMode !== "live") {
     return { visibleFeedRows: feedRows, hiddenLiveFeedRowCount: 0 };
+  }
+  if (feedRows.length <= 8) {
+    const visibleFeedRows = feedRows.filter((row) => row.kind !== "history-control");
+    return {
+      visibleFeedRows,
+      hiddenLiveFeedRowCount: getHiddenContentRowCount(visibleFeedRows),
+    };
   }
 
   const keepIndexes = new Set<number>();
@@ -430,7 +454,7 @@ export function selectVisibleTaskFeedRows(
   const visibleFeedRows = feedRows.filter((_, index) => cappedKeepIndexes.has(index));
   return {
     visibleFeedRows,
-    hiddenLiveFeedRowCount: Math.max(0, feedRows.length - visibleFeedRows.length),
+    hiddenLiveFeedRowCount: getHiddenContentRowCount(visibleFeedRows),
   };
 }
 

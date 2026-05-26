@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AgentDaemon } from "../daemon";
 import { normalizeLlmProviderType } from "../../../shared/llmProviderDisplay";
 import { LLM_PROVIDER_TYPES } from "../../../shared/types";
+import { sanitizeTimelineEventForStorage } from "../timeline-payload-sanitizer";
 
 function createDaemonLike(taskOverrides: Record<string, unknown> = {}) {
   let seq = 0;
@@ -262,6 +263,64 @@ describe("AgentDaemon.emitTaskEvent legacy alias bridge", () => {
       expect.objectContaining({
         taskId: "task-1",
         type: "timeline_task_status",
+      }),
+    );
+  });
+});
+
+describe("AgentDaemon.persistTimelineEvent", () => {
+  it("emits the sanitized stored event to live listeners and renderer IPC", () => {
+    const rawImage = "c".repeat(1_000_000);
+    const emitTaskEvent = vi.fn();
+    const daemonLike = {
+      eventRepo: {
+        create: vi.fn((event) => sanitizeTimelineEventForStorage(event)),
+      },
+      taskRepo: {
+        findById: vi.fn().mockReturnValue(null),
+      },
+      logActivityForEvent: vi.fn(),
+      emitTaskEvent,
+      maybeEmitTeamThought: vi.fn(),
+      captureToMemory: vi.fn().mockResolvedValue(undefined),
+    } as Any;
+
+    (AgentDaemon.prototype as Any).persistTimelineEvent.call(
+      daemonLike,
+      {
+        id: "event-1",
+        taskId: "task-1",
+        timestamp: Date.now(),
+        type: "timeline_step_updated",
+        schemaVersion: 2,
+        payload: {
+          legacyType: "tool_result",
+          result: {
+            screenshotBase64: rawImage,
+          },
+        },
+        legacyType: "tool_result",
+      },
+      {
+        legacyType: "tool_result",
+        legacyPayload: {
+          result: {
+            screenshotBase64: rawImage,
+          },
+        },
+      },
+    );
+
+    const emittedEvent = emitTaskEvent.mock.calls[0]?.[0];
+    expect(emittedEvent.payload.result.screenshotBase64).toBeUndefined();
+    expect(emittedEvent.payload.result.screenshotBase64Omitted).toBe(true);
+    expect(daemonLike.logActivityForEvent).toHaveBeenCalledWith(
+      "task-1",
+      "tool_result",
+      expect.objectContaining({
+        result: expect.objectContaining({
+          screenshotBase64Omitted: true,
+        }),
       }),
     );
   });

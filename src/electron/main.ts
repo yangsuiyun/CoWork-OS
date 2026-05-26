@@ -175,6 +175,7 @@ import {
 } from "./ipc/canvas-handlers";
 import { setupQAHandlers } from "./ipc/qa-handlers";
 import { getBrowserWorkbenchService } from "./browser/browser-workbench-service";
+import { isAllowedWebviewUrl } from "./browser/webview-url-policy";
 import { pruneTempWorkspaces } from "./utils/temp-workspace";
 import { getActiveTempWorkspaceLeases } from "./utils/temp-workspace-lease";
 import { getPluginRegistry } from "./extensions/registry";
@@ -298,6 +299,16 @@ const IMPORT_ENV_SETTINGS = shouldImportEnvSettingsFromArgsOrEnv();
 const IMPORT_ENV_SETTINGS_MODE = getEnvSettingsImportModeFromArgsOrEnv();
 const logger = createLogger("Main");
 const cronLogger = createLogger("Cron");
+let startupLaneStartedAt = Date.now();
+const logStartupLane = (lane: string, extra: Record<string, unknown> = {}): void => {
+  logger.info(
+    `[StartupLane] ${JSON.stringify({
+      lane,
+      elapsedMs: Date.now() - startupLaneStartedAt,
+      ...extra,
+    })}`,
+  );
+};
 const TRANSIENT_MAIN_PROCESS_ERROR_RE = new RegExp(
   [
     "ECONNRESET",
@@ -547,27 +558,6 @@ function ensureCoreAutomationProfiles(): void {
   });
 }
 
-function isAllowedWebviewUrl(value: string): boolean {
-  const raw = String(value || "").trim();
-  if (!raw) {
-    return false;
-  }
-  if (raw === "about:blank") {
-    return true;
-  }
-
-  try {
-    const parsed = new URL(raw);
-    return (
-      parsed.protocol === "https:" ||
-      parsed.protocol === "http:" ||
-      parsed.protocol === "canvas:"
-    );
-  } catch {
-    return false;
-  }
-}
-
 app.on("web-contents-created", (_event, contents) => {
   contents.on("will-attach-webview", (event, webPreferences, params) => {
     delete (webPreferences as Record<string, unknown>).preload;
@@ -585,7 +575,11 @@ app.on("web-contents-created", (_event, contents) => {
     }
 
     const targetUrl = typeof params?.src === "string" ? params.src : "";
-    if (!isAllowedWebviewUrl(targetUrl)) {
+    const browserWorkbenchService = getBrowserWorkbenchService();
+    if (
+      !isAllowedWebviewUrl(targetUrl) &&
+      !browserWorkbenchService.isAllowedLocalPreviewUrl(targetUrl)
+    ) {
       logger.warn(
         `Blocked webview attachment for disallowed URL: ${
           targetUrl || "<empty>"
@@ -1054,6 +1048,24 @@ function installProcessErrorGuards(): void {
   });
 }
 
+function isEnvFlagEnabled(name: string): boolean {
+  return /^(1|true|yes|on)$/i.test(String(process.env[name] || "").trim());
+}
+
+function isBackgroundAutostartDisabled(): boolean {
+  return /^(0|false|no|off)$/i.test(
+    String(process.env.COWORK_BACKGROUND_AUTOSTART || "").trim(),
+  );
+}
+
+function isStartupQuietMode(): boolean {
+  return (
+    isEnvFlagEnabled("COWORK_STARTUP_QUIET") ||
+    isEnvFlagEnabled("COWORK_PROFILE_QUIET") ||
+    isBackgroundAutostartDisabled()
+  );
+}
+
 installProcessErrorGuards();
 
 // Use the OS certificate store so Node.js TLS connections (e.g. WhatsApp WebSocket)
@@ -1280,6 +1292,7 @@ if (!gotTheLock) {
 
     mainWindow.webContents.on("did-finish-load", () => {
       rendererRecoveryAttempts = 0;
+      logStartupLane("first_window_startup", { event: "did_finish_load" });
       flushPendingTaskDeeplink();
     });
 
@@ -1333,6 +1346,8 @@ if (!gotTheLock) {
   app.whenReady().then(async () => {
     getDesktopLocationService().installPermissionHandlers();
     const startupStartedAt = Date.now();
+    startupLaneStartedAt = startupStartedAt;
+    logStartupLane("blocking_startup", { event: "start" });
     const logPhase = (name: string, phaseStartedAt: number): void => {
       logger.debug(
         `Startup phase "${name}" completed in ${Date.now() - phaseStartedAt} ms`,
@@ -1342,12 +1357,23 @@ if (!gotTheLock) {
       name: string;
       task: () => Promise<void>;
     }> = [];
+    const startupQuietMode = isStartupQuietMode();
+    if (startupQuietMode) {
+      logger.info("Startup quiet mode enabled; background autostart is disabled.");
+    }
     const deferStartupTask = (name: string, task: () => Promise<void>): void => {
       deferredStartupTasks.push({ name, task });
     };
     const runDeferredStartupTasks = (): void => {
+      logStartupLane("post_interactive_startup", {
+        event: "deferred_tasks_scheduled",
+        taskCount: deferredStartupTasks.length,
+      });
       deferredStartupTasks.forEach(({ name, task }, index) => {
         const timer = setTimeout(() => {
+          if (index === 0) {
+            logStartupLane("idle_startup", { event: "first_deferred_task_start" });
+          }
           const startedAt = Date.now();
           void task()
             .then(() => {
@@ -1757,8 +1783,12 @@ if (!gotTheLock) {
           coreLearningPipelineService: coreLearningPipelineService || undefined,
         },
       );
-      await subconsciousLoopService.start(agentDaemon);
-      logger.info("SubconsciousLoopService initialized");
+      if (startupQuietMode) {
+        logger.info("SubconsciousLoopService initialized (quiet mode; not started)");
+      } else {
+        await subconsciousLoopService.start(agentDaemon);
+        logger.info("SubconsciousLoopService initialized");
+      }
     } catch (error) {
       logger.error("Failed to initialize SubconsciousLoopService:", error);
     }
@@ -1787,7 +1817,9 @@ if (!gotTheLock) {
     // Initialize MCP Client Manager in the background for desktop startup.
     // IPC settings handlers are already registered before first paint; network
     // handshakes do not need to block the first window.
-    if (HEADLESS) {
+    if (startupQuietMode) {
+      logger.info("MCP Client Manager auto-connect skipped in quiet mode");
+    } else if (HEADLESS) {
       try {
         await initializeMcpClientManager();
       } catch (error) {
@@ -1798,12 +1830,16 @@ if (!gotTheLock) {
     }
 
     // Initialize Infrastructure Manager - restores wallet, configures providers
-    try {
-      await InfraManager.getInstance().initialize();
-      logger.info("InfraManager initialized");
-    } catch (error) {
-      logger.error("Failed to initialize InfraManager:", error);
-      // Don't fail app startup if infra init fails
+    if (startupQuietMode) {
+      logger.info("InfraManager initialization skipped in quiet mode");
+    } else {
+      try {
+        await InfraManager.getInstance().initialize();
+        logger.info("InfraManager initialized");
+      } catch (error) {
+        logger.error("Failed to initialize InfraManager:", error);
+        // Don't fail app startup if infra init fails
+      }
     }
 
     try {
@@ -2328,7 +2364,11 @@ if (!gotTheLock) {
         },
       });
       setCronService(cronService);
-      await cronService.start();
+      if (startupQuietMode) {
+        logger.info("Cron Service initialized (quiet mode; not started)");
+      } else {
+        await cronService.start();
+      }
       if (councilService) {
         const db = dbManager.getDatabase();
         const rows = db
@@ -2638,7 +2678,11 @@ if (!gotTheLock) {
 
       heartbeatService = new HeartbeatService(heartbeatDeps);
       setHeartbeatService(heartbeatService);
-      await heartbeatService.start();
+      if (startupQuietMode) {
+        logger.info("HeartbeatService initialized (quiet mode; not started)");
+      } else {
+        await heartbeatService.start();
+      }
 
       setHeartbeatWakeSubmitter(async ({ text, mode }) => {
         submitHeartbeatSignalForAll({ text, mode, source: "hook" });
@@ -2693,8 +2737,12 @@ if (!gotTheLock) {
         },
         log: (...args: unknown[]) => logger.debug("[Autonomy]", ...args),
       });
-      await autonomyEngine.start();
-      logger.info("AutonomyEngine initialized");
+      if (startupQuietMode) {
+        logger.info("AutonomyEngine initialized (quiet mode; not started)");
+      } else {
+        await autonomyEngine.start();
+        logger.info("AutonomyEngine initialized");
+      }
 
       // Initialize AwarenessService after Heartbeat and Autonomy so onWakeHeartbeats and onEventCaptured work
       try {
@@ -2723,8 +2771,12 @@ if (!gotTheLock) {
           },
           log: (...args: unknown[]) => logger.debug("[Awareness]", ...args),
         });
-        await awarenessService.start();
-        logger.info("AwarenessService initialized");
+        if (startupQuietMode) {
+          logger.info("AwarenessService initialized (quiet mode; not started)");
+        } else {
+          await awarenessService.start();
+          logger.info("AwarenessService initialized");
+        }
       } catch (awarenessError) {
         logger.error("Failed to initialize AwarenessService:", awarenessError);
       }
@@ -2966,8 +3018,12 @@ if (!gotTheLock) {
     registerCanvasProtocol();
     registerMediaProtocol();
 
+    logStartupLane("blocking_startup", { event: "complete" });
+
     // Create window
+    logStartupLane("first_window_startup", { event: "create_window_start" });
     createWindow();
+    logStartupLane("first_window_startup", { event: "create_window_returned" });
 
     // Initialize gateway with main window reference
     if (mainWindow) {
@@ -2992,21 +3048,27 @@ if (!gotTheLock) {
         `Channels summary: loaded=${channelStats.loaded}, enabled=${channelStats.enabled}, connected=${channelStats.connected}, autoConnect=deferred`,
       );
       logPhase("channel-gateway-ui", channelInitStartedAt);
-      deferStartupTask("channel-auto-connect", async () => {
-        await channelGateway.connectEnabledChannels();
-        const connectedStats = channelGateway.getStartupStats();
-        logger.info(
-          `Channels auto-connect complete: loaded=${connectedStats.loaded}, enabled=${connectedStats.enabled}, connected=${connectedStats.connected}`,
-        );
-        startXMentionBridge();
-      });
+      if (startupQuietMode) {
+        logger.info("Channels auto-connect skipped in quiet mode");
+      } else {
+        deferStartupTask("channel-auto-connect", async () => {
+          await channelGateway.connectEnabledChannels();
+          const connectedStats = channelGateway.getStartupStats();
+          logger.info(
+            `Channels auto-connect complete: loaded=${connectedStats.loaded}, enabled=${connectedStats.enabled}, connected=${connectedStats.connected}`,
+          );
+          startXMentionBridge();
+        });
+      }
       // Initialize update manager with main window reference
       updateManager.setMainWindow(mainWindow);
 
       // Restore persisted canvas sessions after the first window is ready.
-      deferStartupTask("canvas-session-restore", async () => {
-        await CanvasManager.getInstance().restoreSessions();
-      });
+      if (!startupQuietMode) {
+        deferStartupTask("canvas-session-restore", async () => {
+          await CanvasManager.getInstance().restoreSessions();
+        });
+      }
 
       // Initialize control plane (WebSocket gateway)
       setupControlPlaneHandlers(mainWindow, {
@@ -3278,6 +3340,9 @@ if (!gotTheLock) {
         onTriggerMutation: syncMcpTriggerSubscriptions,
       });
       setupRoutineHandlers(routineService);
+      void routineService.reconcileStaleTimeoutRuns().catch((error) => {
+        logger.debug("[Routines] Failed to reconcile stale timeout runs:", error);
+      });
       const refreshRoutineRunsForTask = (payload: { taskId?: string }) => {
         const taskId = typeof payload?.taskId === "string" ? payload.taskId : "";
         if (!taskId) return;
@@ -3450,34 +3515,36 @@ if (!gotTheLock) {
           await syncDailyBriefingCronJob(cronService, workspaceId, config);
         },
       });
-      deferStartupTask("daily-briefing-schedule-sync", async () => {
-        if (!cronService) return;
-        const configuredRows = db
-          .prepare("SELECT workspace_id FROM briefing_config")
-          .all() as Array<{ workspace_id: string }>;
-        const targetWorkspaceIds = new Set(
-          configuredRows
-            .map((row) => row.workspace_id)
-            .filter((workspaceId) => typeof workspaceId === "string" && workspaceId.length > 0),
-        );
-        const jobs = await cronService.list({ includeDisabled: true });
-        for (const job of jobs) {
-          if (
-            (job.name.startsWith("Daily Briefing:") ||
-              (job.description || "").includes(DAILY_BRIEFING_MARKER)) &&
-            job.workspaceId
-          ) {
-            targetWorkspaceIds.add(job.workspaceId);
-          }
-        }
-        for (const workspaceId of targetWorkspaceIds) {
-          await syncDailyBriefingCronJob(
-            cronService,
-            workspaceId,
-            activeDailyBriefingService.getConfig(workspaceId),
+      if (!startupQuietMode) {
+        deferStartupTask("daily-briefing-schedule-sync", async () => {
+          if (!cronService) return;
+          const configuredRows = db
+            .prepare("SELECT workspace_id FROM briefing_config")
+            .all() as Array<{ workspace_id: string }>;
+          const targetWorkspaceIds = new Set(
+            configuredRows
+              .map((row) => row.workspace_id)
+              .filter((workspaceId) => typeof workspaceId === "string" && workspaceId.length > 0),
           );
-        }
-      });
+          const jobs = await cronService.list({ includeDisabled: true });
+          for (const job of jobs) {
+            if (
+              (job.name.startsWith("Daily Briefing:") ||
+                (job.description || "").includes(DAILY_BRIEFING_MARKER)) &&
+              job.workspaceId
+            ) {
+              targetWorkspaceIds.add(job.workspaceId);
+            }
+          }
+          for (const workspaceId of targetWorkspaceIds) {
+            await syncDailyBriefingCronJob(
+              cronService,
+              workspaceId,
+              activeDailyBriefingService.getConfig(workspaceId),
+            );
+          }
+        });
+      }
 
       // File Hub
       const fileHubService = new FileHubService(

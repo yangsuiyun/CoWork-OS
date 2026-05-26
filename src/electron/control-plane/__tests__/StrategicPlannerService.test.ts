@@ -91,6 +91,10 @@ describeWithSqlite("StrategicPlannerService", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("enables sqlite foreign key enforcement after schema initialization", () => {
+    expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
+  });
+
   it("creates planner-managed issues for uncovered goals and projects", async () => {
     const workspace = insertWorkspace();
     const company = core.getDefaultCompany();
@@ -357,6 +361,58 @@ describeWithSqlite("StrategicPlannerService", () => {
 
     const repaired = planner.getConfig(company.id);
     expect(repaired.plannerAgentRoleId).toBeUndefined();
+  });
+
+  it("keeps successful planner runs completed when stale config role references are repaired", async () => {
+    const company = core.getDefaultCompany();
+    const plannerAgent =
+      agentRoleRepo.findByName("project_manager") ||
+      agentRoleRepo.create({
+        name: "planner-agent-stale-run-ref",
+        displayName: "Planner Agent",
+        capabilities: ["plan", "manage"],
+        heartbeatEnabled: true,
+      });
+
+    planner.updateConfig(company.id, {
+      enabled: true,
+      plannerAgentRoleId: plannerAgent.id,
+    });
+
+    db.exec("PRAGMA foreign_keys = OFF");
+    db.prepare("DELETE FROM agent_roles WHERE id = ?").run(plannerAgent.id);
+    db.exec("PRAGMA foreign_keys = ON");
+
+    const run = await planner.runNow({ companyId: company.id, trigger: "manual" });
+
+    expect(run.status).toBe("completed");
+    expect(run.error).toBeUndefined();
+    expect(planner.getConfig(company.id).plannerAgentRoleId).toBeUndefined();
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM strategic_planner_runs WHERE status = 'failed' AND error = 'FOREIGN KEY constraint failed'",
+        )
+        .get(),
+    ).toMatchObject({ count: 0 });
+  });
+
+  it("does not create planner runs or configs for inactive companies", async () => {
+    const company = core.createCompany({
+      name: "Inactive Planner Company",
+      status: "inactive",
+    });
+
+    await expect(planner.runNow({ companyId: company.id, trigger: "manual" })).rejects.toThrow(
+      `Company is not active: ${company.id}`,
+    );
+
+    expect(planner.listRuns({ companyId: company.id })).toHaveLength(0);
+    expect(
+      db
+        .prepare("SELECT COUNT(*) AS count FROM strategic_planner_configs WHERE company_id = ?")
+        .get(company.id),
+    ).toMatchObject({ count: 0 });
   });
 
   it("creates a linked planner follow-up for stale inbox-originated issues without taking ownership of the original", async () => {

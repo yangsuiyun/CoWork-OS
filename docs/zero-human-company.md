@@ -154,6 +154,9 @@ Mission Control is the operational cockpit:
 
 - planner controls
 - company selection
+- Heartbeat-enabled operator state
+- global runtime queue status for running/waiting execution
+- Mission Board tracked work for the selected workspace/company context
 - manual planner execution
 - planner cycle review
 - issue inspection
@@ -317,7 +320,7 @@ This is the recommended starting point for founder-directed setups because it gi
 
 ## Mission Control Surfaces
 
-The ZHC workflow relies on two Mission Control additions beyond the base task board:
+The ZHC workflow relies on Mission Control additions beyond the base Mission Board:
 
 ### Strategic Planner Strip
 
@@ -386,7 +389,7 @@ Expected result:
 - company-linked operators appear in `Settings > Companies`
 - `Settings > Digital Twins` shows a `Company Operators` section for the selected company
 - planner-managed issues appear in `Ops`
-- linked tasks appear on the Mission Queue board
+- linked tasks appear on the Mission Board
 - automation-profile participants begin surfacing work
 - issue runs and task timelines become visible
 
@@ -488,7 +491,8 @@ Watch for:
 
 Watch:
 
-- Mission Queue for active tasks
+- Mission Board for tracked tasks
+- Global Runtime Queue for tasks currently running or waiting to execute
 - Feed for Pulse, Dispatch, and activity events
 - Ops for issue state, comments, and runs
 - linked tasks from planner-managed issues

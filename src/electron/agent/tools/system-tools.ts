@@ -31,6 +31,22 @@ const DEFAULT_TIMEOUT = 30 * 1000; // 30 seconds
 const APPLESCRIPT_TIMEOUT_MS = 240 * 1000; // 4 minutes
 const CURRENT_LOCATION_FAILURE_TTL_MS = 2 * 60 * 1000;
 
+type MacOSAppProcessRecord = {
+  pid: number;
+  ppid: number | null;
+  command: string;
+  args: string;
+};
+
+type MacOSLaunchAgentRecord = {
+  path: string;
+  label: string | null;
+  program: string | null;
+  programArguments: string[];
+  domain: "user" | "system";
+  matches: boolean;
+};
+
 function sessionRecallEnabled(): boolean {
   return MemoryFeaturesManager.loadSettings().sessionRecallEnabled !== false;
 }
@@ -815,6 +831,333 @@ export class SystemTools {
   }
 
   /**
+   * Resolve an installed macOS application's bundle identifier before using
+   * AppleScript "application id" targets.
+   */
+  async resolveAppBundleId(appName: string): Promise<{
+    success: boolean;
+    appName: string;
+    bundleId: string;
+    resolvedBy: "app_name" | "bundle_id";
+  }> {
+    if (!appName || typeof appName !== "string" || !appName.trim()) {
+      throw new Error("Invalid app name: must be a non-empty string");
+    }
+    if (os.platform() !== "darwin") {
+      throw new Error("App bundle resolution is only available on macOS");
+    }
+
+    const query = appName.trim();
+    const literal = this.toAppleScriptStringLiteral(query);
+    const attempts: Array<{ label: "app_name" | "bundle_id"; script: string }> = [
+      { label: "app_name", script: `id of application ${literal}` },
+    ];
+    if (/^[A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z0-9._-]+$/.test(query)) {
+      attempts.push({ label: "bundle_id", script: `id of application id ${literal}` });
+    }
+
+    this.daemon.logEvent(this.taskId, "tool_call", {
+      tool: "resolve_app_bundle_id",
+      appName: query,
+    });
+
+    let lastError: unknown;
+    for (const attempt of attempts) {
+      try {
+        const { stdout, stderr } = await execFileAsync("osascript", ["-e", attempt.script], {
+          timeout: DEFAULT_TIMEOUT,
+          maxBuffer: 128 * 1024,
+        });
+        const bundleId = (stdout.trim() || stderr.trim()).trim();
+        if (!bundleId) {
+          throw new Error("osascript returned no bundle identifier");
+        }
+
+        this.daemon.logEvent(this.taskId, "tool_result", {
+          tool: "resolve_app_bundle_id",
+          appName: query,
+          bundleId,
+          resolvedBy: attempt.label,
+        });
+
+        return {
+          success: true,
+          appName: query,
+          bundleId,
+          resolvedBy: attempt.label,
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    const message = this.extractAppleScriptError(lastError);
+    this.daemon.logEvent(this.taskId, "tool_error", {
+      tool: "resolve_app_bundle_id",
+      appName: query,
+      error: message,
+    });
+    throw new Error(`Failed to resolve bundle identifier for "${query}": ${message}`);
+  }
+
+  async findMacOSAppProcesses(input: {
+    query: string;
+    includeRelated?: boolean;
+  }): Promise<{
+    success: boolean;
+    query: string;
+    processes: MacOSAppProcessRecord[];
+  }> {
+    if (os.platform() !== "darwin") {
+      throw new Error("macOS process inspection is only available on macOS");
+    }
+    const query = this.normalizeRequiredQuery(input?.query, "query");
+    const terms = this.buildMacOSAppSearchTerms(query, input?.includeRelated === true);
+
+    this.daemon.logEvent(this.taskId, "tool_call", {
+      tool: "find_macos_app_processes",
+      query,
+      terms,
+    });
+
+    const processes = await this.readMacOSProcesses();
+    const matches = processes.filter((processRecord) =>
+      this.matchesAnySearchTerm(`${processRecord.command}\n${processRecord.args}`, terms),
+    );
+
+    this.daemon.logEvent(this.taskId, "tool_result", {
+      tool: "find_macos_app_processes",
+      query,
+      count: matches.length,
+    });
+
+    return {
+      success: true,
+      query,
+      processes: matches,
+    };
+  }
+
+  async terminateMacOSAppProcesses(input: {
+    query: string;
+    signal?: "TERM" | "KILL";
+    includeRelated?: boolean;
+  }): Promise<{
+    success: boolean;
+    query: string;
+    signal: "TERM" | "KILL";
+    terminated: Array<MacOSAppProcessRecord & { signal: "TERM" | "KILL" }>;
+    remaining: MacOSAppProcessRecord[];
+    skipped: Array<MacOSAppProcessRecord & { reason: string }>;
+  }> {
+    if (os.platform() !== "darwin") {
+      throw new Error("macOS process termination is only available on macOS");
+    }
+    const query = this.normalizeRequiredQuery(input?.query, "query");
+    const signal = input?.signal === "KILL" ? "KILL" : "TERM";
+    const terms = this.buildMacOSAppSearchTerms(query, input?.includeRelated === true);
+    const before = (await this.readMacOSProcesses()).filter((processRecord) =>
+      this.matchesAnySearchTerm(`${processRecord.command}\n${processRecord.args}`, terms),
+    );
+
+    const ownPids = new Set([process.pid, process.ppid].filter((pid): pid is number => Number.isFinite(pid)));
+    const candidates = before.filter((record) => !ownPids.has(record.pid));
+    const skipped = before
+      .filter((record) => ownPids.has(record.pid))
+      .map((record) => ({ ...record, reason: "refusing_to_signal_cowork_process" }));
+
+    const approved = await this.daemon.requestApproval(
+      this.taskId,
+      "terminate_macos_app_processes",
+      `Terminate ${candidates.length} macOS process(es) matching "${query}"`,
+      {
+        query,
+        signal,
+        processes: candidates,
+        skipped,
+      },
+    );
+    if (!approved) {
+      throw new Error("User denied macOS process termination");
+    }
+
+    this.daemon.logEvent(this.taskId, "tool_call", {
+      tool: "terminate_macos_app_processes",
+      query,
+      signal,
+      count: candidates.length,
+    });
+
+    const terminated: Array<MacOSAppProcessRecord & { signal: "TERM" | "KILL" }> = [];
+    const signalName = signal === "KILL" ? "SIGKILL" : "SIGTERM";
+    for (const processRecord of candidates) {
+      try {
+        process.kill(processRecord.pid, signalName);
+        terminated.push({ ...processRecord, signal });
+      } catch (error) {
+        skipped.push({
+          ...processRecord,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    const remaining = (await this.readMacOSProcesses()).filter((processRecord) =>
+      this.matchesAnySearchTerm(`${processRecord.command}\n${processRecord.args}`, terms),
+    );
+
+    this.daemon.logEvent(this.taskId, "tool_result", {
+      tool: "terminate_macos_app_processes",
+      query,
+      signal,
+      terminated: terminated.length,
+      remaining: remaining.length,
+      skipped: skipped.length,
+    });
+
+    return {
+      success: remaining.length === 0,
+      query,
+      signal,
+      terminated,
+      remaining,
+      skipped,
+    };
+  }
+
+  async listMacOSLaunchAgents(input?: {
+    query?: string;
+    includeSystem?: boolean;
+  }): Promise<{
+    success: boolean;
+    query: string | null;
+    agents: MacOSLaunchAgentRecord[];
+  }> {
+    if (os.platform() !== "darwin") {
+      throw new Error("macOS LaunchAgent inspection is only available on macOS");
+    }
+    const query = typeof input?.query === "string" && input.query.trim() ? input.query.trim() : null;
+    const terms = query ? this.buildMacOSAppSearchTerms(query, true) : [];
+    const agents = this.readMacOSLaunchAgents(input?.includeSystem !== false, terms);
+
+    this.daemon.logEvent(this.taskId, "tool_result", {
+      tool: "list_macos_launch_agents",
+      query,
+      count: agents.length,
+      matched: agents.filter((agent) => agent.matches).length,
+    });
+
+    return {
+      success: true,
+      query,
+      agents: query ? agents.filter((agent) => agent.matches) : agents,
+    };
+  }
+
+  async disableMacOSLaunchAgents(input: {
+    query?: string;
+    labels?: string[];
+    paths?: string[];
+    dryRun?: boolean;
+  }): Promise<{
+    success: boolean;
+    dryRun: boolean;
+    disabledDirectory: string;
+    disabled: Array<MacOSLaunchAgentRecord & { disabledPath: string; bootoutStatus: string }>;
+    skipped: Array<MacOSLaunchAgentRecord & { reason: string }>;
+  }> {
+    if (os.platform() !== "darwin") {
+      throw new Error("macOS LaunchAgent disable is only available on macOS");
+    }
+    const dryRun = input?.dryRun === true;
+    const query = typeof input?.query === "string" && input.query.trim() ? input.query.trim() : null;
+    const terms = query ? this.buildMacOSAppSearchTerms(query, true) : [];
+    const labelSet = new Set((input?.labels || []).map((label) => label.trim()).filter(Boolean));
+    const pathSet = new Set((input?.paths || []).map((agentPath) => path.resolve(agentPath)));
+    if (!query && labelSet.size === 0 && pathSet.size === 0) {
+      throw new Error("Provide query, labels, or paths to select LaunchAgents to disable");
+    }
+
+    const allAgents = this.readMacOSLaunchAgents(true, terms);
+    const selected = allAgents.filter((agent) => {
+      if (pathSet.has(path.resolve(agent.path))) return true;
+      if (agent.label && labelSet.has(agent.label)) return true;
+      return query ? agent.matches : false;
+    });
+    const disabledDirectory = path.join(os.homedir(), "Library", "LaunchAgents.disabled-by-cowork");
+
+    const approved = dryRun
+      ? true
+      : await this.daemon.requestApproval(
+          this.taskId,
+          "disable_macos_launch_agents",
+          `Disable ${selected.length} macOS LaunchAgent(s)`,
+          {
+            query,
+            labels: Array.from(labelSet),
+            paths: Array.from(pathSet),
+            disabledDirectory,
+            selected,
+          },
+        );
+    if (!approved) {
+      throw new Error("User denied disabling macOS LaunchAgents");
+    }
+
+    const disabled: Array<MacOSLaunchAgentRecord & { disabledPath: string; bootoutStatus: string }> = [];
+    const skipped: Array<MacOSLaunchAgentRecord & { reason: string }> = [];
+    const uid = typeof process.getuid === "function" ? process.getuid() : null;
+
+    if (!dryRun) {
+      fsSync.mkdirSync(disabledDirectory, { recursive: true });
+    }
+
+    for (const agent of selected) {
+      if (agent.domain !== "user" || !agent.path.startsWith(path.join(os.homedir(), "Library", "LaunchAgents") + path.sep)) {
+        skipped.push({ ...agent, reason: "only_user_launch_agents_can_be_moved_by_this_tool" });
+        continue;
+      }
+
+      let bootoutStatus = "not_attempted";
+      if (!dryRun && agent.label && uid !== null) {
+        try {
+          await execFileAsync("/bin/launchctl", ["bootout", `gui/${uid}`, agent.label], {
+            timeout: DEFAULT_TIMEOUT,
+            maxBuffer: 128 * 1024,
+          });
+          bootoutStatus = "unloaded";
+        } catch (error) {
+          bootoutStatus = `unload_failed: ${this.extractAppleScriptError(error)}`;
+        }
+      }
+
+      const disabledPath = this.nextAvailablePath(path.join(disabledDirectory, path.basename(agent.path)));
+      if (!dryRun) {
+        fsSync.renameSync(agent.path, disabledPath);
+      }
+      disabled.push({ ...agent, disabledPath, bootoutStatus });
+    }
+
+    this.daemon.logEvent(this.taskId, "tool_result", {
+      tool: "disable_macos_launch_agents",
+      query,
+      dryRun,
+      selected: selected.length,
+      disabled: disabled.length,
+      skipped: skipped.length,
+    });
+
+    return {
+      success: skipped.length === 0,
+      dryRun,
+      disabledDirectory,
+      disabled,
+      skipped,
+    };
+  }
+
+  /**
    * Execute AppleScript code on macOS
    * This enables powerful automation capabilities for controlling applications and system features
    */
@@ -909,9 +1252,9 @@ export class SystemTools {
 
     this.daemon.logEvent(this.taskId, "tool_error", {
       tool: "run_applescript",
-      error: this.extractAppleScriptError(lastError),
+      error: this.formatAppleScriptFailure(lastError),
     });
-    throw new Error(`AppleScript execution failed: ${this.extractAppleScriptError(lastError)}`);
+    throw new Error(`AppleScript execution failed: ${this.formatAppleScriptFailure(lastError)}`);
   }
 
   private extractAppleScriptError(error: Any): string {
@@ -926,6 +1269,147 @@ export class SystemTools {
       return error.message.trim();
     }
     return String(error);
+  }
+
+  private formatAppleScriptFailure(error: Any): string {
+    const message = this.extractAppleScriptError(error);
+    const invalidIdMatch = message.match(/application id "([^"]+)"/i);
+    if (!invalidIdMatch) return message;
+    const invalidId = invalidIdMatch[1];
+    return (
+      `${message}\n` +
+      `The bundle identifier "${invalidId}" was not resolvable. ` +
+      `Verify the target with: osascript -e 'id of app "App Name"' before retrying.`
+    );
+  }
+
+  private toAppleScriptStringLiteral(value: string): string {
+    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+
+  private normalizeRequiredQuery(value: unknown, fieldName: string): string {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new Error(`Invalid ${fieldName}: must be a non-empty string`);
+    }
+    return value.trim();
+  }
+
+  private buildMacOSAppSearchTerms(query: string, includeRelated: boolean): string[] {
+    const terms = new Set<string>();
+    const add = (term: string): void => {
+      const normalized = term.trim().toLowerCase();
+      if (normalized) terms.add(normalized);
+    };
+    add(query);
+    if (includeRelated) {
+      const compact = query.toLowerCase().replace(/\s+/g, "");
+      if (compact.includes("perplexity")) {
+        add("perplexity");
+        add("ai.perplexity");
+        add("com.perplexity");
+        add("comet");
+      }
+    }
+    return Array.from(terms);
+  }
+
+  private matchesAnySearchTerm(text: string, terms: string[]): boolean {
+    const haystack = text.toLowerCase();
+    return terms.some((term) => haystack.includes(term));
+  }
+
+  private async readMacOSProcesses(): Promise<MacOSAppProcessRecord[]> {
+    const { stdout } = await execFileAsync("/bin/ps", ["-axo", "pid=,ppid=,comm=,args="], {
+      timeout: DEFAULT_TIMEOUT,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line): MacOSAppProcessRecord | null => {
+        const match = line.match(/^(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/);
+        if (!match) return null;
+        return {
+          pid: Number(match[1]),
+          ppid: Number(match[2]),
+          command: match[3] || "",
+          args: match[4] || "",
+        };
+      })
+      .filter((record): record is MacOSAppProcessRecord => Boolean(record && Number.isFinite(record.pid)));
+  }
+
+  private readMacOSLaunchAgents(
+    includeSystem: boolean,
+    terms: string[],
+  ): MacOSLaunchAgentRecord[] {
+    const userDir = path.join(os.homedir(), "Library", "LaunchAgents");
+    const dirs: Array<{ dir: string; domain: "user" | "system" }> = [{ dir: userDir, domain: "user" }];
+    if (includeSystem) {
+      dirs.push({ dir: "/Library/LaunchAgents", domain: "system" });
+      dirs.push({ dir: "/Library/LaunchDaemons", domain: "system" });
+    }
+
+    const agents: MacOSLaunchAgentRecord[] = [];
+    for (const { dir, domain } of dirs) {
+      let entries: string[] = [];
+      try {
+        entries = fsSync.readdirSync(dir).filter((entry) => entry.endsWith(".plist"));
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        const agentPath = path.join(dir, entry);
+        let content = "";
+        try {
+          content = fsSync.readFileSync(agentPath, "utf8");
+        } catch {
+          continue;
+        }
+        const label = this.extractPlistString(content, "Label");
+        const program = this.extractPlistString(content, "Program");
+        const programArguments = this.extractPlistStringArray(content, "ProgramArguments");
+        const searchable = [agentPath, label, program, ...programArguments, content].filter(Boolean).join("\n");
+        agents.push({
+          path: agentPath,
+          label,
+          program,
+          programArguments,
+          domain,
+          matches: terms.length === 0 ? true : this.matchesAnySearchTerm(searchable, terms),
+        });
+      }
+    }
+    return agents;
+  }
+
+  private extractPlistString(content: string, key: string): string | null {
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = content.match(new RegExp(`<key>\\s*${escapedKey}\\s*</key>\\s*<string>([\\s\\S]*?)</string>`, "i"));
+    return match?.[1]?.trim() || null;
+  }
+
+  private extractPlistStringArray(content: string, key: string): string[] {
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const arrayMatch = content.match(new RegExp(`<key>\\s*${escapedKey}\\s*</key>\\s*<array>([\\s\\S]*?)</array>`, "i"));
+    if (!arrayMatch?.[1]) return [];
+    return Array.from(arrayMatch[1].matchAll(/<string>([\s\S]*?)<\/string>/gi)).map((match) =>
+      (match[1] || "").trim(),
+    );
+  }
+
+  private nextAvailablePath(targetPath: string): string {
+    if (!fsSync.existsSync(targetPath)) return targetPath;
+    const parsed = path.parse(targetPath);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    let candidate = path.join(parsed.dir, `${parsed.name}.${stamp}${parsed.ext}`);
+    let suffix = 1;
+    while (fsSync.existsSync(candidate)) {
+      candidate = path.join(parsed.dir, `${parsed.name}.${stamp}.${suffix}${parsed.ext}`);
+      suffix += 1;
+    }
+    return candidate;
   }
 
   private stripAppleScriptTimeoutWrapper(script: string): string | null {
@@ -1961,12 +2445,104 @@ export class SystemTools {
         },
       },
       {
+        name: "resolve_app_bundle_id",
+        description:
+          "Resolve an installed macOS app name or existing bundle identifier to the exact bundle identifier. " +
+          "Use before AppleScript application id targets, for example before run_applescript with application id.",
+        input_schema: {
+          type: "object",
+          properties: {
+            appName: {
+              type: "string",
+              description: 'Installed app name or bundle identifier, for example "Perplexity".',
+            },
+          },
+          required: ["appName"],
+        },
+      },
+      {
+        name: "find_macos_app_processes",
+        description:
+          "Find running macOS processes matching an app name or bundle-related query without shell pipelines. " +
+          "Use for native app troubleshooting before terminating or reporting process state.",
+        input_schema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: 'App/process query, for example "Perplexity".' },
+            includeRelated: {
+              type: "boolean",
+              description: "Include known related helper terms for the app query when available.",
+            },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "terminate_macos_app_processes",
+        description:
+          "Terminate running macOS processes matching an app name or bundle-related query without shell pipelines. " +
+          "Use when a native app must be quit or force-quit after user approval.",
+        input_schema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: 'App/process query, for example "Perplexity".' },
+            signal: { type: "string", enum: ["TERM", "KILL"], description: "TERM first, KILL for force quit." },
+            includeRelated: {
+              type: "boolean",
+              description: "Include known related helper terms for the app query when available.",
+            },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "list_macos_launch_agents",
+        description:
+          "List macOS LaunchAgents/LaunchDaemons matching an app query without shell pipelines. " +
+          "Use to diagnose apps that relaunch after quitting.",
+        input_schema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: 'Optional app query, for example "Perplexity".' },
+            includeSystem: {
+              type: "boolean",
+              description: "Include /Library LaunchAgents and LaunchDaemons in addition to the user's LaunchAgents.",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "disable_macos_launch_agents",
+        description:
+          "Unload and move matching user LaunchAgent plists into ~/Library/LaunchAgents.disabled-by-cowork. " +
+          "Use to remediate apps that relaunch after quitting; run with dryRun first when unsure.",
+        input_schema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: 'App query, for example "Perplexity".' },
+            labels: {
+              type: "array",
+              items: { type: "string" },
+              description: "Specific LaunchAgent labels to disable.",
+            },
+            paths: {
+              type: "array",
+              items: { type: "string" },
+              description: "Specific LaunchAgent plist paths to disable.",
+            },
+            dryRun: { type: "boolean", description: "Preview matching agents without moving files." },
+          },
+          required: [],
+        },
+      },
+      {
         name: "run_applescript",
         description:
           "Execute exact AppleScript / osascript code on macOS. " +
           "Use this when the user explicitly asks for AppleScript, or as a low-level fallback " +
           "after screenshot/click/type_text/keypress-style computer-use tools cannot complete a specific native GUI step. " +
-          "Do not prefer this first for ordinary native app interaction. Only available on macOS.",
+          "Do not prefer this first for ordinary native app interaction. Verify app names or bundle identifiers before using application id. Only available on macOS.",
         input_schema: {
           type: "object",
           properties: {

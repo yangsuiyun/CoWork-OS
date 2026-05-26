@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
+import { isIgnorableDevLogLine } from "./dev-log-utils.mjs";
 
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const DEFAULT_PORT = 5173;
@@ -53,12 +54,22 @@ async function findAvailablePort(startPort) {
 }
 
 function pipePrefixedOutput(child, label) {
+  let loggedSuppressedNativeNoise = false;
   const write = (stream, chunk) => {
     const lines = chunk.toString("utf8").split(/\r?\n/);
     const trailingEmpty = lines.at(-1) === "";
     for (let i = 0; i < lines.length; i += 1) {
       const line = lines[i];
       if (!line && i === lines.length - 1 && trailingEmpty) continue;
+      if (isIgnorableDevLogLine(line)) {
+        if (!loggedSuppressedNativeNoise) {
+          loggedSuppressedNativeNoise = true;
+          process.stdout.write(
+            `[${label}] [dev-start] Suppressed repeated Electron/macOS native menu warning.\n`,
+          );
+        }
+        continue;
+      }
       stream.write(`[${label}] ${line}\n`);
     }
   };

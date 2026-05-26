@@ -3,6 +3,9 @@ import { v4 as uuidv4 } from "uuid";
 import {
   Task,
   TaskEvent,
+  TaskEventDetailResult,
+  TaskTimelinePageRequest,
+  TaskTimelinePageResult,
   TaskTraceRunDetail,
   TaskTraceRunSummary,
   EventType,
@@ -30,6 +33,10 @@ import {
 import { isActiveTaskStatus, normalizeTaskLifecycleState } from "../../shared/task-status";
 import { isTimelineEventType, normalizeTaskEventToTimelineV2 } from "../../shared/timeline-v2";
 import { normalizeTaskEvents } from "../agent/timeline/timeline-normalizer";
+import {
+  sanitizeTimelineEventForStorage,
+  sanitizeTimelinePayloadForStorage,
+} from "../agent/timeline-payload-sanitizer";
 import {
   buildTaskTraceMetrics,
   buildTaskTraceRunSummaries,
@@ -296,6 +303,84 @@ export class TaskRepository {
   };
 
   constructor(private db: Database.Database) {}
+
+  private static readonly SIDEBAR_ACTIVE_STATUSES = new Set([
+    "executing",
+    "planning",
+    "interrupted",
+    "paused",
+    "blocked",
+  ]);
+
+  private static buildSidebarCursorPredicate(cursor?: {
+    id?: string;
+    pinned?: boolean;
+    status?: string;
+    updatedAt?: number;
+    createdAt?: number;
+  }): { sql: string; args: Any[] } {
+    if (!cursor?.id) return { sql: "", args: [] };
+    const pinnedRank = cursor.pinned ? 0 : 1;
+    const activeRank = TaskRepository.SIDEBAR_ACTIVE_STATUSES.has(String(cursor.status || ""))
+      ? 0
+      : 1;
+    const updatedAt =
+      typeof cursor.updatedAt === "number" && Number.isFinite(cursor.updatedAt)
+        ? Math.floor(cursor.updatedAt)
+        : typeof cursor.createdAt === "number" && Number.isFinite(cursor.createdAt)
+          ? Math.floor(cursor.createdAt)
+          : 0;
+    const createdAt =
+      typeof cursor.createdAt === "number" && Number.isFinite(cursor.createdAt)
+        ? Math.floor(cursor.createdAt)
+        : 0;
+    return {
+      sql: `
+        (
+          CASE WHEN COALESCE(is_pinned, 0) = 1 THEN 0 ELSE 1 END > ?
+          OR (
+            CASE WHEN COALESCE(is_pinned, 0) = 1 THEN 0 ELSE 1 END = ?
+            AND CASE WHEN status IN ('executing', 'planning', 'interrupted', 'paused', 'blocked') THEN 0 ELSE 1 END > ?
+          )
+          OR (
+            CASE WHEN COALESCE(is_pinned, 0) = 1 THEN 0 ELSE 1 END = ?
+            AND CASE WHEN status IN ('executing', 'planning', 'interrupted', 'paused', 'blocked') THEN 0 ELSE 1 END = ?
+            AND COALESCE(updated_at, created_at) < ?
+          )
+          OR (
+            CASE WHEN COALESCE(is_pinned, 0) = 1 THEN 0 ELSE 1 END = ?
+            AND CASE WHEN status IN ('executing', 'planning', 'interrupted', 'paused', 'blocked') THEN 0 ELSE 1 END = ?
+            AND COALESCE(updated_at, created_at) = ?
+            AND created_at < ?
+          )
+          OR (
+            CASE WHEN COALESCE(is_pinned, 0) = 1 THEN 0 ELSE 1 END = ?
+            AND CASE WHEN status IN ('executing', 'planning', 'interrupted', 'paused', 'blocked') THEN 0 ELSE 1 END = ?
+            AND COALESCE(updated_at, created_at) = ?
+            AND created_at = ?
+            AND id < ?
+          )
+        )
+      `,
+      args: [
+        pinnedRank,
+        pinnedRank,
+        activeRank,
+        pinnedRank,
+        activeRank,
+        updatedAt,
+        pinnedRank,
+        activeRank,
+        updatedAt,
+        createdAt,
+        pinnedRank,
+        activeRank,
+        updatedAt,
+        createdAt,
+        cursor.id,
+      ],
+    };
+  }
 
   private static normalizePromptFields(
     task: Omit<Task, "id" | "createdAt" | "updatedAt">,
@@ -583,6 +668,13 @@ export class TaskRepository {
     options?: {
       prioritizeSidebar?: boolean;
       excludeSources?: Array<NonNullable<Task["source"]>>;
+      cursor?: {
+        id?: string;
+        pinned?: boolean;
+        status?: string;
+        updatedAt?: number;
+        createdAt?: number;
+      };
     },
   ): Task[] {
     const orderBy = options?.prioritizeSidebar
@@ -591,24 +683,170 @@ export class TaskRepository {
         CASE WHEN COALESCE(is_pinned, 0) = 1 THEN 0 ELSE 1 END,
         CASE WHEN status IN ('executing', 'planning', 'interrupted', 'paused', 'blocked') THEN 0 ELSE 1 END,
         COALESCE(updated_at, created_at) DESC,
-        created_at DESC
+        created_at DESC,
+        id DESC
       `
-      : "ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC";
+      : "ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC, id DESC";
     const excludedSources = Array.isArray(options?.excludeSources)
       ? options.excludeSources.filter((source): source is NonNullable<Task["source"]> => Boolean(source))
       : [];
-    const where =
-      excludedSources.length > 0
-        ? `WHERE COALESCE(source, 'manual') NOT IN (${excludedSources.map(() => "?").join(", ")})`
-        : "";
+    const cursor = options?.prioritizeSidebar
+      ? TaskRepository.buildSidebarCursorPredicate(options.cursor)
+      : { sql: "", args: [] };
+    const whereClauses = [
+      ...(excludedSources.length > 0
+        ? [`COALESCE(source, 'manual') NOT IN (${excludedSources.map(() => "?").join(", ")})`]
+        : []),
+      ...(cursor.sql ? [cursor.sql] : []),
+    ];
+    const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
     const stmt = this.db.prepare(`
       SELECT * FROM tasks
       ${where}
       ${orderBy}
       LIMIT ? OFFSET ?
     `);
-    const rows = stmt.all(...excludedSources, limit, offset) as Any[];
+    const rows = stmt.all(...excludedSources, ...cursor.args, limit, offset) as Any[];
     return rows.map((row) => this.mapRowToTask(row));
+  }
+
+  findSidebarSummaries(
+    limit = 100,
+    offset = 0,
+    options?: {
+      prioritizeSidebar?: boolean;
+      excludeSources?: Array<NonNullable<Task["source"]>>;
+      cursor?: {
+        id?: string;
+        pinned?: boolean;
+        status?: string;
+        updatedAt?: number;
+        createdAt?: number;
+      };
+    },
+  ): Task[] {
+    const orderBy = options?.prioritizeSidebar
+      ? `
+      ORDER BY
+        CASE WHEN COALESCE(is_pinned, 0) = 1 THEN 0 ELSE 1 END,
+        CASE WHEN status IN ('executing', 'planning', 'interrupted', 'paused', 'blocked') THEN 0 ELSE 1 END,
+        COALESCE(updated_at, created_at) DESC,
+        created_at DESC,
+        id DESC
+      `
+      : "ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC, id DESC";
+    const excludedSources = Array.isArray(options?.excludeSources)
+      ? options.excludeSources.filter((source): source is NonNullable<Task["source"]> => Boolean(source))
+      : [];
+    const cursor = options?.prioritizeSidebar
+      ? TaskRepository.buildSidebarCursorPredicate(options.cursor)
+      : { sql: "", args: [] };
+    const whereClauses = [
+      ...(excludedSources.length > 0
+        ? [`COALESCE(source, 'manual') NOT IN (${excludedSources.map(() => "?").join(", ")})`]
+        : []),
+      ...(cursor.sql ? [cursor.sql] : []),
+    ];
+    const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        title,
+        status,
+        workspace_id,
+        created_at,
+        updated_at,
+        completed_at,
+        last_run_duration_ms,
+        is_pinned,
+        parent_task_id,
+        agent_type,
+        assigned_agent_role_id,
+        worker_role,
+        board_column,
+        priority,
+        comparison_session_id,
+        session_id,
+        branch_from_task_id,
+        branch_from_event_id,
+        branch_label,
+        resume_strategy,
+        source,
+        strategy_lock,
+        budget_profile,
+        terminal_status,
+        failure_class,
+        verification_verdict,
+        continuation_count,
+        awaiting_user_input_reason_code,
+        worktree_path,
+        target_node_id,
+        company_id,
+        goal_id,
+        project_id,
+        issue_id,
+        heartbeat_run_id,
+        request_depth,
+        billing_code,
+        SUBSTR(
+          COALESCE(NULLIF(user_prompt, ''), NULLIF(raw_prompt, ''), NULLIF(prompt, ''), ''),
+          1,
+          1024
+        ) AS sidebar_prompt_preview,
+        SUBSTR(COALESCE(result_summary, ''), 1, 512) AS result_summary,
+        SUBSTR(COALESCE(semantic_summary, ''), 1, 512) AS semantic_summary,
+        CASE
+          WHEN agent_config IS NOT NULL AND json_valid(agent_config)
+          THEN json_extract(agent_config, '$.videoGenerationMode')
+          ELSE NULL
+        END AS agent_config_video_generation_mode,
+        CASE
+          WHEN agent_config IS NOT NULL AND json_valid(agent_config)
+          THEN json_extract(agent_config, '$.taskDomain')
+          ELSE NULL
+        END AS agent_config_task_domain,
+        CASE
+          WHEN agent_config IS NOT NULL AND json_valid(agent_config)
+          THEN json_extract(agent_config, '$.multitaskMode')
+          ELSE NULL
+        END AS agent_config_multitask_mode,
+        CASE
+          WHEN agent_config IS NOT NULL AND json_valid(agent_config)
+          THEN json_extract(agent_config, '$.collaborativeMode')
+          ELSE NULL
+        END AS agent_config_collaborative_mode,
+        CASE
+          WHEN agent_config IS NOT NULL AND json_valid(agent_config)
+          THEN json_extract(agent_config, '$.multiLlmMode')
+          ELSE NULL
+        END AS agent_config_multi_llm_mode,
+        CASE
+          WHEN agent_config IS NOT NULL AND json_valid(agent_config)
+          THEN json_extract(agent_config, '$.autonomousMode')
+          ELSE NULL
+        END AS agent_config_autonomous_mode,
+        CASE
+          WHEN agent_config IS NOT NULL AND json_valid(agent_config)
+          THEN json_extract(agent_config, '$.conversationMode')
+          ELSE NULL
+        END AS agent_config_conversation_mode,
+        CASE
+          WHEN agent_config IS NOT NULL AND json_valid(agent_config)
+          THEN json_extract(agent_config, '$.executionMode')
+          ELSE NULL
+        END AS agent_config_execution_mode,
+        CASE
+          WHEN agent_config IS NOT NULL AND json_valid(agent_config)
+          THEN json_extract(agent_config, '$.executionModeSource')
+          ELSE NULL
+        END AS agent_config_execution_mode_source
+      FROM tasks
+      ${where}
+      ${orderBy}
+      LIMIT ? OFFSET ?
+    `);
+    const rows = stmt.all(...excludedSources, ...cursor.args, limit, offset) as Any[];
+    return rows.map((row) => this.mapRowToSidebarTask(row));
   }
 
   /**
@@ -1084,6 +1322,93 @@ export class TaskRepository {
     });
   }
 
+  private mapRowToSidebarTask(row: Any): Task {
+    type SidebarAgentConfig = NonNullable<Task["agentConfig"]>;
+    const agentConfig: SidebarAgentConfig = {};
+    const setBooleanAgentConfig = (
+      key: "videoGenerationMode" | "multitaskMode" | "collaborativeMode" | "multiLlmMode" | "autonomousMode",
+      value: unknown,
+    ): void => {
+      if (value === null || value === undefined) return;
+      agentConfig[key] = value === true || value === 1 || value === "true";
+    };
+
+    setBooleanAgentConfig("videoGenerationMode", row.agent_config_video_generation_mode);
+    setBooleanAgentConfig("multitaskMode", row.agent_config_multitask_mode);
+    setBooleanAgentConfig("collaborativeMode", row.agent_config_collaborative_mode);
+    setBooleanAgentConfig("multiLlmMode", row.agent_config_multi_llm_mode);
+    setBooleanAgentConfig("autonomousMode", row.agent_config_autonomous_mode);
+
+    if (typeof row.agent_config_task_domain === "string") {
+      agentConfig.taskDomain = row.agent_config_task_domain as SidebarAgentConfig["taskDomain"];
+    }
+    if (typeof row.agent_config_conversation_mode === "string") {
+      agentConfig.conversationMode =
+        row.agent_config_conversation_mode as SidebarAgentConfig["conversationMode"];
+    }
+    if (typeof row.agent_config_execution_mode === "string") {
+      agentConfig.executionMode =
+        row.agent_config_execution_mode as SidebarAgentConfig["executionMode"];
+    }
+    if (typeof row.agent_config_execution_mode_source === "string") {
+      agentConfig.executionModeSource =
+        row.agent_config_execution_mode_source as SidebarAgentConfig["executionModeSource"];
+    }
+
+    const hasAgentConfig = Object.keys(agentConfig).length > 0;
+
+    return normalizeTaskLifecycleState({
+      id: row.id,
+      title: row.title,
+      prompt: "",
+      sidebarPromptPreview: row.sidebar_prompt_preview || undefined,
+      status: row.status,
+      workspaceId: row.workspace_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at || undefined,
+      lastRunDurationMs:
+        typeof row.last_run_duration_ms === "number" && Number.isFinite(row.last_run_duration_ms)
+          ? Math.max(0, Math.floor(row.last_run_duration_ms))
+          : undefined,
+      pinned: Number(row.is_pinned) === 1,
+      parentTaskId: row.parent_task_id || undefined,
+      agentType: row.agent_type || undefined,
+      agentConfig: hasAgentConfig ? agentConfig : undefined,
+      resultSummary: row.result_summary || undefined,
+      assignedAgentRoleId: row.assigned_agent_role_id || undefined,
+      workerRole: row.worker_role || undefined,
+      boardColumn: row.board_column || undefined,
+      priority: row.priority ?? undefined,
+      worktreePath: row.worktree_path || undefined,
+      comparisonSessionId: row.comparison_session_id || undefined,
+      sessionId: row.session_id || undefined,
+      branchFromTaskId: row.branch_from_task_id || undefined,
+      branchFromEventId: row.branch_from_event_id || undefined,
+      branchLabel: row.branch_label || undefined,
+      resumeStrategy: row.resume_strategy || undefined,
+      source: (row.source as Task["source"]) || undefined,
+      strategyLock: Number(row.strategy_lock) === 1,
+      budgetProfile: row.budget_profile || undefined,
+      terminalStatus: row.terminal_status || undefined,
+      failureClass: row.failure_class || undefined,
+      verificationVerdict: row.verification_verdict || undefined,
+      continuationCount:
+        typeof row.continuation_count === "number" ? row.continuation_count : undefined,
+      awaitingUserInputReasonCode: row.awaiting_user_input_reason_code || undefined,
+      companyId: row.company_id || undefined,
+      goalId: row.goal_id || undefined,
+      projectId: row.project_id || undefined,
+      issueId: row.issue_id || undefined,
+      heartbeatRunId: row.heartbeat_run_id || undefined,
+      targetNodeId: row.target_node_id || undefined,
+      requestDepth:
+        typeof row.request_depth === "number" ? row.request_depth : undefined,
+      billingCode: row.billing_code || undefined,
+      semanticSummary: row.semantic_summary || undefined,
+    });
+  }
+
   findByTargetNodeId(nodeId: string, limit = 50): Task[] {
     const stmt = this.db.prepare(`
       SELECT * FROM tasks
@@ -1301,8 +1626,26 @@ export class TaskEventRepository {
     "task_analysis",
     "executing",
   ] as const;
+  private static readonly DEFAULT_TIMELINE_PAGE_LIMIT = 160;
+  private static readonly MAX_TIMELINE_PAGE_LIMIT = 600;
+  private static readonly DEFAULT_TIMELINE_PAGE_BYTE_LIMIT = 512 * 1024;
+  private static readonly MAX_TIMELINE_PAGE_BYTE_LIMIT = 2 * 1024 * 1024;
+  private static readonly DEFAULT_TIMELINE_SINGLE_EVENT_BYTE_LIMIT = 64 * 1024;
+  private static readonly MAX_TIMELINE_SINGLE_EVENT_BYTE_LIMIT = 256 * 1024;
+  private static readonly TRUNCATED_PAYLOAD_PREVIEW_CHARS = 4096;
+  private static readonly TIMELINE_ADDITIONAL_TASK_ID_CHUNK_SIZE = 500;
 
   constructor(private db: Database.Database) {}
+
+  private static normalizePositiveInteger(
+    value: unknown,
+    fallback: number,
+    min: number,
+    max: number,
+  ): number {
+    const numeric = typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : fallback;
+    return Math.min(max, Math.max(min, numeric));
+  }
 
   create(event: Omit<TaskEvent, "id"> & { id?: string }): TaskEvent {
     const newEvent: TaskEvent = {
@@ -1322,6 +1665,8 @@ export class TaskEventRepository {
     if (!newEvent.eventId) {
       newEvent.eventId = newEvent.id;
     }
+
+    const storedEvent = sanitizeTimelineEventForStorage(newEvent);
 
     const stmt = this.db.prepare(`
       INSERT INTO task_events (
@@ -1344,24 +1689,26 @@ export class TaskEventRepository {
     `);
 
     stmt.run(
-      newEvent.id,
-      newEvent.taskId,
-      newEvent.timestamp,
-      newEvent.type,
-      JSON.stringify(newEvent.payload),
+      storedEvent.id,
+      storedEvent.taskId,
+      storedEvent.timestamp,
+      storedEvent.type,
+      JSON.stringify(storedEvent.payload),
       2,
-      newEvent.eventId || newEvent.id,
-      typeof newEvent.seq === "number" ? newEvent.seq : null,
-      typeof newEvent.ts === "number" ? newEvent.ts : newEvent.timestamp,
-      typeof newEvent.status === "string" ? newEvent.status : null,
-      typeof newEvent.stepId === "string" ? newEvent.stepId : null,
-      typeof newEvent.groupId === "string" ? newEvent.groupId : null,
-      typeof newEvent.actor === "string" ? newEvent.actor : null,
-      typeof newEvent.legacyType === "string" ? newEvent.legacyType : null,
+      storedEvent.eventId || storedEvent.id,
+      typeof storedEvent.seq === "number" ? storedEvent.seq : null,
+      typeof storedEvent.ts === "number" ? storedEvent.ts : storedEvent.timestamp,
+      typeof storedEvent.status === "string" ? storedEvent.status : null,
+      typeof storedEvent.stepId === "string" ? storedEvent.stepId : null,
+      typeof storedEvent.groupId === "string" ? storedEvent.groupId : null,
+      typeof storedEvent.actor === "string" ? storedEvent.actor : null,
+      typeof storedEvent.legacyType === "string" ? storedEvent.legacyType : null,
     );
 
     const effectiveType = String(
-      (typeof newEvent.legacyType === "string" && newEvent.legacyType) || newEvent.type || "",
+      (typeof storedEvent.legacyType === "string" && storedEvent.legacyType) ||
+        storedEvent.type ||
+        "",
     );
     if (
       effectiveType === "skill_used" ||
@@ -1375,20 +1722,20 @@ export class TaskEventRepository {
       try {
         const row = this.db
           .prepare("SELECT workspace_id FROM tasks WHERE id = ?")
-          .get(newEvent.taskId) as { workspace_id: string } | undefined;
-        UsageInsightsProjector.getIfInitialized()?.enqueueTaskEvent(row?.workspace_id, newEvent);
+          .get(storedEvent.taskId) as { workspace_id: string } | undefined;
+        UsageInsightsProjector.getIfInitialized()?.enqueueTaskEvent(row?.workspace_id, storedEvent);
       } catch {
         // Best-effort cache invalidation only.
       }
     }
 
     try {
-      enqueueTaskEventTelemetry(newEvent);
+      enqueueTaskEventTelemetry(storedEvent);
     } catch {
       // Best-effort telemetry only.
     }
 
-    return newEvent;
+    return storedEvent;
   }
 
   findByTaskId(taskId: string): TaskEvent[] {
@@ -1447,6 +1794,339 @@ export class TaskEventRepository {
     return this.mapRowsToEvents(rows).events;
   }
 
+  findTimelinePage(request: TaskTimelinePageRequest): TaskTimelinePageResult {
+    const taskId = typeof request.taskId === "string" ? request.taskId.trim() : "";
+    if (!taskId) {
+      return {
+        taskId: "",
+        events: [],
+        hasMoreHistory: false,
+        nextCursor: null,
+        summary: {
+          eventCount: 0,
+          payloadBytes: 0,
+          truncatedEventCount: 0,
+          largestEventPayloadBytes: 0,
+        },
+      };
+    }
+
+    const safeLimit = TaskEventRepository.normalizePositiveInteger(
+      request.limit,
+      TaskEventRepository.DEFAULT_TIMELINE_PAGE_LIMIT,
+      1,
+      TaskEventRepository.MAX_TIMELINE_PAGE_LIMIT,
+    );
+    const byteLimit = TaskEventRepository.normalizePositiveInteger(
+      request.byteLimit,
+      TaskEventRepository.DEFAULT_TIMELINE_PAGE_BYTE_LIMIT,
+      32 * 1024,
+      TaskEventRepository.MAX_TIMELINE_PAGE_BYTE_LIMIT,
+    );
+    const singleEventByteLimit = TaskEventRepository.normalizePositiveInteger(
+      request.singleEventByteLimit,
+      TaskEventRepository.DEFAULT_TIMELINE_SINGLE_EVENT_BYTE_LIMIT,
+      8 * 1024,
+      TaskEventRepository.MAX_TIMELINE_SINGLE_EVENT_BYTE_LIMIT,
+    );
+    const additionalTaskIds = Array.from(
+      new Set(
+        (Array.isArray(request.additionalTaskIds) ? request.additionalTaskIds : [])
+          .map((value) => (typeof value === "string" ? value.trim() : ""))
+          .filter((value) => value.length > 0 && value !== taskId),
+      ),
+    );
+    const additionalTaskEventTypes = Array.from(
+      new Set(
+        (Array.isArray(request.additionalTaskEventTypes)
+          ? request.additionalTaskEventTypes
+          : []
+        )
+          .map((value) => (typeof value === "string" ? value.trim() : ""))
+          .filter((value) => value.length > 0),
+      ),
+    );
+
+    const cursor = request.cursor;
+    const cursorOrder =
+      cursor && typeof cursor.order === "number" && Number.isFinite(cursor.order)
+        ? Math.floor(cursor.order)
+        : null;
+    const cursorTimestamp =
+      cursor && typeof cursor.timestamp === "number" && Number.isFinite(cursor.timestamp)
+        ? Math.floor(cursor.timestamp)
+        : null;
+    const cursorId =
+      cursor && typeof cursor.id === "string" && cursor.id.trim().length > 0
+        ? cursor.id.trim()
+        : null;
+    const cursorWhere =
+      cursorOrder !== null && cursorTimestamp !== null && cursorId
+        ? "AND (COALESCE(seq, timestamp) < ? OR (COALESCE(seq, timestamp) = ? AND (timestamp < ? OR (timestamp = ? AND id < ?))))"
+        : cursorOrder !== null && cursorTimestamp !== null
+          ? "AND (COALESCE(seq, timestamp) < ? OR (COALESCE(seq, timestamp) = ? AND timestamp < ?))"
+          : "";
+    const cursorArgs: Any[] =
+      cursorOrder !== null && cursorTimestamp !== null && cursorId
+        ? [cursorOrder, cursorOrder, cursorTimestamp, cursorTimestamp, cursorId]
+        : cursorOrder !== null && cursorTimestamp !== null
+          ? [cursorOrder, cursorOrder, cursorTimestamp]
+          : [];
+    const selectRows = (scopeWhere: string, scopeArgs: Any[]): Any[] =>
+      this.db
+        .prepare(`
+        SELECT
+          *,
+          COALESCE(seq, timestamp) AS timeline_order,
+          LENGTH(COALESCE(payload, '')) AS payload_bytes
+        FROM task_events
+        WHERE ${scopeWhere}
+          ${cursorWhere}
+        ORDER BY COALESCE(seq, timestamp) DESC, timestamp DESC, id DESC
+        LIMIT ?
+      `)
+        .all(...scopeArgs, ...cursorArgs, safeLimit + 1) as Any[];
+
+    let rows: Any[];
+    if (additionalTaskIds.length > 0 && additionalTaskEventTypes.length > 0) {
+      rows = selectRows("task_id = ?", [taskId]);
+      const typePlaceholders = additionalTaskEventTypes.map(() => "?").join(", ");
+      for (
+        let index = 0;
+        index < additionalTaskIds.length;
+        index += TaskEventRepository.TIMELINE_ADDITIONAL_TASK_ID_CHUNK_SIZE
+      ) {
+        const chunk = additionalTaskIds.slice(
+          index,
+          index + TaskEventRepository.TIMELINE_ADDITIONAL_TASK_ID_CHUNK_SIZE,
+        );
+        const taskPlaceholders = chunk.map(() => "?").join(", ");
+        rows.push(
+          ...selectRows(
+            `task_id IN (${taskPlaceholders}) AND COALESCE(legacy_type, type) IN (${typePlaceholders})`,
+            [...chunk, ...additionalTaskEventTypes],
+          ),
+        );
+      }
+      const seen = new Set<string>();
+      rows = rows
+        .sort((a, b) => {
+          const orderDelta =
+            (Number(b.timeline_order ?? b.seq ?? b.timestamp) || 0) -
+            (Number(a.timeline_order ?? a.seq ?? a.timestamp) || 0);
+          if (orderDelta !== 0) return orderDelta;
+          const timestampDelta = (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0);
+          if (timestampDelta !== 0) return timestampDelta;
+          return String(b.id ?? "").localeCompare(String(a.id ?? ""));
+        })
+        .filter((row) => {
+          const id = String(row.id ?? "");
+          if (!id) return true;
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        })
+        .slice(0, safeLimit + 1);
+    } else {
+      rows = selectRows("task_id = ?", [taskId]);
+    }
+
+    const selectedRows: Any[] = [];
+    let payloadBytes = 0;
+    let largestEventPayloadBytes = 0;
+    let truncatedEventCount = 0;
+    let stoppedByByteLimit = false;
+
+    for (const row of rows.slice(0, safeLimit)) {
+      const rowPayloadBytes =
+        typeof row.payload_bytes === "number" && Number.isFinite(row.payload_bytes)
+          ? row.payload_bytes
+          : Buffer.byteLength(String(row.payload ?? ""), "utf8");
+      largestEventPayloadBytes = Math.max(largestEventPayloadBytes, rowPayloadBytes);
+      const nextPayloadBytes = payloadBytes + Math.min(rowPayloadBytes, singleEventByteLimit);
+      if (selectedRows.length > 0 && nextPayloadBytes > byteLimit) {
+        stoppedByByteLimit = true;
+        break;
+      }
+
+      payloadBytes = nextPayloadBytes;
+      if (rowPayloadBytes > singleEventByteLimit) {
+        truncatedEventCount += 1;
+        selectedRows.push(this.buildTimelineTruncatedPayloadRow(row, rowPayloadBytes));
+      } else {
+        selectedRows.push(row);
+      }
+    }
+
+    if (selectedRows.length === 0 && rows.length > 0) {
+      const row = rows[0];
+      const rowPayloadBytes =
+        typeof row.payload_bytes === "number" && Number.isFinite(row.payload_bytes)
+          ? row.payload_bytes
+          : Buffer.byteLength(String(row.payload ?? ""), "utf8");
+      largestEventPayloadBytes = Math.max(largestEventPayloadBytes, rowPayloadBytes);
+      payloadBytes = Math.min(rowPayloadBytes, singleEventByteLimit);
+      truncatedEventCount = rowPayloadBytes > singleEventByteLimit ? 1 : 0;
+      selectedRows.push(
+        rowPayloadBytes > singleEventByteLimit
+          ? this.buildTimelineTruncatedPayloadRow(row, rowPayloadBytes)
+          : row,
+      );
+    }
+
+    const oldestSelected = selectedRows[selectedRows.length - 1];
+    const planContextRow =
+      cursorWhere.length === 0
+        ? this.findLatestTimelineContextRow(taskId, "plan_created", selectedRows)
+        : null;
+    const selectedRowsForEvents = planContextRow ? [...selectedRows, planContextRow] : selectedRows;
+    if (planContextRow) {
+      const planPayloadBytes =
+        typeof planContextRow.payload_bytes === "number" && Number.isFinite(planContextRow.payload_bytes)
+          ? planContextRow.payload_bytes
+          : Buffer.byteLength(String(planContextRow.payload ?? ""), "utf8");
+      payloadBytes += planPayloadBytes;
+      largestEventPayloadBytes = Math.max(largestEventPayloadBytes, planPayloadBytes);
+    }
+
+    const selectedRowsAscending = [...selectedRowsForEvents].sort((a, b) => {
+      const aOrder = Number(a.timeline_order ?? a.seq ?? a.timestamp) || 0;
+      const bOrder = Number(b.timeline_order ?? b.seq ?? b.timestamp) || 0;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      const timestampDelta = (Number(a.timestamp) || 0) - (Number(b.timestamp) || 0);
+      if (timestampDelta !== 0) return timestampDelta;
+      return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+    });
+    const events = this.mapRowsToEvents(selectedRowsAscending, {
+      persistMigrations: false,
+    }).events;
+    const hasMoreHistory =
+      stoppedByByteLimit || rows.length > safeLimit || selectedRows.length < Math.min(rows.length, safeLimit);
+    const nextCursor =
+      hasMoreHistory && oldestSelected
+        ? {
+            order: Number(oldestSelected.timeline_order ?? oldestSelected.seq ?? oldestSelected.timestamp) || 0,
+            timestamp: Number(oldestSelected.timestamp) || 0,
+            id: typeof oldestSelected.id === "string" ? oldestSelected.id : undefined,
+          }
+        : null;
+
+    return {
+      taskId,
+      events,
+      hasMoreHistory,
+      nextCursor,
+      summary: {
+        eventCount: events.length,
+        payloadBytes,
+        truncatedEventCount,
+        largestEventPayloadBytes,
+        ...this.deriveTimelinePageSummary(events),
+      },
+      warnings: this.buildTimelinePageWarnings(taskId, payloadBytes, largestEventPayloadBytes, truncatedEventCount),
+    };
+  }
+
+  private findLatestTimelineContextRow(
+    taskId: string,
+    effectiveType: string,
+    selectedRows: Any[],
+  ): Any | null {
+    if (!taskId || !effectiveType) return null;
+    const selectedIds = new Set(
+      selectedRows
+        .map((row) => (typeof row.id === "string" ? row.id : ""))
+        .filter((id) => id.length > 0),
+    );
+    const row = this.db
+      .prepare(`
+        SELECT
+          *,
+          COALESCE(seq, timestamp) AS timeline_order,
+          LENGTH(COALESCE(payload, '')) AS payload_bytes
+        FROM task_events
+        WHERE task_id = ?
+          AND COALESCE(legacy_type, type) IN (?)
+        ORDER BY COALESCE(seq, timestamp) DESC, timestamp DESC, id DESC
+        LIMIT 1
+      `)
+      .get(taskId, effectiveType) as Any;
+    if (!row || selectedIds.has(String(row.id ?? ""))) return null;
+    return row;
+  }
+
+  findEventDetailById(
+    eventId: string,
+    scope?: {
+      taskId?: string;
+      additionalTaskIds?: string[];
+      additionalTaskEventTypes?: string[];
+    },
+  ): TaskEventDetailResult {
+    const normalizedEventId = typeof eventId === "string" ? eventId.trim() : "";
+    if (!normalizedEventId) return { event: null, payloadBytes: 0 };
+    const normalizedTaskId = typeof scope?.taskId === "string" ? scope.taskId.trim() : "";
+    const additionalTaskIds = Array.from(
+      new Set(
+        (Array.isArray(scope?.additionalTaskIds) ? scope.additionalTaskIds : [])
+          .map((id) => (typeof id === "string" ? id.trim() : ""))
+          .filter((id) => id.length > 0 && id !== normalizedTaskId),
+      ),
+    );
+    const additionalTaskEventTypes = Array.from(
+      new Set(
+        (Array.isArray(scope?.additionalTaskEventTypes) ? scope.additionalTaskEventTypes : [])
+          .map((type) => (typeof type === "string" ? type.trim() : ""))
+          .filter(Boolean),
+      ),
+    );
+    const selectScopedRow = (scopeWhere: string, scopeArgs: Any[]): Any =>
+      this.db
+        .prepare(`
+          SELECT *, LENGTH(COALESCE(payload, '')) AS payload_bytes
+          FROM task_events
+          WHERE (id = ? OR event_id = ?)
+            AND ${scopeWhere}
+          LIMIT 1
+        `)
+        .get(normalizedEventId, normalizedEventId, ...scopeArgs) as Any;
+
+    let row: Any;
+    if (normalizedTaskId) {
+      row = selectScopedRow("task_id = ?", [normalizedTaskId]);
+      if (!row && additionalTaskIds.length > 0 && additionalTaskEventTypes.length > 0) {
+        const typePlaceholders = additionalTaskEventTypes.map(() => "?").join(", ");
+        for (
+          let index = 0;
+          index < additionalTaskIds.length && !row;
+          index += TaskEventRepository.TIMELINE_ADDITIONAL_TASK_ID_CHUNK_SIZE
+        ) {
+          const chunk = additionalTaskIds.slice(
+            index,
+            index + TaskEventRepository.TIMELINE_ADDITIONAL_TASK_ID_CHUNK_SIZE,
+          );
+          const taskPlaceholders = chunk.map(() => "?").join(", ");
+          row = selectScopedRow(
+            `task_id IN (${taskPlaceholders}) AND COALESCE(legacy_type, type) IN (${typePlaceholders})`,
+            [...chunk, ...additionalTaskEventTypes],
+          );
+        }
+      }
+    } else {
+      row = this.db
+        .prepare("SELECT *, LENGTH(COALESCE(payload, '')) AS payload_bytes FROM task_events WHERE id = ? OR event_id = ? LIMIT 1")
+        .get(normalizedEventId, normalizedEventId) as Any;
+    }
+    if (!row) return { event: null, payloadBytes: 0 };
+    return {
+      event: this.mapRowsToEvents([row]).events[0] || null,
+      payloadBytes:
+        typeof row.payload_bytes === "number" && Number.isFinite(row.payload_bytes)
+          ? row.payload_bytes
+          : Buffer.byteLength(String(row.payload ?? ""), "utf8"),
+    };
+  }
+
   findByTaskIds(taskIds: string[], types?: string[]): TaskEvent[] {
     if (!Array.isArray(taskIds) || taskIds.length === 0) {
       return [];
@@ -1500,10 +2180,99 @@ export class TaskEventRepository {
       SET payload = ?
       WHERE id = ?
     `);
-    stmt.run(JSON.stringify(payload ?? {}), normalizedEventId);
+    stmt.run(JSON.stringify(sanitizeTimelinePayloadForStorage(payload ?? {})), normalizedEventId);
   }
 
-  private mapRowsToEvents(rows: Any[]): { events: TaskEvent[]; migratedCount: number } {
+  private buildTimelineTruncatedPayloadRow(row: Any, payloadBytes: number): Any {
+    const preview = String(row.payload ?? "").slice(
+      0,
+      TaskEventRepository.TRUNCATED_PAYLOAD_PREVIEW_CHARS,
+    );
+    return {
+      ...row,
+      payload: JSON.stringify({
+        __coworkPayloadTruncated: true,
+        originalPayloadBytes: payloadBytes,
+        preview,
+        eventId: row.id,
+        eventDetailId:
+          typeof row.event_id === "string" && row.event_id.trim().length > 0
+            ? row.event_id
+            : row.id,
+      }),
+    };
+  }
+
+  private deriveTimelinePageSummary(events: TaskEvent[]): Partial<TaskTimelinePageResult["summary"]> {
+    let planStepCount: number | undefined;
+    let hasChecklist = false;
+    let outputEventCount = 0;
+    let commandSessionCount = 0;
+    const commandSessionIds = new Set<string>();
+
+    for (const event of events) {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+      const effectiveType = event.legacyType || event.type;
+      if (effectiveType === "plan_created" && Array.isArray((payload as Any).plan?.steps)) {
+        planStepCount = (payload as Any).plan.steps.length;
+      }
+      if ((payload as Any).checklist && Array.isArray((payload as Any).checklist.items)) {
+        hasChecklist = true;
+      }
+      if (
+        effectiveType === "file_created" ||
+        effectiveType === "file_modified" ||
+        effectiveType === "artifact_created"
+      ) {
+        outputEventCount += 1;
+      }
+      if (effectiveType === "command_output" || effectiveType === "timeline_command_output") {
+        const sessionId =
+          typeof (payload as Any).sessionId === "string"
+            ? (payload as Any).sessionId
+            : typeof event.stepId === "string"
+              ? event.stepId
+              : event.id;
+        commandSessionIds.add(sessionId);
+      }
+    }
+
+    commandSessionCount = commandSessionIds.size;
+    return {
+      ...(typeof planStepCount === "number" ? { planStepCount } : {}),
+      hasChecklist,
+      outputEventCount,
+      commandSessionCount,
+    };
+  }
+
+  private buildTimelinePageWarnings(
+    taskId: string,
+    payloadBytes: number,
+    largestEventPayloadBytes: number,
+    truncatedEventCount: number,
+  ): string[] | undefined {
+    const warnings: string[] = [];
+    if (payloadBytes > TaskEventRepository.DEFAULT_TIMELINE_PAGE_BYTE_LIMIT) {
+      warnings.push(
+        `task ${taskId} timeline page payload is ${payloadBytes} bytes, above ${TaskEventRepository.DEFAULT_TIMELINE_PAGE_BYTE_LIMIT}`,
+      );
+    }
+    if (largestEventPayloadBytes > 1024 * 1024) {
+      warnings.push(
+        `task ${taskId} has a ${largestEventPayloadBytes} byte timeline event payload`,
+      );
+    }
+    if (truncatedEventCount > 0) {
+      warnings.push(`task ${taskId} returned ${truncatedEventCount} truncated timeline events`);
+    }
+    return warnings.length > 0 ? warnings : undefined;
+  }
+
+  private mapRowsToEvents(
+    rows: Any[],
+    options: { persistMigrations?: boolean } = {},
+  ): { events: TaskEvent[]; migratedCount: number } {
     const events: TaskEvent[] = [];
     const migratedRows: TaskEvent[] = [];
     const perTaskSeq = new Map<string, number>();
@@ -1588,7 +2357,7 @@ export class TaskEventRepository {
       }
     }
 
-    if (migratedRows.length > 0) {
+    if (migratedRows.length > 0 && options.persistMigrations !== false) {
       this.persistMigratedRows(migratedRows);
     }
 
@@ -1615,18 +2384,19 @@ export class TaskEventRepository {
     `);
     const tx = this.db.transaction((items: TaskEvent[]) => {
       for (const event of items) {
+        const storedEvent = sanitizeTimelineEventForStorage(event);
         stmt.run(
-          event.type,
-          JSON.stringify(event.payload ?? {}),
-          event.eventId || event.id,
-          typeof event.seq === "number" ? event.seq : null,
-          typeof event.ts === "number" ? event.ts : event.timestamp,
-          typeof event.status === "string" ? event.status : null,
-          typeof event.stepId === "string" ? event.stepId : null,
-          typeof event.groupId === "string" ? event.groupId : null,
-          typeof event.actor === "string" ? event.actor : null,
-          typeof event.legacyType === "string" ? event.legacyType : null,
-          event.id,
+          storedEvent.type,
+          JSON.stringify(storedEvent.payload ?? {}),
+          storedEvent.eventId || storedEvent.id,
+          typeof storedEvent.seq === "number" ? storedEvent.seq : null,
+          typeof storedEvent.ts === "number" ? storedEvent.ts : storedEvent.timestamp,
+          typeof storedEvent.status === "string" ? storedEvent.status : null,
+          typeof storedEvent.stepId === "string" ? storedEvent.stepId : null,
+          typeof storedEvent.groupId === "string" ? storedEvent.groupId : null,
+          typeof storedEvent.actor === "string" ? storedEvent.actor : null,
+          typeof storedEvent.legacyType === "string" ? storedEvent.legacyType : null,
+          storedEvent.id,
         );
       }
     });

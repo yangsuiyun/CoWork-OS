@@ -5,6 +5,7 @@ import {
   BrowserSessionManager,
   getBrowserSessionManager,
 } from "./browser-session-manager";
+import { isLocalHtmlFileUrl, normalizeWebviewUrl } from "./webview-url-policy";
 
 type AnyRecord = Record<string, unknown>;
 
@@ -113,6 +114,7 @@ export class BrowserWorkbenchService {
   private mainWindow: Any | null = null;
   private sessions = new Map<string, BrowserWorkbenchSession>();
   private waiters = new Map<string, Array<(session: BrowserWorkbenchSession | null) => void>>();
+  private allowedLocalPreviewUrls = new Map<string, number>();
 
   constructor(private browserSessionManager: BrowserSessionManager = getBrowserSessionManager()) {}
 
@@ -175,6 +177,26 @@ export class BrowserWorkbenchService {
     return session;
   }
 
+  allowLocalPreviewUrl(rawUrl: string): void {
+    if (!isLocalHtmlFileUrl(rawUrl)) return;
+    const normalized = normalizeWebviewUrl(rawUrl);
+    if (!normalized) return;
+    this.allowedLocalPreviewUrls.set(normalized, Date.now() + 5 * 60_000);
+  }
+
+  isAllowedLocalPreviewUrl(rawUrl: string): boolean {
+    const normalized = normalizeWebviewUrl(rawUrl);
+    if (!normalized) return false;
+    const expiresAt = this.allowedLocalPreviewUrls.get(normalized);
+    if (!expiresAt) return false;
+    if (expiresAt < Date.now()) {
+      this.allowedLocalPreviewUrls.delete(normalized);
+      return false;
+    }
+    this.allowedLocalPreviewUrls.set(normalized, Date.now() + 5 * 60_000);
+    return true;
+  }
+
   async requestOpen(input: { taskId: string; sessionId?: unknown; url?: unknown }): Promise<BrowserWorkbenchSession | null> {
     const sessionId = normalizeSessionId(input.sessionId);
     const existing = this.getSession(input.taskId, sessionId);
@@ -187,6 +209,9 @@ export class BrowserWorkbenchService {
       sessionId,
       url: normalizeUrl(input.url),
     };
+    if (request.url) {
+      this.allowLocalPreviewUrl(request.url);
+    }
     this.mainWindow.webContents.send(IPC_CHANNELS.BROWSER_WORKBENCH_OPEN_REQUEST, request);
     return await this.waitForSession(input.taskId, sessionId, 12_000);
   }
@@ -199,6 +224,7 @@ export class BrowserWorkbenchService {
       (await this.requestOpen({ taskId: input.taskId, sessionId: input.sessionId, url }));
     const contents = await this.getWebContents(session);
     if (!contents) return null;
+    this.allowLocalPreviewUrl(url);
     this.emitCursor(session, { x: 32, y: 32, kind: "navigate", label: "Navigate", pulse: true });
     const loadPromise = this.waitForLoad(contents, 45_000);
     try {

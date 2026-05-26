@@ -164,6 +164,10 @@ import type {
   EverydayAgentUpdateProfileRequest,
   EverydayCapabilityBundle,
   EverydayPauseScope,
+  TaskEventDetailRequest,
+  TaskEventDetailResult,
+  TaskTimelinePageRequest,
+  TaskTimelinePageResult,
 } from "../shared/types";
 import type {
   SubconsciousBrainSummary,
@@ -919,6 +923,7 @@ interface CronEvent {
   status?: CronJobStatus;
   error?: string;
   taskId?: string;
+  taskStillRunning?: boolean;
   nextRunAtMs?: number;
 }
 
@@ -1989,6 +1994,37 @@ export interface LlmWikiVaultSummary {
   recentRawSources: LlmWikiVaultEntry[];
 }
 
+async function invokeTaskIpcWithRendererTiming<T>(
+  channel: string,
+  ...args: unknown[]
+): Promise<T> {
+  const startedAt =
+    typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
+  const result = await ipcRenderer.invoke(channel, ...args);
+  const receivedAt =
+    typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
+  const rowCount = Array.isArray(result)
+    ? result.length
+    : result && typeof result === "object" && Array.isArray((result as { events?: unknown }).events)
+      ? ((result as { events: unknown[] }).events.length)
+      : result
+        ? 1
+        : 0;
+  void ipcRenderer.invoke(IPC_CHANNELS.RENDERER_PERF_LOG, {
+    timestamp: new Date().toISOString(),
+    message: `[IpcRendererPerf] ${JSON.stringify({
+      channel,
+      receiveMs: Number((receivedAt - startedAt).toFixed(1)),
+      rowCount,
+    })}`,
+  });
+  return result as T;
+}
+
 // Expose protected methods that allow the renderer process to use ipcRenderer
 contextBridge.exposeInMainWorld("electronAPI", {
   // Dialog APIs
@@ -2100,6 +2136,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on(IPC_CHANNELS.BROWSER_WORKBENCH_VIEWPORT, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.BROWSER_WORKBENCH_VIEWPORT, handler);
   },
+  ingestYouTubeVideo: (data: { workspaceId: string; url: string; language?: string; force?: boolean }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_INGEST_VIDEO, data),
+  askYouTubeVideo: (data: {
+    workspaceId: string;
+    question: string;
+    url?: string;
+    videoIds?: string[];
+    language?: string;
+    limit?: number;
+    force?: boolean;
+  }) => ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_ASK_VIDEO, data),
+  searchYouTubeSegments: (data: { workspaceId: string; query: string; videoIds?: string[]; limit?: number }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_SEARCH_SEGMENTS, data),
+  listYouTubeVideos: (data: { workspaceId: string; limit?: number }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_LIST_VIDEOS, data),
   getLlmWikiVaultSummary: (data: { workspacePath: string; vaultPath?: string }) =>
     ipcRenderer.invoke(IPC_CHANNELS.LLM_WIKI_GET_VAULT_SUMMARY, data) as Promise<LlmWikiVaultSummary>,
   importFilesToWorkspace: (data: { workspaceId: string; files: string[] }) =>
@@ -2314,14 +2365,36 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Task APIs
   createTask: (data: Any) => ipcRenderer.invoke(IPC_CHANNELS.TASK_CREATE, data),
-  getTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_GET, id),
+  getTask: (id: string) =>
+    invokeTaskIpcWithRendererTiming(IPC_CHANNELS.TASK_GET, id),
   listTasks: (opts?: {
     limit?: number;
     offset?: number;
     prioritizeSidebar?: boolean;
     excludeSources?: string[];
+    cursor?: {
+      id?: string;
+      pinned?: boolean;
+      status?: string;
+      updatedAt?: number;
+      createdAt?: number;
+    };
   }) =>
-    ipcRenderer.invoke(IPC_CHANNELS.TASK_LIST, opts),
+    invokeTaskIpcWithRendererTiming(IPC_CHANNELS.TASK_LIST, opts),
+  listSidebarTasks: (opts?: {
+    limit?: number;
+    offset?: number;
+    prioritizeSidebar?: boolean;
+    excludeSources?: string[];
+    cursor?: {
+      id?: string;
+      pinned?: boolean;
+      status?: string;
+      updatedAt?: number;
+      createdAt?: number;
+    };
+  }) =>
+    invokeTaskIpcWithRendererTiming(IPC_CHANNELS.TASK_LIST_SIDEBAR, opts),
   exportTasksJson: (query?: Any) => ipcRenderer.invoke(IPC_CHANNELS.TASK_EXPORT_JSON, query),
   toggleTaskPin: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_PIN, taskId),
   cancelTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_CANCEL, id),
@@ -2358,14 +2431,26 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // Task event history (load from DB)
-  getTaskEvents: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_EVENTS, taskId),
+  getTaskEvents: (taskId: string) =>
+    invokeTaskIpcWithRendererTiming(IPC_CHANNELS.TASK_EVENTS, taskId),
+  getTaskTimelinePage: (request: TaskTimelinePageRequest) =>
+    invokeTaskIpcWithRendererTiming<TaskTimelinePageResult>(
+      IPC_CHANNELS.TASK_TIMELINE_PAGE,
+      request,
+    ),
+  getTaskEventDetail: (request: TaskEventDetailRequest) =>
+    invokeTaskIpcWithRendererTiming<TaskEventDetailResult>(
+      IPC_CHANNELS.TASK_EVENT_DETAIL,
+      request,
+    ),
   getTaskLearningProgress: (taskId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_LEARNING_PROGRESS, taskId) as Promise<
       TaskLearningProgress[]
     >,
 
   // Semantic timeline projection (normalised UiTimelineEvent[] derived from task_events)
-  getSemanticTimeline: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_SEMANTIC_TIMELINE, taskId),
+  getSemanticTimeline: (taskId: string) =>
+    invokeTaskIpcWithRendererTiming(IPC_CHANNELS.TASK_SEMANTIC_TIMELINE, taskId),
   listTaskTraceRuns: (request?: import("../shared/types").ListTaskTraceRunsRequest) =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_TRACE_LIST, request) as Promise<TaskTraceRunSummary[]>,
   getTaskTraceRun: (taskId: string) =>
@@ -4847,6 +4932,28 @@ export interface ElectronAPI {
   onBrowserWorkbenchViewport: (
     callback: (event: BrowserWorkbenchViewportEvent) => void,
   ) => () => void;
+  ingestYouTubeVideo: (data: {
+    workspaceId: string;
+    url: string;
+    language?: string;
+    force?: boolean;
+  }) => Promise<Any>;
+  askYouTubeVideo: (data: {
+    workspaceId: string;
+    question: string;
+    url?: string;
+    videoIds?: string[];
+    language?: string;
+    limit?: number;
+    force?: boolean;
+  }) => Promise<Any>;
+  searchYouTubeSegments: (data: {
+    workspaceId: string;
+    query: string;
+    videoIds?: string[];
+    limit?: number;
+  }) => Promise<Any>;
+  listYouTubeVideos: (data: { workspaceId: string; limit?: number }) => Promise<Any>;
   getLlmWikiVaultSummary: (data: {
     workspacePath: string;
     vaultPath?: string;
@@ -5027,6 +5134,26 @@ export interface ElectronAPI {
     offset?: number;
     prioritizeSidebar?: boolean;
     excludeSources?: string[];
+    cursor?: {
+      id?: string;
+      pinned?: boolean;
+      status?: string;
+      updatedAt?: number;
+      createdAt?: number;
+    };
+  }) => Promise<Any[]>;
+  listSidebarTasks: (opts?: {
+    limit?: number;
+    offset?: number;
+    prioritizeSidebar?: boolean;
+    excludeSources?: string[];
+    cursor?: {
+      id?: string;
+      pinned?: boolean;
+      status?: string;
+      updatedAt?: number;
+      createdAt?: number;
+    };
   }) => Promise<Any[]>;
   exportTasksJson: (query?: Any) => Promise<Any>;
   toggleTaskPin: (taskId: string) => Promise<Any>;
@@ -5049,6 +5176,8 @@ export interface ElectronAPI {
   onTaskEvent: (callback: (event: Any) => void) => () => void;
   onTaskLearningEvent: (callback: (event: TaskLearningProgress) => void) => () => void;
   getTaskEvents: (taskId: string) => Promise<Any[]>;
+  getTaskTimelinePage: (request: TaskTimelinePageRequest) => Promise<TaskTimelinePageResult>;
+  getTaskEventDetail: (request: TaskEventDetailRequest) => Promise<TaskEventDetailResult>;
   /** Normalized semantic timeline projection for a task */
   getSemanticTimeline: (taskId: string) => Promise<UiTimelineEvent[]>;
   getTaskLearningProgress: (taskId: string) => Promise<TaskLearningProgress[]>;

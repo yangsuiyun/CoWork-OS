@@ -7,6 +7,9 @@ export const DEFAULT_DEV_LOG_MAX_MB = 100;
 
 const KNOWN_PROCESS_LABELS = new Set(["react", "electron"]);
 const SECRET_VALUE = "[REDACTED]";
+const IGNORABLE_DEV_LOG_PATTERNS = [
+  /\brepresentedObject is not a WeakPtrToElectronMenuModelAsNSObject\b/,
+];
 
 function pad(value) {
   return String(value).padStart(2, "0");
@@ -54,6 +57,11 @@ export function redactDevLogLine(line) {
   );
   redacted = redacted.replace(/(https?:\/\/)([^/\s:@]+):([^/\s@]+)@/gi, `$1${SECRET_VALUE}@`);
   return redacted;
+}
+
+export function isIgnorableDevLogLine(line) {
+  const text = String(line || "");
+  return IGNORABLE_DEV_LOG_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 export function inferDevLogLevel(line, stream = "stdout") {

@@ -15,7 +15,7 @@ Release `0.5.44` is a broad reliability and platform release. It expands Browser
 
 ## User-Facing Improvements
 
-- **Agents Hub active-agent visibility**: Mission Control active agents now surface in Agents Hub counts and panel state.
+- **Agents Hub Heartbeat-agent visibility**: Mission Control Heartbeat-enabled agents now surface in Agents Hub counts and panel state without implying they are necessarily executing tasks.
 - **Browser Workbench polish**: refined Browser Workbench navigation, styles, sidebar approval UX, mention icon rendering, browser tool prompting, runtime browser tool definitions, and storage-secret redaction.
 - **Messaging channel behavior**: tightened shared channel-message handling across Slack, Discord, email, Telegram, WhatsApp, and the channel registry.
 - **Workspace status labels**: improved renderer labels around active workspace/task status, especially for OpenAI-compatible provider flows.

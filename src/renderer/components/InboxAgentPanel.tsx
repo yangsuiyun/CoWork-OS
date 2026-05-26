@@ -53,7 +53,7 @@ import type { Company } from "../../shared/types";
 import { GOOGLE_SCOPE_GMAIL_MODIFY, hasScope } from "../../shared/google-workspace";
 import { useVoiceInput } from "../hooks/useVoiceInput";
 import { computeEmailFitScale, getEmailFitInset, measureEmailContentWidth } from "../utils/email-html-layout";
-import { sanitizeEmailHtml } from "../utils/email-html-sanitize";
+import { normalizeEmailExternalWebUrl, sanitizeEmailHtml } from "../utils/email-html-sanitize";
 
 type QueueMode = "cleanup" | "follow_up" | null;
 type RightRailTab = "agent_rail" | "ask_inbox";
@@ -116,6 +116,24 @@ type ThreadGroup = {
 };
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
+
+export function retainSelectedThreadInUnreadList(
+  threads: MailboxThreadListItem[],
+  retainedThread: MailboxThreadListItem | null,
+  selectedThreadId: string | null,
+  focusFilter: FocusFilter,
+): MailboxThreadListItem[] {
+  if (focusFilter !== "unread" || !retainedThread || selectedThreadId !== retainedThread.id) {
+    return threads;
+  }
+
+  const retainedAsRead = { ...retainedThread, unreadCount: 0 };
+  if (!threads.some((thread) => thread.id === retainedThread.id)) {
+    return [retainedAsRead, ...threads];
+  }
+
+  return threads.map((thread) => thread.id === retainedThread.id ? retainedAsRead : thread);
+}
 
 function formatTime(timestamp?: number): string {
   if (!timestamp) return "";
@@ -277,6 +295,35 @@ function prefixMailboxSubject(subject: string, prefix: "Re:" | "Fwd:"): string {
   return trimmed.toLowerCase().startsWith(prefix.toLowerCase()) ? trimmed : `${prefix} ${trimmed}`;
 }
 
+function installEmailLinkInterceptor(doc: Document): () => void {
+  const handleClick = (event: MouseEvent) => {
+    const target = event.target as { closest?: (selector: string) => HTMLAnchorElement | null } | null;
+    if (typeof target?.closest !== "function") return;
+
+    const anchor = target.closest("a[href]");
+    if (!anchor) return;
+
+    const rawHref = anchor.getAttribute("href");
+    const externalUrl = normalizeEmailExternalWebUrl(rawHref);
+    if (!externalUrl) {
+      if (rawHref?.trim() && !rawHref.trim().startsWith("#")) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    void window.electronAPI?.openExternal(externalUrl).catch((error: unknown) => {
+      console.warn("[Mailbox] Failed to open email link externally", error);
+    });
+  };
+
+  doc.addEventListener("click", handleClick, true);
+  return () => doc.removeEventListener("click", handleClick, true);
+}
+
 // ─── sub-components ───────────────────────────────────────────────────────────
 
 /**
@@ -371,10 +418,12 @@ function EmailHtmlBody({ html }: { html: string }) {
         image.removeEventListener("error", updateIframeLayout);
       };
     });
+    const cleanupLinkInterceptor = doc ? installEmailLinkInterceptor(doc) : undefined;
 
     loadCleanupRef.current = () => {
       timeouts.forEach((timeout) => window.clearTimeout(timeout));
       cleanupImageListeners.forEach((cleanup) => cleanup());
+      cleanupLinkInterceptor?.();
     };
   }, [updateIframeLayout]);
 
@@ -708,11 +757,37 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
   const [snippetBodyDraft, setSnippetBodyDraft] = useState("");
   const autoSyncInFlightRef = useRef(false);
   const autoMarkReadInFlightRef = useRef<Set<string>>(new Set());
+  const unreadFilterRetainedThreadRef = useRef<MailboxThreadListItem | null>(null);
   const selectedThreadIdRef = useRef<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const askInboxScrollRef = useRef<HTMLDivElement | null>(null);
   const handledExternalAskRequestRef = useRef<number | null>(null);
   selectedThreadIdRef.current = selectedThreadId;
+
+  const setUnreadFilterRetainedThread = (thread: MailboxThreadListItem | null) => {
+    unreadFilterRetainedThreadRef.current = thread;
+  };
+
+  const retainReadThreadInUnreadFilter = (thread: MailboxThreadListItem) => {
+    if (focusFilter !== "unread") return;
+    const retainedThread = { ...thread, unreadCount: 0 };
+    setUnreadFilterRetainedThread(retainedThread);
+    setThreads((current) => retainSelectedThreadInUnreadList(
+      current,
+      retainedThread,
+      thread.id,
+      "unread",
+    ));
+  };
+
+  const clearUnreadFilterRetainedThread = (options: { removeFromList?: boolean } = {}) => {
+    const retainedThread = unreadFilterRetainedThreadRef.current;
+    if (!retainedThread) return;
+    setUnreadFilterRetainedThread(null);
+    if (options.removeFromList) {
+      setThreads((current) => current.filter((thread) => thread.id !== retainedThread.id));
+    }
+  };
 
   const loadSnippets = async () => {
     const snip = await window.electronAPI.listMailboxSnippets().catch(() => []);
@@ -791,10 +866,19 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
     const filteredList = nextDomainFilter === "work"
       ? list.filter((thread) => workDomains.includes(thread.domainCategory))
       : list;
-    setThreads(filteredList);
-    setSelectedThreadIds((current) => current.filter((id) => filteredList.some((thread) => thread.id === id)));
+    if (nextFocus !== "unread" && unreadFilterRetainedThreadRef.current) {
+      setUnreadFilterRetainedThread(null);
+    }
+    const nextThreads = retainSelectedThreadInUnreadList(
+      filteredList,
+      unreadFilterRetainedThreadRef.current,
+      selectedThreadIdRef.current,
+      nextFocus,
+    );
+    setThreads(nextThreads);
+    setSelectedThreadIds((current) => current.filter((id) => nextThreads.some((thread) => thread.id === id)));
     setSelectedThreadId((current) =>
-      current && filteredList.some((thread) => thread.id === current) ? current : (filteredList[0]?.id || null),
+      current && nextThreads.some((thread) => thread.id === current) ? current : (nextThreads[0]?.id || null),
     );
   };
 
@@ -947,7 +1031,7 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
     ? gmailCleanupDisabledReason
     : null;
 
-  const markThreadReadAfterOpen = async (thread: Pick<MailboxThreadListItem, "id" | "provider" | "unreadCount">) => {
+  const markThreadReadAfterOpen = async (thread: MailboxThreadListItem) => {
     if (thread.unreadCount <= 0 || autoMarkReadInFlightRef.current.has(thread.id)) return;
     if (thread.provider === "gmail" && !gmailCleanupActionsEnabled) {
       setError(gmailCleanupDisabledReason || "Reconnect Google Workspace to mark Gmail threads as read.");
@@ -955,6 +1039,7 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
     }
 
     autoMarkReadInFlightRef.current.add(thread.id);
+    retainReadThreadInUnreadFilter(thread);
     setThreads((current) =>
       current.map((entry) => (entry.id === thread.id ? { ...entry, unreadCount: 0 } : entry)),
     );
@@ -981,6 +1066,9 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
         await loadThread(thread.id);
       }
     } catch (nextError) {
+      if (unreadFilterRetainedThreadRef.current?.id === thread.id) {
+        clearUnreadFilterRetainedThread();
+      }
       setError(nextError instanceof Error ? nextError.message : String(nextError));
       await Promise.all([
         loadStatus().catch(() => undefined),
@@ -996,6 +1084,9 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
   };
 
   const openThread = (thread: MailboxThreadListItem) => {
+    if (unreadFilterRetainedThreadRef.current?.id && unreadFilterRetainedThreadRef.current.id !== thread.id) {
+      clearUnreadFilterRetainedThread({ removeFromList: focusFilter === "unread" });
+    }
     selectedThreadIdRef.current = thread.id;
     setSelectedThreadId(thread.id);
     void markThreadReadAfterOpen(thread);
@@ -1088,6 +1179,18 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
       void loadHandoffContext(selectedThreadId);
     }
   }, [selectedThreadId]);
+
+  useEffect(() => {
+    const retainedThread = unreadFilterRetainedThreadRef.current;
+    if (!retainedThread) return;
+    if (focusFilter !== "unread") {
+      clearUnreadFilterRetainedThread();
+      return;
+    }
+    if (selectedThreadId !== retainedThread.id) {
+      clearUnreadFilterRetainedThread({ removeFromList: true });
+    }
+  }, [focusFilter, selectedThreadId]);
 
   useEffect(() => {
     if (!searchExpanded) return;
@@ -2130,7 +2233,10 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
         const delta = event.key === "j" ? 1 : -1;
         const nextIndex = currentIndex >= 0 ? currentIndex + delta : 0;
         const boundedIndex = Math.max(0, Math.min(displayedThreads.length - 1, nextIndex));
-        setSelectedThreadId(displayedThreads[boundedIndex]?.id || null);
+        const nextThread = displayedThreads[boundedIndex];
+        if (nextThread) {
+          openThread(nextThread);
+        }
         return;
       }
 

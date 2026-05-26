@@ -117,9 +117,9 @@ export class PptxPreviewService {
     }
 
     const stats = await fs.stat(resolvedPath);
-    const structured = await extractPptxStructuredContentFromFile(resolvedPath);
     const cacheDir = this.getCacheDir(resolvedPath, stats);
     const cachedImages = await this.readCachedImages(cacheDir, resolvedPath, stats);
+    let structured = await this.extractStructuredContent(resolvedPath, cachedImages.size);
     if (cachedImages.size > 0) {
       return this.toPreview(structured, cachedImages, input.renderMode === "fast" ? "cached" : "rendered");
     }
@@ -134,12 +134,37 @@ export class PptxPreviewService {
     }
 
     const renderResult = await this.renderSlideImages(resolvedPath, stats, cacheDir);
+    if (structured.slideCount <= 1 && !structured.slides.some((slide) => slide.text.trim())) {
+      structured = await this.extractStructuredContent(resolvedPath, renderResult.images.size);
+    }
     return this.toPreview(
       structured,
       renderResult.images,
       renderResult.images.size > 0 ? "rendered" : "text_only",
       renderResult.message,
     );
+  }
+
+  private async extractStructuredContent(
+    resolvedPath: string,
+    renderedSlideCount: number,
+  ): Promise<PptxStructuredExtract> {
+    try {
+      return await extractPptxStructuredContentFromFile(resolvedPath);
+    } catch {
+      const slideCount = Math.max(1, renderedSlideCount);
+      return {
+        slideCount,
+        processedSlideCount: slideCount,
+        title: path.basename(resolvedPath),
+        slides: Array.from({ length: slideCount }, (_, index) => ({
+          index: index + 1,
+          text: "",
+        })),
+        metadata: [],
+        truncationNotices: [],
+      };
+    }
   }
 
   private toPreview(

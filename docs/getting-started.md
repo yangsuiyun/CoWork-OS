@@ -162,7 +162,7 @@ Once the app opens, the most important places to know are:
 - **Settings > Automations**: Routines, Task Queue, Workflow Intelligence, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing
 - **Settings > Profiles**: create, switch, export, and import isolated app profiles
 - **Settings > Companies**: company shell setup, goals, projects, issues, planner state, and linked operators
-- **Mission Control**: company and operator monitoring, Kanban board, feed, and Ops view
+- **Mission Control**: company and operator monitoring, Heartbeat-agent state, global runtime queue status, workspace Mission Board, feed, and Ops view
 - **Settings > Skills**: Skill Store imports plus optional external read-only skill directories
 - **Settings > Channels**: Slack multi-workspace setup, Telegram group routing, Discord guild allowlists, channel/chat/thread specialization, and enterprise channels such as Feishu/Lark and WeCom
 - **Settings → Tools → Computer use** (macOS): Accessibility + Screen Recording onboarding, built-in tool toggles, and context for [desktop automation](computer-use.md)
