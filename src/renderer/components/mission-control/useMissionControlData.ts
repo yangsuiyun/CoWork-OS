@@ -28,6 +28,7 @@ import type {
   MissionControlItemEvidence,
   MissionControlSeverity,
   Project,
+  QueueStatus,
   StrategicPlannerConfig,
   StrategicPlannerRun,
   SymphonyConfig,
@@ -133,6 +134,8 @@ export type FeedItem = {
 type MissionControlHeartbeatEvent = HeartbeatEvent & {
   rendererEventId: string;
 };
+
+type RuntimeQueueStatusState = "loading" | "ready" | "unavailable" | "error";
 
 export type MissionControlCategoryFilter = "all" | MissionControlCategory;
 export type MissionControlSeverityFilter = "all" | MissionControlSeverity;
@@ -260,6 +263,8 @@ export function useMissionControlData(
   const [mentions, setMentions] = useState<MentionData[]>([]);
   const [heartbeatStatuses, setHeartbeatStatuses] = useState<HeartbeatStatusInfo[]>([]);
   const [events, setEvents] = useState<MissionControlHeartbeatEvent[]>([]);
+  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
+  const [queueStatusState, setQueueStatusState] = useState<RuntimeQueueStatusState>("loading");
   const heartbeatEventSequenceRef = useRef(0);
 
   // ── Issue context ──
@@ -657,11 +662,64 @@ export function useMissionControlData(
     finally { setIsRefreshing(false); }
   }, [loadCommandCenterSummary, loadCompanyOps, loadCoreHarnessData, loadMissionControlIntelligence, loadPlannerData, loadSymphonyData, loadWorkspaceScopedData, selectedCompanyId, selectedWorkspaceId, workspaces]);
 
+  const refreshRuntimeQueueTaskSnapshot = useCallback(async () => {
+    if (!window.electronAPI?.listTasks) return;
+    try {
+      const loadedTasks = await window.electronAPI.listTasks();
+      const workspaceId = workspaceIdRef.current;
+      const visibleWorkspaceIds = visibleWorkspaceIdsRef.current;
+      const scopedTasks =
+        workspaceId === ALL_WORKSPACES_ID
+          ? visibleWorkspaceIds.size > 0
+            ? loadedTasks.filter((task: Task) => visibleWorkspaceIds.has(task.workspaceId))
+            : loadedTasks
+          : workspaceId
+            ? loadedTasks.filter((task: Task) => task.workspaceId === workspaceId)
+            : loadedTasks;
+      setTasks(scopedTasks);
+    } catch (err) {
+      logger.error("Failed to refresh runtime queue task snapshot:", err);
+    }
+  }, []);
+
   // ── Effects: Load on selection change ──
   useEffect(() => { loadWorkspaces(); }, [loadWorkspaces]);
   useEffect(() => { loadCompanies(); }, [loadCompanies]);
   useEffect(() => { void loadSymphonyData(); }, [loadSymphonyData]);
   useEffect(() => { if (selectedWorkspaceId) loadData(selectedWorkspaceId); }, [selectedWorkspaceId, loadData]);
+
+  useEffect(() => {
+    if (!window.electronAPI?.getQueueStatus) {
+      setQueueStatusState("unavailable");
+      return;
+    }
+    let mounted = true;
+
+    void window.electronAPI.getQueueStatus()
+      .then((status) => {
+        if (!mounted) return;
+        setQueueStatus(status);
+        setQueueStatusState("ready");
+        void refreshRuntimeQueueTaskSnapshot();
+      })
+      .catch((err) => {
+        logger.error("Failed to load runtime queue status:", err);
+        if (!mounted) return;
+        setQueueStatus(null);
+        setQueueStatusState("error");
+      });
+
+    const unsubscribe = window.electronAPI.onQueueUpdate?.((status) => {
+      setQueueStatus(status);
+      setQueueStatusState("ready");
+      void refreshRuntimeQueueTaskSnapshot();
+    });
+
+    return () => {
+      mounted = false;
+      if (typeof unsubscribe === "function") unsubscribe();
+    };
+  }, [refreshRuntimeQueueTaskSnapshot]);
 
   useEffect(() => {
     if (selectedCompanyId) {
@@ -1112,6 +1170,27 @@ export function useMissionControlData(
     [tasks, getMissionColumnForTask],
   );
 
+  const runtimeRunningTaskIds = queueStatus?.runningTaskIds || [];
+  const runtimeQueuedTaskIds = queueStatus?.queuedTaskIds || [];
+  const runtimeRunningCount = queueStatus?.runningCount || 0;
+  const runtimeQueuedCount = queueStatus?.queuedCount || 0;
+  const runtimeQueueTotal = runtimeRunningCount + runtimeQueuedCount;
+  const runtimeMaxConcurrent = queueStatus?.maxConcurrent || 0;
+
+  const runtimeRunningTasks = useMemo(
+    () => runtimeRunningTaskIds
+      .map((taskId) => tasks.find((task) => task.id === taskId))
+      .filter((task): task is Task => Boolean(task)),
+    [runtimeRunningTaskIds, tasks],
+  );
+
+  const runtimeQueuedTasks = useMemo(
+    () => runtimeQueuedTaskIds
+      .map((taskId) => tasks.find((task) => task.id === taskId))
+      .filter((task): task is Task => Boolean(task)),
+    [runtimeQueuedTaskIds, tasks],
+  );
+
   const workspaceNameById = useMemo(
     () => new Map(workspaces.map((workspace) => [workspace.id, workspace.name] as const)),
     [workspaces],
@@ -1333,6 +1412,10 @@ export function useMissionControlData(
     selectedPlannerRun, plannerManagedIssues,
     selectedIssue, selectedIssueRun,
     filteredIssues, plannerRunIssueIds, plannerRunIssues,
+    queueStatus, queueStatusState,
+    runtimeRunningCount, runtimeQueuedCount, runtimeQueueTotal, runtimeMaxConcurrent,
+    runtimeRunningTaskIds, runtimeQueuedTaskIds,
+    runtimeRunningTasks, runtimeQueuedTasks,
 
     // Callbacks
     getTasksByColumn, getAgent, getAgentStatus, getMissionColumnForTask,

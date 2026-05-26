@@ -13,6 +13,16 @@ const USER_UPDATE_HEADER = "USER UPDATE:";
 const SYNTHETIC_SECTION_LOOKAHEAD = `(?:${ADDITIONAL_CONTEXT_HEADER}|${WORKFLOW_DECOMPOSITION_HEADER}|${USER_UPDATE_HEADER})`;
 const COMPLETED_REVIEW_STEP_REGEX =
   /\b(review(?:ed|ing)?|evaluat(?:e|ed|ing|ion)|assess(?:ed|ing|ment)?|verif(?:y|ied|ying|ication)|check(?:ed|ing)?|read(?:ing)?|audit(?:ed|ing)?|analy[sz](?:e|ed|ing|is)|scan(?:ned|ning)?|summari[sz](?:e|ed|ing)|triag(?:e|ed|ing))\b/i;
+const VERIFICATION_TOOL_EVIDENCE = new Set([
+  "web_search",
+  "web_fetch",
+  "search_files",
+  "glob",
+  "run_command",
+  "http_request",
+  "read_file",
+  "list_directory",
+]);
 
 export function normalizePromptForContracts(taskPrompt: string): string {
   const raw = String(taskPrompt || "");
@@ -121,17 +131,25 @@ export function promptRequestsCanvasArtifactOutput(taskTitle: string, taskPrompt
  */
 export function promptIsMultiFileWebAppCreation(prompt: string): boolean {
   const normalized = typeof prompt === "string" ? prompt : String(prompt || "");
-  const hasBuildVerb =
-    /\b(create|build|make|develop|write|build out|scaffold|set up|implement)\b/.test(normalized);
-  if (!hasBuildVerb) return false;
+  const creationVerb = String.raw`(?:create|make|develop|write|build out|scaffold|set up|implement|build(?!\s+status\b))`;
+  const webAppTarget = String.raw`(?:web\s+app|webapp|react\s+app|next\.?js\s+app|nextjs\s+app|vue\s+app|vite\s+app|svelte\s+app|angular\s+app|frontend|website|site|dashboard|portal|ui|interface|single-page\s+app|spa)`;
+  const frameworkTarget = String.raw`(?:react|vue|svelte|next\.?js|nextjs|vite|angular)`;
 
-  const hasWebAppNoun =
-    /\b(app|application|web app|webapp|react app|next\.?js|nextjs|vue app|vite app|svelte app|angular app|dashboard|tool|site|website|ui|interface)\b/.test(
-      normalized,
-    );
-  return hasWebAppNoun;
+  const directCreation = new RegExp(
+    String.raw`\b${creationVerb}\b[\s\S]{0,60}\b(?:a|an|the|new|simple|full|working|interactive|production-ready|polished|responsive)?\s*${webAppTarget}\b`,
+    "i",
+  ).test(normalized);
+  const frameworkCreation = new RegExp(
+    String.raw`\b${creationVerb}\b[\s\S]{0,60}\b${frameworkTarget}\b[\s\S]{0,40}\b(?:app|application|site|website|dashboard|frontend|ui|interface)\b`,
+    "i",
+  ).test(normalized);
+  const scaffoldCreation = new RegExp(
+    String.raw`\b(?:scaffold|set up)\b[\s\S]{0,60}\b(?:${frameworkTarget}|frontend|web\s+app|website|dashboard)\b`,
+    "i",
+  ).test(normalized);
+
+  return directCreation || frameworkCreation || scaffoldCreation;
 }
-
 
 export function inferRequiredArtifactExtensions(taskTitle: string, taskPrompt: string): string[] {
   const prompt = `${taskTitle}\n${normalizePromptForContracts(taskPrompt)}`.toLowerCase();
@@ -167,24 +185,33 @@ export function buildCompletionContract(opts: {
       requiresCanvasArtifact ||
       requiredArtifactExtensions.length > 0) &&
     !opts.isWatchSkipRecommendationTask;
+  const prompt = `${opts.taskTitle}\n${normalizePromptForContracts(opts.taskPrompt)}`.toLowerCase();
+  const hasExplicitCanvasCue = /\b(canvas|in-app canvas)\b/.test(prompt);
+  const shouldTreatAsCanvasArtifact =
+    requiresCanvasArtifact &&
+    !opts.isWatchSkipRecommendationTask &&
+    (hasExplicitCanvasCue || requiredArtifactExtensions.length === 0);
   const artifactKind: CompletionContract["artifactKind"] =
-    requiresCanvasArtifact && !opts.isWatchSkipRecommendationTask
+    shouldTreatAsCanvasArtifact
       ? "canvas"
       : requiresArtifactEvidence
         ? "file"
         : "none";
 
-  const prompt = `${opts.taskTitle}\n${normalizePromptForContracts(opts.taskPrompt)}`.toLowerCase();
   // Only require canvas_push evidence when the prompt explicitly mentions "canvas".
   // Tasks detected as canvas via promptIsMultiFileWebAppCreation (e.g. "Create a website")
   // set artifactKind="canvas" to guide the agent but do NOT hard-require canvas_push —
   // the agent may serve locally, open a URL, or otherwise satisfy the intent without canvas_push.
-  const hasExplicitCanvasCue = /\b(canvas|in-app canvas)\b/.test(prompt);
   const requiredSuccessfulTools =
     requiresCanvasArtifact && hasExplicitCanvasCue && !opts.isWatchSkipRecommendationTask
       ? ["write_file", "canvas_push"]
       : [];
-  const hasReviewCue = /\b(review|evaluate|assess|verify|check|read|audit)\b/.test(prompt);
+  const hasStrongReviewCue = /\b(review|evaluate|assess|verify|read|audit)\b/.test(prompt);
+  const hasWeakCheckCue = /\bcheck\b/.test(prompt);
+  const hasEvidenceContractCue =
+    /\b(verification evidence|verification complete|review-backed|evidence|exit codes?|commands? completed|exact command results|pass\/fail|passed or failed|final .*verdict|build-health verdict|overall status|blocks release)\b/.test(
+      prompt,
+    );
   const hasJudgmentCue =
     /\b(let me know|tell me|advise|recommend|whether|should i|worth|waste of)\b/.test(prompt);
   const hasEvidenceWorkCue =
@@ -192,7 +219,10 @@ export function buildCompletionContract(opts: {
   const hasSequencingCue = /\b(and then|then|after|based on)\b/.test(prompt);
   const requiresVerificationEvidence =
     requiresExecutionEvidence &&
-    (hasReviewCue || (hasJudgmentCue && hasEvidenceWorkCue && hasSequencingCue));
+    (hasStrongReviewCue ||
+      hasEvidenceContractCue ||
+      (hasWeakCheckCue && hasEvidenceContractCue) ||
+      (hasJudgmentCue && hasEvidenceWorkCue && hasSequencingCue));
 
   return {
     requiresExecutionEvidence,
@@ -219,7 +249,11 @@ export function responseHasDecisionSignal(text: string): boolean {
     /\bchoose\b/.test(normalized) ||
     /\bworth(?:\s+it)?\b/.test(normalized) ||
     /\bnot worth\b/.test(normalized) ||
-    /\bskip\b/.test(normalized)
+    /\bskip\b/.test(normalized) ||
+    /\b(?:result|verdict|status)\s*:\s*\*{0,2}`?(?:green|degraded|broken|passed|failed)`?\*{0,2}\b/.test(
+      normalized,
+    ) ||
+    /\bfinal\s+build-health\s+verdict\b/.test(normalized)
   );
 }
 
@@ -227,6 +261,7 @@ export function responseHasVerificationSignal(text: string): boolean {
   const normalized = String(text || "").toLowerCase();
   if (!normalized.trim()) return false;
   return (
+    responseHasExecutionReportEvidenceSignal(normalized) ||
     /\bi\s+(reviewed|read|analyzed|assessed|verified|checked)\b/.test(normalized) ||
     /\bafter\s+(reviewing|reading|analyzing)\b/.test(normalized) ||
     /\bbased on\b/.test(normalized) ||
@@ -237,6 +272,36 @@ export function responseHasVerificationSignal(text: string): boolean {
     /\bkey takeaways\b/.test(normalized) ||
     /\brecommendation\b/.test(normalized)
   );
+}
+
+export function responseHasExecutionReportEvidenceSignal(text: string): boolean {
+  const normalized = String(text || "").toLowerCase();
+  if (!normalized.trim()) return false;
+
+  const hasCommandOrApiEvidence =
+    /\b(?:cargo|go|make|cmake|xcodebuild|swift|pytest|python -m pytest|gradle|mvn|dotnet)\b[\w\s:.-]{0,80}/.test(
+      normalized,
+    ) ||
+    /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?[\w:-]+\b/.test(normalized) ||
+    /\bexit(?:\s+code)?\s*`?\d+`?\b/.test(normalized) ||
+    /\bhttp\s*`?\d{3}`?\b/.test(normalized) ||
+    /\b(?:get|post|put|patch|delete)\s+https?:\/\//.test(normalized) ||
+    /\bapi requests?\b/.test(normalized) ||
+    /\bcommands? completed\b/.test(normalized) ||
+    /\bexact command results\b/.test(normalized);
+  const hasPassFailEvidence =
+    /\b(?:passed|failed|skipped|success|failure)\b/.test(normalized) ||
+    /\bpass\/fail\b/.test(normalized) ||
+    /\bpassed or failed\b/.test(normalized);
+  const hasVerdict =
+    /\b(?:final\s+)?build-health verdict\b/.test(normalized) ||
+    /\boverall status\s*:\s*(?:`?green`?|`?degraded`?|`?broken`?)/.test(normalized) ||
+    /\bbuild health status\s*:\s*`?(?:green|degraded|broken)`?/.test(normalized) ||
+    /\bresult\s*:\s*\*{0,2}(?:green|degraded|broken)\*{0,2}\b/.test(normalized) ||
+    /\bblocks release\s*:\s*(?:yes|no)\b/.test(normalized) ||
+    /\bfinal verdict\b/.test(normalized);
+
+  return hasCommandOrApiEvidence && hasPassFailEvidence && hasVerdict;
 }
 
 export function responseHasReasonedConclusionSignal(text: string): boolean {
@@ -258,12 +323,8 @@ export function hasVerificationToolEvidence(
   toolResultMemory: Array<{ tool: string }> | undefined,
 ): boolean {
   if (!Array.isArray(toolResultMemory) || toolResultMemory.length === 0) return false;
-  return toolResultMemory.some(
-    (entry) =>
-      entry.tool === "web_search" ||
-      entry.tool === "web_fetch" ||
-      entry.tool === "search_files" ||
-      entry.tool === "glob",
+  return toolResultMemory.some((entry) =>
+    VERIFICATION_TOOL_EVIDENCE.has(String(entry.tool || "").trim().toLowerCase()),
   );
 }
 
@@ -345,12 +406,14 @@ export function fallbackContainsDirectAnswer(opts: {
   lastAssistantText: string | null;
   lastNonVerificationOutput: string | null;
   lastAssistantOutput: string | null;
+  buildResultSummary?: () => string | undefined;
   minResultSummaryLength: number;
 }): boolean {
   const fallbackCandidates = [
     opts.lastAssistantText,
     opts.lastNonVerificationOutput,
     opts.lastAssistantOutput,
+    opts.buildResultSummary?.(),
   ];
 
   return fallbackCandidates.some((candidate) =>

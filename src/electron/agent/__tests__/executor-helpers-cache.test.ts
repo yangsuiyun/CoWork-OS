@@ -304,6 +304,18 @@ describe("ToolFailureTracker browser HTTP status handling", () => {
     expect(tracker.isDisabled("run_command")).toBe(true);
   });
 
+  it("keeps ordinary empty run_command exits on the normal failure threshold", () => {
+    const tracker = new ToolFailureTracker();
+    const message =
+      "Command exited with no output (exit 1). This can be normal for shell predicates such as test, false, or grep -q.";
+
+    expect(tracker.recordFailure("run_command", message)).toBe(false);
+    expect(tracker.isDisabled("run_command")).toBe(false);
+
+    expect(tracker.recordFailure("run_command", message)).toBe(false);
+    expect(tracker.isDisabled("run_command")).toBe(false);
+  });
+
   it("immediately disables get_current_location after desktop geolocation provider failure", () => {
     const tracker = new ToolFailureTracker();
     const message =

@@ -39,6 +39,7 @@ export interface CronRunHistoryEntry {
   status: CronJobStatus;
   error?: string;
   taskId?: string;
+  taskStillRunning?: boolean;
   runMode?: CronJobRunMode;
   workspaceId?: string;
   runWorkspacePath?: string;
@@ -200,6 +201,7 @@ export interface CronEvent {
   status?: CronJobStatus;
   error?: string;
   taskId?: string; // ID of the created task
+  taskStillRunning?: boolean;
   nextRunAtMs?: number;
 }
 

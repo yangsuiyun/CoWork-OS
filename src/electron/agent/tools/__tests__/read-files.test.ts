@@ -510,6 +510,63 @@ describe("readFilesByPatterns", () => {
     expect(out.path).toBe("docs/spec.md");
   });
 
+  it("expands tilde paths before enforcing workspace boundaries for directory listings", async () => {
+    const workspaceRoot = path.join(tmpDir, "tilde-boundary");
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+    const workspaceScoped: Workspace = {
+      ...workspace,
+      path: workspaceRoot,
+      isTemp: false,
+      permissions: {
+        ...workspace.permissions,
+        unrestrictedFileAccess: false,
+        allowedPaths: [],
+      } as Any,
+    };
+    const daemon = {
+      logEvent: vi.fn(),
+      requestApproval: vi.fn(),
+    } as Any;
+    const scopedFileTools = new FileTools(workspaceScoped, daemon, "task-tilde");
+
+    await expect(scopedFileTools.listDirectory("~/Library/LaunchAgents")).rejects.toThrow(
+      new RegExp(os.homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
+    expect(daemon.logEvent).toHaveBeenCalledWith(
+      "task-tilde",
+      "home_path_expanded",
+      expect.objectContaining({
+        tool: "list_directory",
+        attemptedPath: "~/Library/LaunchAgents",
+      }),
+    );
+  });
+
+  it("expands tilde paths in the shared resolver for mutating file operations", () => {
+    const workspaceRoot = path.join(tmpDir, "tilde-mutating");
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+    const workspaceScoped: Workspace = {
+      ...workspace,
+      path: workspaceRoot,
+      isTemp: false,
+      permissions: {
+        ...workspace.permissions,
+        unrestrictedFileAccess: false,
+        allowedPaths: [os.homedir()],
+      } as Any,
+    };
+    const scopedFileTools = new FileTools(
+      workspaceScoped,
+      { logEvent: vi.fn(), requestApproval: vi.fn() } as Any,
+      "task-tilde-write",
+    );
+    const requestedPath = "~/Library/LaunchAgents/example.plist";
+    const expected = path.join(os.homedir(), "Library", "LaunchAgents", "example.plist");
+
+    expect((scopedFileTools as Any).resolvePath(requestedPath, "write")).toBe(expected);
+    expect((scopedFileTools as Any).resolvePath(requestedPath, "delete")).toBe(expected);
+  });
+
   it("blocks read_file symlink escapes outside workspace when unrestricted access is off", async () => {
     if (process.platform === "win32") return;
 

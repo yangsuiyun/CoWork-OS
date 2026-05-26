@@ -38,6 +38,36 @@ describe("timeline payload sanitizer", () => {
     expect(sanitized.output).toContain("truncated 70000 chars");
   });
 
+  it("enforces an aggregate payload byte limit", () => {
+    const sanitized = sanitizeTimelinePayloadForStorage({
+      tool: "run_command",
+      message: "large output",
+      chunks: Array.from({ length: 10 }, (_, index) => ({
+        index,
+        output: "x".repeat(60_000),
+      })),
+    }) as Record<string, unknown>;
+
+    expect(sanitized.__coworkPayloadTruncated).toBe(true);
+    expect(sanitized.tool).toBe("run_command");
+    expect(Buffer.byteLength(JSON.stringify(sanitized), "utf8")).toBeLessThanOrEqual(256 * 1024);
+  });
+
+  it("normalizes non-json primitives and opaque containers", () => {
+    const sanitized = sanitizeTimelinePayloadForStorage({
+      startedAt: new Date("2026-05-25T10:00:00.000Z"),
+      count: 12n,
+      values: new Set(["a", "b"]),
+      invalidNumber: Number.POSITIVE_INFINITY,
+    }) as Record<string, unknown>;
+
+    expect(sanitized.startedAt).toBe("2026-05-25T10:00:00.000Z");
+    expect(sanitized.count).toBe("12n");
+    expect(sanitized.values).toMatchObject({ omitted: true, reason: "Set payload", size: 2 });
+    expect(sanitized.invalidNumber).toBe("Infinity");
+    expect(() => JSON.stringify(sanitized)).not.toThrow();
+  });
+
   it("sanitizes task events without mutating the original event", () => {
     const event: TaskEvent = {
       id: "event-1",

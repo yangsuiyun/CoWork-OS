@@ -45,9 +45,8 @@ beforeEach(() => {
 });
 
 describe("SystemTools.normalizeAppleScript", () => {
-  // Access the private method through a test-only technique
-  function callNormalize(input: string): { script: string; modified: boolean } {
-    const instance = new SystemTools(
+  function makeSystemTools(): SystemTools {
+    return new SystemTools(
       {
         id: "ws-1",
         name: "test",
@@ -58,6 +57,11 @@ describe("SystemTools.normalizeAppleScript", () => {
       { logEvent: vi.fn(), requestApproval: vi.fn() } as Any,
       "task-1",
     );
+  }
+
+  // Access the private method through a test-only technique
+  function callNormalize(input: string): { script: string; modified: boolean } {
+    const instance = makeSystemTools();
     // Access private method for testing
     return (instance as Any).normalizeAppleScript(input);
   }
@@ -102,6 +106,16 @@ describe("SystemTools.normalizeAppleScript", () => {
     const result = callNormalize("```applescript\ntell\u00A0app \u201CFinder\u201D\n```");
     expect(result.script).toBe('tell app "Finder"');
     expect(result.modified).toBe(true);
+  });
+
+  it("adds a discovery hint for unresolved application ids", () => {
+    const instance = makeSystemTools();
+    const result = (instance as Any).formatAppleScriptFailure({
+      stderr: '899:929: syntax error: Can\u2019t get application id "ai.perplexity". (-1728)',
+    });
+
+    expect(result).toContain('The bundle identifier "ai.perplexity" was not resolvable.');
+    expect(result).toContain(`osascript -e 'id of app "App Name"'`);
   });
 });
 

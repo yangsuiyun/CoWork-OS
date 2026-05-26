@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { sanitizeEmailHtml } from "../email-html-sanitize";
+import { normalizeEmailExternalWebUrl, sanitizeEmailHtml } from "../email-html-sanitize";
 
 describe("sanitizeEmailHtml", () => {
   it("removes meta tags that can trigger srcdoc parser warnings", () => {
@@ -21,7 +21,7 @@ describe("sanitizeEmailHtml", () => {
     expect(result).not.toContain("@import");
     expect(result).not.toContain("@font-face");
     expect(result).not.toContain("https://fonts.example.com");
-    expect(result).toContain("url(about:blank)");
+    expect(result).toContain("url(\"data:image/gif;base64,R0lGODlhAQABAAAAACw=\")");
   });
 
   it("removes inline script hooks without stripping safe image URLs", () => {
@@ -40,5 +40,16 @@ describe("sanitizeEmailHtml", () => {
     expect(result).not.toContain("javascript:");
     expect(result).not.toContain("https://example.com/post");
     expect(result).toContain('src="https://example.com/image.png"');
+  });
+
+  it("normalizes only web links for external opening", () => {
+    expect(normalizeEmailExternalWebUrl(" https://example.com/unsubscribe ")).toBe(
+      "https://example.com/unsubscribe",
+    );
+    expect(normalizeEmailExternalWebUrl("//example.com/path")).toBe("https://example.com/path");
+    expect(normalizeEmailExternalWebUrl("mailto:hello@example.com")).toBeNull();
+    expect(normalizeEmailExternalWebUrl("javascript:alert(1)")).toBeNull();
+    expect(normalizeEmailExternalWebUrl("#footer")).toBeNull();
+    expect(normalizeEmailExternalWebUrl("/relative")).toBeNull();
   });
 });

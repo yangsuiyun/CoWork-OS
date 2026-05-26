@@ -39,6 +39,8 @@ export interface VirtualListProps<T> {
   role?: string;
   /** Callback fired when the user scrolls near the bottom (infinite scroll). */
   onScrollNearEnd?: () => void;
+  /** Allow near-end callbacks before the user has scrolled, for explicit auto-fill use cases. */
+  triggerNearEndOnMount?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,10 +59,12 @@ export function VirtualList<T>({
   style,
   role = "list",
   onScrollNearEnd,
+  triggerNearEndOnMount = false,
 }: VirtualListProps<T>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const nearEndTriggeredRef = useRef(false);
   const lastItemCountRef = useRef(items.length);
+  const hasUserScrolledRef = useRef(false);
 
   const { virtualItems, totalHeight, isAtBottom } = useVirtualList({
     items,
@@ -80,6 +84,7 @@ export function VirtualList<T>({
 
   useEffect(() => {
     if (!enabled || !onScrollNearEnd) return;
+    if (!triggerNearEndOnMount && !hasUserScrolledRef.current) return;
     if (!isAtBottom) {
       nearEndTriggeredRef.current = false;
       return;
@@ -87,7 +92,7 @@ export function VirtualList<T>({
     if (nearEndTriggeredRef.current) return;
     nearEndTriggeredRef.current = true;
     onScrollNearEnd();
-  }, [enabled, isAtBottom, onScrollNearEnd]);
+  }, [enabled, isAtBottom, onScrollNearEnd, triggerNearEndOnMount]);
 
   // ---- Non-virtual fallback -----------------------------------------------
 
@@ -116,6 +121,9 @@ export function VirtualList<T>({
       className={className}
       style={{ overflow: "auto", position: "relative", ...style }}
       role={role}
+      onScroll={() => {
+        hasUserScrolledRef.current = true;
+      }}
     >
       {/* Spacer — keeps the scrollbar proportional to the full content. */}
       <div style={{ height: totalHeight, position: "relative" }}>

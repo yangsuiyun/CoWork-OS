@@ -177,7 +177,9 @@ export function MCBoardTab({ data }: MCBoardTabProps) {
         <div className="mc-v2-board-header-main">
           <div>
             <h2>{agentContext.getUiCopy("mcMissionQueueTitle")}</h2>
-            <p className="mc-v2-board-subtitle">Live queue for assignment, intervention, and review.</p>
+            <p className="mc-v2-board-subtitle">
+              Tracked board work for assignment, intervention, and review. Runtime queue tasks are summarized in the Brief.
+            </p>
           </div>
           <div className="mc-v2-board-summary">
             <span className="mc-v2-board-summary-pill">
@@ -290,7 +292,7 @@ export function MCBoardTab({ data }: MCBoardTabProps) {
       <div className="mc-v2-kanban">
         {visibleColumns.length === 0 && (
           <div className="mc-v2-column-empty" style={{ minWidth: 280 }}>
-            No tasks match the current board filters.
+            No board work matches the current filters. Runtime queue items may still be running or waiting outside this board view.
           </div>
         )}
         {visibleColumns.map((column) => {

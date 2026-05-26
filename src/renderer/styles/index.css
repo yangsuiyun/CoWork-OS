@@ -15555,8 +15555,8 @@ a,
 }
 
 .browser-workbench-right-actions {
-  width: 216px;
-  flex-basis: 216px;
+  width: 252px;
+  flex-basis: 252px;
   justify-content: flex-end;
   position: relative;
   z-index: 2;
@@ -15570,6 +15570,152 @@ a,
   line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.browser-workbench-youtube-ask {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  display: grid;
+  gap: 8px;
+  background: var(--color-bg);
+}
+
+.browser-workbench-youtube-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 8px;
+  align-items: center;
+}
+
+.browser-workbench-youtube-form input {
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-bg-input);
+  color: var(--color-text);
+  font-size: 12px;
+  outline: none;
+}
+
+.browser-workbench-youtube-form input:focus {
+  border-color: var(--color-accent);
+}
+
+.browser-workbench-youtube-submit,
+.browser-workbench-youtube-secondary,
+.browser-workbench-youtube-followups button {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.browser-workbench-youtube-submit {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.browser-workbench-youtube-submit:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.browser-workbench-youtube-status,
+.browser-workbench-youtube-error {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.browser-workbench-youtube-error {
+  color: var(--color-danger, #dc2626);
+}
+
+.browser-workbench-youtube-answer {
+  display: grid;
+  gap: 8px;
+}
+
+.browser-workbench-youtube-answer p {
+  margin: 0;
+  max-height: 132px;
+  overflow: auto;
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.browser-workbench-youtube-secondary {
+  justify-self: start;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.browser-workbench-youtube-sources {
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.browser-workbench-youtube-source {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.browser-workbench-youtube-source:hover {
+  border-color: var(--color-border);
+}
+
+.browser-workbench-youtube-source-time {
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.browser-workbench-youtube-source-text {
+  min-width: 0;
+  color: var(--color-text-secondary);
+  display: -webkit-box;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.browser-workbench-youtube-followups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.browser-workbench-youtube-followups button {
+  max-width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 11px;
 }
 
 .browser-workbench-profile {
@@ -22909,6 +23055,11 @@ a,
   padding-left: 12px;
 }
 
+.visual-oblivion .task-tree-node-child {
+  margin-left: 6px;
+  padding-left: 12px;
+}
+
 .visual-oblivion .cli-tree-prefix {
   display: inline-flex;
   align-items: center;
@@ -25175,9 +25326,9 @@ a,
 .density-focused .cli-task-item {
   padding: 0 6px !important;
   padding-left: var(--cli-task-padding-left, 12px) !important;
-  gap: 5px;
+  gap: 6px;
   font-family: var(--font-ui);
-  min-height: 22px;
+  min-height: 28px;
 }
 
 .density-focused .task-item-content {
@@ -25188,7 +25339,7 @@ a,
   font-family: var(--font-ui);
   font-size: 13px;
   font-weight: 400;
-  line-height: 1.15;
+  line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -25249,6 +25400,7 @@ a,
   padding-left: 24px;
   opacity: 0.7;
   font-size: 12px;
+  min-height: 27px;
 }
 
 .density-focused .task-item-subagent:hover {
@@ -25296,9 +25448,12 @@ a,
   text-transform: uppercase;
   font-weight: 600;
   font-size: 10px;
+  line-height: 1.2;
   color: var(--color-text-muted);
   letter-spacing: 0.05em;
-  padding: 5px 12px 1px 32px;
+  box-sizing: border-box;
+  min-height: 26px;
+  padding: 8px 12px 3px 32px;
   opacity: 0.6;
 }
 
@@ -25399,7 +25554,7 @@ a,
 
 /* First date group needs less top padding */
 .density-focused .sidebar-date-group:first-child {
-  padding-top: 3px;
+  padding-top: 6px;
 }
 
 /* Sidebar footer: compact */

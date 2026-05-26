@@ -1180,6 +1180,16 @@ describe("isTaskActivelyWorking", () => {
   it("keeps the full transcript visible in inspect mode", () => {
     const rows = [
       {
+        kind: "history-control",
+        key: "timeline-history-control",
+        estimatedHeight: 44,
+        hasMoreHistory: true,
+        isLoading: false,
+        error: null,
+        revision: "more:idle:none",
+        visiblePerfEventId: null,
+      },
+      {
         kind: "timeline",
         key: "budget-1",
         estimatedHeight: 100,
@@ -1212,7 +1222,76 @@ describe("isTaskActivelyWorking", () => {
 
     expect(result.visibleFeedRows).toHaveLength(rows.length);
     expect(result.hiddenLiveFeedRowCount).toBe(0);
-    expect(result.visibleFeedRows[0]?.key).toBe("budget-1");
+    expect(result.visibleFeedRows[0]?.key).toBe("timeline-history-control");
+  });
+
+  it("keeps history controls out of the bounded live transcript", () => {
+    const rows = [
+      {
+        kind: "history-control",
+        key: "timeline-history-control",
+        estimatedHeight: 44,
+        hasMoreHistory: true,
+        isLoading: false,
+        error: null,
+        revision: "more:idle:none",
+        visiblePerfEventId: null,
+      },
+      ...Array.from({ length: 12 }, (_, index) => ({
+        kind: "timeline",
+        key: `progress-${index}`,
+        estimatedHeight: 100,
+        timelineIndex: index,
+        visiblePerfEventId: `progress-${index}`,
+        revision: `progress-${index}`,
+        item: {
+          kind: "event",
+          event: makeEvent(`progress-${index}`, 100 + index, "timeline_step_updated", {
+            legacyType: "progress_update",
+            message: `Progress ${index}`,
+          }),
+        },
+      })),
+    ] as Any[];
+
+    const result = selectVisibleTaskFeedRows(rows, "live");
+
+    expect(result.visibleFeedRows.some((row) => row.key === "timeline-history-control")).toBe(false);
+    expect(result.hiddenLiveFeedRowCount).toBe(
+      rows.filter((row) => row.kind !== "history-control").length - result.visibleFeedRows.length,
+    );
+  });
+
+  it("keeps history controls out of short live transcripts", () => {
+    const rows = [
+      {
+        kind: "history-control",
+        key: "timeline-history-control",
+        estimatedHeight: 44,
+        hasMoreHistory: true,
+        isLoading: false,
+        error: null,
+        revision: "more:idle:none",
+        visiblePerfEventId: null,
+      },
+      {
+        kind: "timeline",
+        key: "assistant-1",
+        estimatedHeight: 100,
+        timelineIndex: 0,
+        visiblePerfEventId: "assistant-1",
+        revision: "assistant-1",
+        item: {
+          kind: "event",
+          event: makeEvent("assistant-1", 200, "assistant_message", { message: "Answer" }),
+        },
+      },
+    ] as Any[];
+
+    const result = selectVisibleTaskFeedRows(rows, "live");
+
+    expect(result.visibleFeedRows.map((row) => row.key)).toEqual(["assistant-1"]);
+    expect(result.hiddenLiveFeedRowCount).toBe(0);
   });
 
   it("projects completed delivery mode to final output rows", () => {

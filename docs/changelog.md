@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **First-run onboarding docs and UX**: documented the staged first-run setup flow, ChatGPT subscription sign-in path, local Ollama detection, free-option provider badges for OpenRouter/Gemini/Groq, and the fixed-frame onboarding recap with a scrollable review body.
+- **Mission Control semantics**: clarified Mission Control docs and UI language around Heartbeat agents, the global runtime queue, and workspace-scoped Mission Board work so enabled background roles are not mistaken for currently running tasks.
 
 ### Fixed
 - **Memory FTS performance on Electron main thread**: eliminated synchronous SQLite FTS blocking (1.5s spikes → no slow FTS on task path) via a dedicated prompt-recall fast path that skips imported-global search, hybrid semantic scoring, and double `getFullDetails` round-trips; batched tier-tracking UPDATEs; LRU cache for prompt-recall results; background marker-based lookups switched from FTS to direct LIKE queries; composite `(workspace_id, created_at DESC)` index; and richer slow-FTS instrumentation with token count, row count, limit, and workspace context. See [Memory FTS Performance](memory-fts-performance.md).
@@ -76,7 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Branding assets**: refreshed app/logo assets and related docs for the current CoWork OS branding set.
 
 ### Fixed
-- **Agents Hub active agents**: Mission Control active agents now appear in Agents Hub counts and panel state instead of being hidden from the hub summary.
+- **Agents Hub Heartbeat agents**: Mission Control Heartbeat-enabled agents now appear in Agents Hub counts and panel state instead of being hidden from the hub summary.
 - **Task metadata persistence**: restored persisted `TaskRepository.findAll` fields for assigned agent role, board metadata, and awaiting-user-input reason codes.
 - **Provider retry handling**: overloaded provider failures are classified as transient/retryable, enabling existing fallback and retry handling instead of failing immediately.
 - **HTTP tool failure details**: `http_request` failures preserve clearer failure reason and status metadata instead of collapsing into a generic unknown-error path.

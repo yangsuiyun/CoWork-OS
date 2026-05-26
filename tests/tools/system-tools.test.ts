@@ -270,16 +270,123 @@ describe('SystemTools - run_applescript', () => {
     });
   });
 
+  describe('resolveAppBundleId', () => {
+    it('resolves an app name to a bundle identifier', async () => {
+      vi.mocked(os.platform).mockReturnValue('darwin');
+      execFileMock.mockImplementation((file: string, args: string[], _opts: any, callback?: Function) => {
+        expect(file).toBe('osascript');
+        expect(args).toEqual(['-e', 'id of application "Perplexity"']);
+        if (callback) {
+          callback(null, { stdout: 'ai.perplexity.macv3\n', stderr: '' });
+        }
+        return undefined;
+      });
+
+      await expect(systemTools.resolveAppBundleId('Perplexity')).resolves.toEqual({
+        success: true,
+        appName: 'Perplexity',
+        bundleId: 'ai.perplexity.macv3',
+        resolvedBy: 'app_name',
+      });
+    });
+
+    it('tries application id resolution when the input looks like a bundle identifier', async () => {
+      vi.mocked(os.platform).mockReturnValue('darwin');
+      execFileMock
+        .mockImplementationOnce((_file: string, _args: string[], _opts: any, callback?: Function) => {
+          if (callback) {
+            const error = new Error('not found') as any;
+            error.stderr = 'Can’t get application "ai.perplexity.macv3".';
+            callback(error, null, '');
+          }
+          return undefined;
+        })
+        .mockImplementationOnce((file: string, args: string[], _opts: any, callback?: Function) => {
+          expect(file).toBe('osascript');
+          expect(args).toEqual(['-e', 'id of application id "ai.perplexity.macv3"']);
+          if (callback) {
+            callback(null, { stdout: 'ai.perplexity.macv3\n', stderr: '' });
+          }
+          return undefined;
+        });
+
+      const result = await systemTools.resolveAppBundleId('ai.perplexity.macv3');
+      expect(result.resolvedBy).toBe('bundle_id');
+      expect(result.bundleId).toBe('ai.perplexity.macv3');
+    });
+  });
+
+  describe('macOS app process tools', () => {
+    it('finds matching macOS app processes without shell pipelines', async () => {
+      vi.mocked(os.platform).mockReturnValue('darwin');
+      execFileMock.mockImplementation((file: string, args: string[], _opts: any, callback?: Function) => {
+        expect(file).toBe('/bin/ps');
+        expect(args).toEqual(['-axo', 'pid=,ppid=,comm=,args=']);
+        if (callback) {
+          callback(null, {
+            stdout:
+              '101 1 /Applications/Perplexity.app/Contents/MacOS/Perplexity /Applications/Perplexity.app/Contents/MacOS/Perplexity\\n' +
+              '202 1 /usr/bin/grep grep Perplexity\\n',
+            stderr: '',
+          });
+        }
+        return undefined;
+      });
+
+      const result = await systemTools.findMacOSAppProcesses({ query: 'Perplexity' });
+      expect(result.processes).toHaveLength(1);
+      expect(result.processes[0].pid).toBe(101);
+    });
+
+    it('terminates matching macOS app processes after approval', async () => {
+      vi.mocked(os.platform).mockReturnValue('darwin');
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+      execFileMock
+        .mockImplementationOnce((_file: string, _args: string[], _opts: any, callback?: Function) => {
+          if (callback) {
+            callback(null, {
+              stdout:
+                '101 1 /Applications/Perplexity.app/Contents/MacOS/Perplexity /Applications/Perplexity.app/Contents/MacOS/Perplexity\\n',
+              stderr: '',
+            });
+          }
+          return undefined;
+        })
+        .mockImplementationOnce((_file: string, _args: string[], _opts: any, callback?: Function) => {
+          if (callback) {
+            callback(null, { stdout: '', stderr: '' });
+          }
+          return undefined;
+        });
+
+      const result = await systemTools.terminateMacOSAppProcesses({
+        query: 'Perplexity',
+        signal: 'KILL',
+      });
+
+      expect(killSpy).toHaveBeenCalledWith(101, 'SIGKILL');
+      expect(result.terminated).toHaveLength(1);
+      expect(result.remaining).toHaveLength(0);
+      killSpy.mockRestore();
+    });
+  });
+
   describe('tool definition', () => {
     it('should include run_applescript in tool definitions', () => {
       const tools = SystemTools.getToolDefinitions();
       const appleScriptTool = tools.find((t) => t.name === 'run_applescript');
+      const bundleResolverTool = tools.find((t) => t.name === 'resolve_app_bundle_id');
+      const processFinderTool = tools.find((t) => t.name === 'find_macos_app_processes');
+      const launchAgentTool = tools.find((t) => t.name === 'list_macos_launch_agents');
 
       expect(appleScriptTool).toBeDefined();
       expect(appleScriptTool!.description).toContain('AppleScript');
       expect(appleScriptTool!.description).toContain('macOS');
       expect(appleScriptTool!.input_schema.properties.script).toBeDefined();
       expect(appleScriptTool!.input_schema.required).toContain('script');
+      expect(bundleResolverTool).toBeDefined();
+      expect(processFinderTool).toBeDefined();
+      expect(launchAgentTool).toBeDefined();
     });
 
     it('should have proper input schema for run_applescript', () => {

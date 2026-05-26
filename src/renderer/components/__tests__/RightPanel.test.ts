@@ -1,9 +1,10 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   RightPanel,
+  openPreviewableFileInSidebar,
 } from "../RightPanel";
 import {
   getProgressSectionMaterialSignature,
@@ -12,6 +13,52 @@ import {
 } from "../../utils/right-panel-progress";
 
 describe("RightPanel checklist rendering", () => {
+  it("routes previewable files from the Files section to sidebar artifact viewers", () => {
+    const fallback = vi.fn();
+    const openers = {
+      html: vi.fn(),
+      spreadsheet: vi.fn(),
+      document: vi.fn(),
+      presentation: vi.fn(),
+    };
+
+    openPreviewableFileInSidebar("city-blueprint-preview.html", openers, fallback);
+    openPreviewableFileInSidebar("budget.xlsx", openers, fallback);
+    openPreviewableFileInSidebar("brief.docx", openers, fallback);
+    openPreviewableFileInSidebar("notes.md", openers, fallback);
+    openPreviewableFileInSidebar("deck.ppt", openers, fallback);
+    openPreviewableFileInSidebar("macro-deck.pptm", openers, fallback);
+
+    expect(openers.html).toHaveBeenCalledWith("city-blueprint-preview.html");
+    expect(openers.spreadsheet).toHaveBeenCalledWith("budget.xlsx");
+    expect(openers.document).toHaveBeenCalledWith("brief.docx");
+    expect(openers.document).toHaveBeenCalledWith("notes.md");
+    expect(openers.presentation).toHaveBeenCalledWith("deck.ppt");
+    expect(openers.presentation).toHaveBeenCalledWith("macro-deck.pptm");
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("keeps non-previewable files on the modal fallback", () => {
+    const fallback = vi.fn();
+
+    const openers = {
+      html: vi.fn(),
+      spreadsheet: vi.fn(),
+      document: vi.fn(),
+      presentation: vi.fn(),
+    };
+
+    openPreviewableFileInSidebar("preview.png", openers, fallback);
+    openPreviewableFileInSidebar("numbers-file.numbers", openers, fallback);
+    openPreviewableFileInSidebar("pages-file.pages", openers, fallback);
+
+    expect(fallback).toHaveBeenCalledWith("preview.png");
+    expect(fallback).toHaveBeenCalledWith("numbers-file.numbers");
+    expect(fallback).toHaveBeenCalledWith("pages-file.pages");
+    expect(openers.spreadsheet).not.toHaveBeenCalled();
+    expect(openers.document).not.toHaveBeenCalled();
+  });
+
   it("renders task feedback controls in the right panel for completed tasks", () => {
     const markup = renderToStaticMarkup(
       React.createElement(RightPanel, {

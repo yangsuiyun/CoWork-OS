@@ -37,6 +37,35 @@ async function createDeck(filePath: string): Promise<void> {
 }
 
 describe("PptxPreviewService", () => {
+  it("renders non-PPTX PowerPoint files through the image fallback", async () => {
+    const workspace = path.join(tempRoot, "workspace");
+    await fs.mkdir(workspace, { recursive: true });
+    const deckPath = path.join(workspace, "legacy.ppt");
+    await fs.writeFile(deckPath, Buffer.from("legacy powerpoint bytes"));
+
+    const service = new PptxPreviewService({
+      cacheRoot: path.join(tempRoot, "cache"),
+      artifactToolRunner: async ({ outputDir }) => {
+        await fs.writeFile(path.join(outputDir, "slide-1.png"), PNG_BYTES);
+        await fs.writeFile(path.join(outputDir, "slide-2.png"), PNG_BYTES);
+      },
+      commandRunner: async () => {
+        throw new Error("converter should not be needed");
+      },
+    });
+
+    const preview = await service.buildPreview({
+      filePath: deckPath,
+      workspaceRoot: workspace,
+      renderMode: "full",
+    });
+
+    expect(preview.slideCount).toBe(2);
+    expect(preview.renderStatus).toBe("rendered");
+    expect(preview.slides[0].imageDataUrl).toContain("data:image/png;base64,");
+    expect(preview.slides[1].imageDataUrl).toContain("data:image/png;base64,");
+  });
+
   it("returns fast text preview without rendering slide images", async () => {
     const workspace = path.join(tempRoot, "workspace");
     await fs.mkdir(workspace, { recursive: true });

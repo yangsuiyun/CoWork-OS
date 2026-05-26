@@ -90,7 +90,7 @@ Mission Control is the main control surface for the core runtime. It should be r
 - experiments
 - learnings
 
-It is not the owner of runtime state; it is the operating cockpit around that state.
+It is not the owner of runtime state; it is the operating cockpit around that state. Mission Control also exposes a global runtime queue summary so operators can see executor pressure, but that queue is separate from Heartbeat state and from workspace-scoped Mission Board work.
 
 ## Core Harness
 

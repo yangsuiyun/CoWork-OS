@@ -35,6 +35,8 @@ export interface UseVirtualListOptions<T> {
   enabled?: boolean;
   /** Top offset of the list content within the scroll container. */
   scrollOffsetTop?: number;
+  /** Skip the next item-count auto-scroll, used when callers prepend history. */
+  suppressAutoScrollOnItemsChange?: boolean;
 }
 
 export interface UseVirtualListResult<T> {
@@ -97,12 +99,14 @@ export function useVirtualList<T>(options: UseVirtualListOptions<T>): UseVirtual
     overscan = 5,
     enabled = true,
     scrollOffsetTop = 0,
+    suppressAutoScrollOnItemsChange = false,
   } = options;
 
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const rafRef = useRef(0);
   const isAtBottomRef = useRef(true);
+  const previousItemCountRef = useRef(items.length);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
   // ---- Compute item offsets ------------------------------------------------
@@ -164,12 +168,16 @@ export function useVirtualList<T>(options: UseVirtualListOptions<T>): UseVirtual
   // ---- Auto-scroll to bottom when new items arrive if pinned --------------
 
   useEffect(() => {
-    if (!enabled || !isAtBottomRef.current) return;
+    const previousItemCount = previousItemCountRef.current;
+    const itemCountChanged = previousItemCount !== items.length;
+    previousItemCountRef.current = items.length;
+    if (!itemCountChanged) return;
+    if (!enabled || suppressAutoScrollOnItemsChange || !isAtBottomRef.current) return;
     const container = containerRef.current;
     if (container) {
       container.scrollTop = container.scrollHeight;
     }
-  }, [items.length, enabled, containerRef]);
+  }, [items.length, enabled, containerRef, suppressAutoScrollOnItemsChange]);
 
   // ---- Compute visible window ---------------------------------------------
 

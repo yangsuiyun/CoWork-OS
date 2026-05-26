@@ -227,7 +227,7 @@ export function PresentationArtifactViewer({
           return;
         }
         if (result.data.fileType !== "pptx" || !result.data.presentationPreview) {
-          setError("In-app preview is only available for PPTX presentations.");
+          setError("In-app preview is only available for PowerPoint presentations.");
           return;
         }
         applyViewerData(result.data);

@@ -1113,6 +1113,16 @@ image_generation_contract:
     ).toBe(false);
   });
 
+  it("does not infer browser QA from build-status and KPI-dashboard checks", () => {
+    const executor = Object.create(TaskExecutor.prototype) as Any;
+
+    expect(
+      executor.detectVisualQARequirement(
+        "Check CI/CD pipeline health (last build status, any failures), review the KPI dashboard, and check for security advisories.",
+      ),
+    ).toBe(false);
+  });
+
   it("still infers browser QA for explicit Vite web app shipping prompts", () => {
     const executor = Object.create(TaskExecutor.prototype) as Any;
 

@@ -134,7 +134,13 @@ Every Pulse and every Dispatch gets a run record. If Dispatch creates a heartbea
 
 ## Mission Control Semantics
 
-Mission Control should be read as heartbeat truth, not queue pressure.
+Mission Control should be read as heartbeat truth, not queue pressure. The current UI separates:
+
+- **Heartbeat agents**: enabled roles that may be monitoring, sleeping, or running.
+- **Global runtime queue**: executor pressure from tasks running or waiting in the local task queue.
+- **Mission Board work**: workspace-scoped tracked work in the board columns.
+
+Those counts can differ without indicating an error.
 
 Heartbeat v3 centers these operator-facing states:
 

@@ -198,7 +198,7 @@ features:
   - title: Automations
     details: The automations surface now separates core automation from trigger ingress, device routing, schedules, webhooks, and optional twin features. Existing tasks can become task-sourced routines from the task overflow menu, continue the same thread by default, and compile schedule/API/event triggers to lower-level engines.
   - title: Heartbeat V3
-    details: Default two-lane background automation with cheap Pulse checks, selective Dispatch escalation, signal compression, automation-profile ownership, and truthful Mission Control state.
+    details: Default two-lane background automation with cheap Pulse checks, selective Dispatch escalation, signal compression, automation-profile ownership, and truthful Mission Control state that separates Heartbeat agents, global runtime queue pressure, and workspace board work.
   - title: 150 Built-in Skills
     details: Document creation, web research, code generation, image analysis, React/Next.js implementation guidance, and specialized bundled workflows such as `llm-wiki` for persistent research vaults, `manim-video` for technical animation, `kami` for editorial PDFs and slide decks, `react-best-practices` for React workspace changes, and `taste-skill` for high-agency frontend design. The bundled CoWork Shortcuts pack adds slash-searchable workflow aliases on top of the same skills runtime. Extensible via custom skills, ClawHub installs, external skill imports, and optional read-only external skill directories, with staged scanning and warning/quarantine handling for managed imports.
   - title: LaTeX PDF Artifacts

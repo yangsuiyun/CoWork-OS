@@ -199,6 +199,59 @@ export class MacOSSandbox implements ISandbox {
     this.sandboxProfile = undefined;
   }
 
+  private getMacOSPathAliases(targetPath: string): string[] {
+    const aliases = new Set<string>();
+    const add = (candidate: string | null | undefined): void => {
+      if (!candidate) return;
+      aliases.add(path.resolve(candidate));
+    };
+
+    add(targetPath);
+    try {
+      if (fs.existsSync(targetPath)) {
+        add(fs.realpathSync(targetPath));
+      }
+    } catch {
+      // Keep the configured path when realpath is unavailable.
+    }
+
+    for (const candidate of Array.from(aliases)) {
+      if (candidate.startsWith("/var/")) {
+        add(`/private${candidate}`);
+      } else if (candidate.startsWith("/private/var/")) {
+        add(candidate.slice("/private".length));
+      }
+    }
+
+    return Array.from(aliases);
+  }
+
+  private appendReadSubpathRules(profile: string, pathsToAllow: string[]): string {
+    let next = profile;
+    for (const pathToAllow of pathsToAllow) {
+      try {
+        validatePathForSandboxProfile(pathToAllow);
+        next += `(allow file-read* (subpath "${escapeSandboxProfileString(pathToAllow)}"))\n`;
+      } catch (err) {
+        console.warn(`[MacOSSandbox] Skipping unsafe read path: ${pathToAllow}`, err);
+      }
+    }
+    return next;
+  }
+
+  private appendWriteSubpathRules(profile: string, pathsToAllow: string[]): string {
+    let next = profile;
+    for (const pathToAllow of pathsToAllow) {
+      try {
+        validatePathForSandboxProfile(pathToAllow);
+        next += `(allow file-write* (subpath "${escapeSandboxProfileString(pathToAllow)}"))\n`;
+      } catch (err) {
+        console.warn(`[MacOSSandbox] Skipping unsafe write path: ${pathToAllow}`, err);
+      }
+    }
+    return next;
+  }
+
   /**
    * Check if a path is allowed based on workspace permissions
    * Resolves symlinks to prevent symlink-based path traversal attacks
@@ -316,6 +369,8 @@ export class MacOSSandbox implements ISandbox {
 
     // Validate and escape workspace path
     validatePathForSandboxProfile(this.workspace.path);
+    const workspaceAliases = this.getMacOSPathAliases(this.workspace.path);
+    const tempAliases = this.getMacOSPathAliases(tempDir);
     const escapedWorkspace = escapeSandboxProfileString(this.workspace.path);
     const escapedTempDir = escapeSandboxProfileString(tempDir);
 
@@ -353,6 +408,8 @@ export class MacOSSandbox implements ISandbox {
 ; Allow reading workspace
 (allow file-read* (subpath "${escapedWorkspace}"))
 `;
+    profile = this.appendReadSubpathRules(profile, workspaceAliases);
+    profile = this.appendReadSubpathRules(profile, tempAliases);
 
     // Allow writing to workspace if permitted
     if (permissions.write) {
@@ -360,6 +417,7 @@ export class MacOSSandbox implements ISandbox {
 ; Allow writing to workspace
 (allow file-write* (subpath "${escapedWorkspace}"))
 `;
+      profile = this.appendWriteSubpathRules(profile, workspaceAliases);
       for (const relativePath of PROTECTED_WORKSPACE_WRITE_RELATIVE_PATHS) {
         const protectedPath = path.join(this.workspace.path, relativePath);
         try {
@@ -382,6 +440,7 @@ export class MacOSSandbox implements ISandbox {
   (subpath "/private/var/folders")
 )
 `;
+    profile = this.appendWriteSubpathRules(profile, tempAliases);
 
     // Allow network if permitted
     if (allowNetwork) {
@@ -400,17 +459,9 @@ export class MacOSSandbox implements ISandbox {
     // Allow additional read paths (with validation and escaping)
     const allowedPaths = permissions.allowedPaths || [];
     for (const allowedPath of allowedPaths) {
-      try {
-        validatePathForSandboxProfile(allowedPath);
-        const escapedPath = escapeSandboxProfileString(allowedPath);
-        profile += `(allow file-read* (subpath "${escapedPath}"))\n`;
-        if (permissions.write) {
-          profile += `(allow file-write* (subpath "${escapedPath}"))\n`;
-        }
-      } catch (err) {
-        // Skip paths that fail validation - log warning
-        console.warn(`[MacOSSandbox] Skipping unsafe allowed path: ${allowedPath}`, err);
-      }
+      const allowedPathAliases = this.getMacOSPathAliases(allowedPath);
+      profile = this.appendReadSubpathRules(profile, allowedPathAliases);
+      if (permissions.write) profile = this.appendWriteSubpathRules(profile, allowedPathAliases);
     }
 
     // Allow essential mach services

@@ -7,12 +7,19 @@ interface MCAgentsTabProps {
   data: MissionControlData;
 }
 
+const TERMINAL_AGENT_TASK_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
+
+function formatAgentTaskStatus(status: string): string {
+  return status.replace(/_/g, " ");
+}
+
 export function MCAgentsTab({ data }: MCAgentsTabProps) {
   const {
     agents, heartbeatStatuses, tasksByAgent,
     detailPanel, setDetailPanel,
     getAgentStatus, handleTriggerHeartbeat,
     handleCreateAgent, handleEditAgent,
+    runtimeRunningTaskIds,
     formatRelativeTime, agentContext, isAllWorkspacesSelected, getWorkspaceName,
   } = data;
 
@@ -25,8 +32,19 @@ export function MCAgentsTab({ data }: MCAgentsTabProps) {
         const badge = AUTONOMY_BADGES[agent.autonomyLevel || "specialist"];
         const statusInfo = heartbeatStatuses.find((s) => s.agentRoleId === agent.id);
         const agentTasks = tasksByAgent.get(agent.id) || [];
-        const currentTask = agentTasks[0];
+        const currentTask = agentTasks.find((task) =>
+          runtimeRunningTaskIds.includes(task.id) || task.status === "executing" || task.status === "planning",
+        );
+        const trackedTask = currentTask || agentTasks.find((task) =>
+          !TERMINAL_AGENT_TASK_STATUSES.has(task.status),
+        );
         const isSelected = detailPanel?.kind === "agent" && detailPanel.agentId === agent.id;
+        const heartbeatLabel = statusInfo?.heartbeatEnabled ? "Heartbeat enabled" : "Heartbeat off";
+        const taskLabel = currentTask
+          ? `Running: ${currentTask.title}`
+          : trackedTask
+            ? `Tracked (${formatAgentTaskStatus(trackedTask.status)}): ${trackedTask.title}`
+            : agentContext.getUiCopy("mcNoActiveTask");
 
         return (
           <div
@@ -46,9 +64,10 @@ export function MCAgentsTab({ data }: MCAgentsTabProps) {
                 <span className="mc-v2-autonomy-badge" style={{ backgroundColor: badge.color }}>{badge.label}</span>
               </div>
               <span className="mc-v2-agent-desc">{agent.description?.slice(0, 40) || agent.name}</span>
-              <span className="mc-v2-agent-task">{currentTask ? currentTask.title : agentContext.getUiCopy("mcNoActiveTask")}</span>
-              {isAllWorkspacesSelected && currentTask ? (
-                <span className="mc-v2-agent-task-workspace">{getWorkspaceName(currentTask.workspaceId)}</span>
+              <span className="mc-v2-agent-task">{taskLabel}</span>
+              <span className="mc-v2-agent-task-workspace">{heartbeatLabel}</span>
+              {isAllWorkspacesSelected && trackedTask ? (
+                <span className="mc-v2-agent-task-workspace">{getWorkspaceName(trackedTask.workspaceId)}</span>
               ) : null}
             </div>
             <div className="mc-v2-agent-right">

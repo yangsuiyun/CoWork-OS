@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import * as fsSync from "fs";
+import * as os from "os";
 import * as path from "path";
 import { SensitiveSourceRef, Task, Workspace, WorkspacePathAliasPolicy } from "../../../shared/types";
 import { AgentDaemon } from "../daemon";
@@ -272,6 +273,7 @@ export class FileTools {
    * When allowedPaths is configured, allows specific paths outside workspace
    */
   private resolvePath(inputPath: string, operation: "read" | "write" | "delete" = "read"): string {
+    inputPath = this.expandHomeShortcutPath(inputPath);
     const normalizedWorkspace = path.resolve(this.workspace.path);
 
     // Handle absolute paths
@@ -375,6 +377,16 @@ export class FileTools {
     toolName: "list_directory" | "list_directory_with_sizes" | "search_files",
   ): string {
     const normalizedInput = typeof inputPath === "string" && inputPath.trim().length > 0 ? inputPath : ".";
+    const homeExpandedInput = this.expandHomeShortcutPath(normalizedInput);
+    if (homeExpandedInput !== normalizedInput) {
+      this.daemon.logEvent(this.taskId, "home_path_expanded", {
+        tool: toolName,
+        attemptedPath: normalizedInput,
+        normalizedPath: homeExpandedInput,
+        source: "file_tools_read_preflight",
+      });
+      return homeExpandedInput;
+    }
     if (path.isAbsolute(normalizedInput) && normalizedInput !== "/") {
       const normalizedWorkspace = path.resolve(this.workspace.path);
       const aliasMatch = detectWorkspacePathAlias(normalizedInput, normalizedWorkspace);
@@ -418,6 +430,14 @@ export class FileTools {
       source: "file_tools",
     });
     return ".";
+  }
+
+  private expandHomeShortcutPath(inputPath: string): string {
+    if (inputPath === "~") return os.homedir();
+    if (inputPath.startsWith("~/") || inputPath.startsWith("~\\")) {
+      return path.join(os.homedir(), inputPath.slice(2));
+    }
+    return inputPath;
   }
 
   /**
@@ -715,7 +735,16 @@ export class FileTools {
     const readWindow = this.normalizeReadWindowOptions(options);
 
     this.checkPermission("read");
-    let fullPath = this.resolvePath(relativePath, "read");
+    const normalizedPathInput = this.expandHomeShortcutPath(relativePath);
+    if (normalizedPathInput !== relativePath) {
+      this.daemon.logEvent(this.taskId, "home_path_expanded", {
+        tool: "read_file",
+        attemptedPath: relativePath,
+        normalizedPath: normalizedPathInput,
+        source: "file_tools_read_preflight",
+      });
+    }
+    let fullPath = this.resolvePath(normalizedPathInput, "read");
     let ext = path.extname(fullPath).toLowerCase();
 
     try {
@@ -728,9 +757,9 @@ export class FileTools {
           throw error;
         }
 
-        const fallbackPath = path.isAbsolute(relativePath)
-          ? await this.resolveStaleAbsoluteReadPath(relativePath, fullPath)
-          : await this.resolveCaseInsensitivePath(relativePath);
+        const fallbackPath = path.isAbsolute(normalizedPathInput)
+          ? await this.resolveStaleAbsoluteReadPath(normalizedPathInput, fullPath)
+          : await this.resolveCaseInsensitivePath(normalizedPathInput);
         if (!fallbackPath || fallbackPath === fullPath) {
           throw error;
         }

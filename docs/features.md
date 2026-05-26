@@ -783,21 +783,22 @@ Configure in **Mission Control** > **Teams**.
 
 ## Mission Control
 
-Centralized agent orchestration and monitoring dashboard. Access from **Settings** > **Mission Control**.
+Centralized agent orchestration and monitoring dashboard. Access from **Settings** > **Mission Control**. The surface now separates Heartbeat-enabled agents, the global runtime queue, and workspace-scoped Mission Board work so users can tell whether an item is monitoring, waiting to execute, or tracked on the board.
 
 <p align="center">
   <img src="../resources/branding/images/cowork-os-8.webp" alt="Mission Control board" width="700">
-  <br><em>Mission Control shows live queues, agent work, task status, and operational review.</em>
+  <br><em>Mission Control shows global runtime queue state, scoped board work, agent status, and operational review.</em>
 </p>
 
 | Panel | Purpose |
 |-------|---------|
-| **Agents** | Active agents list with status dots, Pulse/Dispatch state, automation-profile-backed cadence, and manual trigger controls |
-| **Mission Queue** | 5-column Kanban board (Inbox → Assigned → In Progress → Review → Done) with drag-and-drop |
+| **Agents** | Heartbeat-enabled agents with status dots, Pulse/Dispatch state, automation-profile-backed cadence, idle/running labels, and manual trigger controls |
+| **Global Runtime Queue** | Executor queue summary for tasks currently running or waiting for an execution slot; this matches the chat/right-panel queue and may include other workspaces |
+| **Mission Board** | 5-column tracked-work Kanban board (Inbox → Assigned → In Progress → Review → Done) with drag-and-drop |
 | **Feed & Details** | Real-time activity feed with event type and agent filters, plus task detail view with comments and mentions |
 | **Core Harness** | Runtime traces, failure clusters, evals, experiments, and learnings |
 
-**Header controls:** Agent Teams management, Performance Reviews, Standup Report generation, and workspace selector with live stats (active agents, queued tasks, pending mentions).
+**Header controls:** Agent Teams management, Performance Reviews, Standup Report generation, and workspace selector with live stats for Heartbeat agents, global runtime queue, board work, and pending mentions.
 
 All panels update in real-time via event subscriptions — no manual refresh needed.
 

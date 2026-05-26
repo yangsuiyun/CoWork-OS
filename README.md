@@ -266,11 +266,11 @@ Long-running tasks now have clearer operator handoffs and stronger recovery defa
 
 ### Mission Control
 
-Centralized orchestration and monitoring cockpit with a Kanban board, real-time activity feed, core automation profile visibility, and a `Core Harness` view for traces, failure clusters, evals, experiments, and learnings. [Learn more](docs/mission-control.md) | [Core Automation](docs/core-automation.md)
+Centralized orchestration and monitoring cockpit with clear separation between Heartbeat-enabled agents, the global runtime queue, workspace-scoped Mission Board work, the real-time activity feed, core automation profile visibility, and a `Core Harness` view for traces, failure clusters, evals, experiments, and learnings. [Learn more](docs/mission-control.md) | [Core Automation](docs/core-automation.md)
 
 <p align="center">
   <img src="resources/branding/images/cowork-os-8.webp" alt="Mission Control task board" width="700">
-  <br><em>Mission Control shows task queues, lanes, status, and operational review in one board.</em>
+  <br><em>Mission Control shows global runtime queue state, scoped board work, agent status, and operational review without mixing the concepts.</em>
 </p>
 
 ### Devices

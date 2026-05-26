@@ -656,6 +656,82 @@ describe("CronService", () => {
       expect(history?.failedRuns).toBe(0);
     });
 
+    it("maps a paused task at the polling deadline to needs_user_action", async () => {
+      let nowMs = 1_000_000;
+      service = createService({
+        nowMs: () => {
+          nowMs += 2;
+          return nowMs;
+        },
+        defaultTimeoutMs: 1,
+        getTaskStatus: async () => ({
+          status: "paused",
+          error: "Task paused for user input",
+        }),
+      });
+      await service.start();
+
+      await service.add({
+        name: "Paused Deadline Job",
+        enabled: true,
+        workspaceId: "ws-1",
+        taskPrompt: "Do work",
+        schedule: { kind: "at", atMs: 900000 },
+        state: { nextRunAtMs: 900000 },
+      });
+
+      await service.run("job-1", "force");
+
+      const history = await service.getRunHistory("job-1");
+      expect(history?.entries[0]?.status).toBe("needs_user_action");
+      expect(history?.entries[0]?.error).toBe("Task paused for user input");
+      expect(history?.entries[0]?.taskStillRunning).toBeFalsy();
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          action: "finished",
+          status: "needs_user_action",
+          taskStillRunning: false,
+        }),
+      );
+    });
+
+    it("marks a still-running task at the polling deadline as timeout with taskStillRunning", async () => {
+      let nowMs = 1_000_000;
+      service = createService({
+        nowMs: () => {
+          nowMs += 2;
+          return nowMs;
+        },
+        defaultTimeoutMs: 1,
+        getTaskStatus: async () => ({
+          status: "executing",
+        }),
+      });
+      await service.start();
+
+      await service.add({
+        name: "Running Deadline Job",
+        enabled: true,
+        workspaceId: "ws-1",
+        taskPrompt: "Do work",
+        schedule: { kind: "at", atMs: 900000 },
+        state: { nextRunAtMs: 900000 },
+      });
+
+      await service.run("job-1", "force");
+
+      const history = await service.getRunHistory("job-1");
+      expect(history?.entries[0]?.status).toBe("timeout");
+      expect(history?.entries[0]?.taskStillRunning).toBe(true);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          action: "finished",
+          status: "timeout",
+          taskStillRunning: true,
+        }),
+      );
+    });
+
     it("queues delivery in outbox when direct delivery fails, then sends from outbox", async () => {
       const deliverToChannel = vi
         .fn()

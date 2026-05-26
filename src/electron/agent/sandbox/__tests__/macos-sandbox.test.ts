@@ -1,4 +1,5 @@
 import { EventEmitter } from "events";
+import fs from "fs";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { ChildProcess } from "child_process";
 import type { Workspace } from "../../../../shared/types";
@@ -11,7 +12,7 @@ vi.mock("child_process", () => ({
 
 import { MacOSSandbox } from "../macos-sandbox";
 
-function makeWorkspace(): Workspace {
+function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
     id: "workspace-1",
     name: "Workspace",
@@ -38,6 +39,7 @@ function makeWorkspace(): Workspace {
     },
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    ...overrides,
   };
 }
 
@@ -129,5 +131,29 @@ describe("MacOSSandbox", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe("spawn failed");
     expect(result.error).toBe("spawn failed");
+  });
+
+  it("allows both /var and /private/var aliases in generated sandbox profiles", async () => {
+    const proc = new EventEmitter() as ChildProcess;
+    proc.stdout = new EventEmitter() as ChildProcess["stdout"];
+    proc.stderr = new EventEmitter() as ChildProcess["stderr"];
+    proc.kill = vi.fn(() => true) as unknown as ChildProcess["kill"];
+    spawnMock.mockImplementationOnce(() => proc);
+    const workspacePath = "/var/folders/test/cowork workspace";
+    const sandbox = new MacOSSandbox(makeWorkspace({ path: workspacePath }));
+
+    const resultPromise = sandbox.execute("echo ok", [], {
+      cwd: workspacePath,
+      timeout: 1000,
+    });
+
+    const [, args] = spawnMock.mock.calls[0];
+    const profile = fs.readFileSync(args[1], "utf-8");
+    expect(profile).toContain('/var/folders/test/cowork workspace');
+    expect(profile).toContain('/private/var/folders/test/cowork workspace');
+    expect(profile).not.toContain('(allow file-read* (subpath "/private/var/folders"))');
+
+    proc.emit("close", 0, null);
+    await expect(resultPromise).resolves.toMatchObject({ exitCode: 0 });
   });
 });

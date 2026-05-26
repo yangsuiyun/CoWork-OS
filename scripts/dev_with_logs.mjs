@@ -7,6 +7,7 @@ import {
   createDevLogEvent,
   createInitialRunManifestEntry,
   formatDevLogTextLine,
+  isIgnorableDevLogLine,
   parseRetentionConfig,
   serializeDevLogEvent,
   summarizeDevLogRunFiles,
@@ -53,6 +54,9 @@ function createStructuredDevLogWriter({ runId, textStreams, jsonlStreams }) {
   };
 
   const emitLine = (line, stream = "stdout", overrides = {}) => {
+    if (isIgnorableDevLogLine(line)) {
+      return;
+    }
     const timestamp = new Date().toISOString();
     const textEntry = formatDevLogTextLine(timestamp, line);
     const event = createDevLogEvent({ timestamp, runId, line, stream, overrides });

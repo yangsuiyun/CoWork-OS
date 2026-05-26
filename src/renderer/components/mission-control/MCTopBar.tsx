@@ -20,6 +20,8 @@ export function MCTopBar({ data, onOpenAgents }: MCTopBarProps) {
     workspaces, selectedWorkspaceId, setSelectedWorkspaceId,
     companies, selectedCompanyId, setSelectedCompanyId,
     activeAgentsCount, totalTasksInQueue, pendingMentionsCount,
+    queueStatusState,
+    runtimeRunningCount, runtimeQueuedCount, runtimeMaxConcurrent,
     isRefreshing, handleManualRefresh, selectedWorkspace,
     setStandupOpen, setTeamsOpen, setReviewsOpen,
     activeTab, setActiveTab, selectedCompany,
@@ -27,6 +29,18 @@ export function MCTopBar({ data, onOpenAgents }: MCTopBarProps) {
   } = data;
   const supportsWorkspaceReports =
     !!selectedWorkspace && !isTempWorkspaceId(selectedWorkspace.id);
+  const runtimeStatusValue =
+    queueStatusState === "ready"
+      ? runtimeMaxConcurrent
+        ? `${runtimeRunningCount}/${runtimeMaxConcurrent}`
+        : String(runtimeRunningCount)
+      : "—";
+  const runtimeStatusLabel =
+    queueStatusState === "loading"
+      ? "global runtime loading"
+      : queueStatusState === "unavailable" || queueStatusState === "error"
+        ? "global runtime unavailable"
+        : `global runtime${runtimeQueuedCount > 0 ? ` +${runtimeQueuedCount} waiting` : ""}`;
 
   return (
     <>
@@ -51,9 +65,28 @@ export function MCTopBar({ data, onOpenAgents }: MCTopBarProps) {
           )}
         </div>
         <div className="mc-v2-stats">
-          <span className="mc-v2-stat-pill"><strong>{activeAgentsCount}</strong> active</span>
-          <span className="mc-v2-stat-pill"><strong>{totalTasksInQueue}</strong> tasks</span>
-          <span className="mc-v2-stat-pill"><strong>{pendingMentionsCount}</strong> mentions</span>
+          <span
+            className="mc-v2-stat-pill"
+            title="Agents enabled for Heartbeat monitoring or automation. They may be idle and are not necessarily running a task."
+          >
+            <strong>{activeAgentsCount}</strong> heartbeat agents
+          </span>
+          <span
+            className="mc-v2-stat-pill"
+            title="Global tasks currently running or waiting for an execution slot. This matches the runtime queue shown in chat."
+          >
+            <strong>{runtimeStatusValue}</strong>
+            {runtimeStatusLabel}
+          </span>
+          <span
+            className="mc-v2-stat-pill"
+            title="Open work items tracked on the Mission Control board. This can differ from the live runtime queue."
+          >
+            <strong>{totalTasksInQueue}</strong> board work
+          </span>
+          <span className="mc-v2-stat-pill" title="Mentions waiting for acknowledgement, follow-up, or completion.">
+            <strong>{pendingMentionsCount}</strong> mentions
+          </span>
         </div>
         <div className="mc-v2-topbar-right">
           <button

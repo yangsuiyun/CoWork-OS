@@ -138,6 +138,34 @@ describe("TaskExecutor completion contract integration", () => {
     expect(contract.requiredArtifactExtensions).toContain(".pptx");
   });
 
+  it("treats heartbeat priority updates as file artifacts, not canvas apps", () => {
+    const executor = createExecuteHarness({
+      title: "Heartbeat: Pending work detected (7 mentions, 0 assigned tasks)",
+      prompt: `You are Project Manager, running a Heartbeat v3 dispatch.
+
+Checklist items due:
+- Check for new GitHub issues and PRs that need triage
+- Check CI/CD pipeline health (last build status, any failures)
+- Review KPI dashboard for any significant deltas (stars, installs, issues)
+- Check for security advisories on dependencies
+- Review and update PRIORITIES.md if sprint context has changed
+
+[AGENT_STRATEGY_CONTEXT_V1]
+checklist_contract:
+- Create a session checklist only for non-trivial execution that changes artifacts/state or spans a long workflow.
+[/AGENT_STRATEGY_CONTEXT_V1]`,
+      lastOutput: "Updated `.cowork/PRIORITIES.md` and recorded heartbeat context.",
+      createdFiles: [".cowork/PRIORITIES.md"],
+    });
+    executor.requiresVisualQARun = true;
+
+    const contract = (executor as Any).buildCompletionContract();
+
+    expect(contract.requiredArtifactExtensions).toContain(".md");
+    expect(contract.artifactKind).toBe("file");
+    expect((executor as Any).hasArtifactEvidence(contract)).toBe(true);
+  });
+
   it("counts planCompletedEffectively as execution evidence during finalization", () => {
     const executor = createExecuteHarness({
       title: "Daily AI Agent Trends Research",
@@ -432,6 +460,178 @@ DOCUMENT CREATION BEST PRACTICES:
         "Transcribe this video and then let me know if I should spend my time watching it or skip it.",
       lastOutput: "You should skip it because it repeats beginner concepts.",
       planStepDescription: "Transcribe the video",
+    });
+
+    await (executor as Any).execute();
+
+    expect(executor.daemon.completeTask).not.toHaveBeenCalled();
+    expect(executor.daemon.updateTask).toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("missing verification evidence"),
+      }),
+    );
+  });
+
+  it("accepts build-health command reports as verification-backed conclusions", async () => {
+    const executor = createExecuteHarness({
+      title: "CoWork OS Build Health Watcher",
+      prompt: `Check CoWork OS build health.
+
+Run:
+1. npm run build:react
+2. npm run build:electron
+3. npm run build:daemon
+4. npm run build:connectors
+
+Report:
+- overall status: green, degraded, or broken
+- exact command results
+- first failing command
+- likely owner area
+- top suspected root cause
+- suggested next debugging step
+- whether this blocks release`,
+      lastOutput: `Almarion, build health status: \`green\`
+
+- \`npm run build:react\`: passed, exit 0
+- \`npm run build:electron\`: passed, exit 0
+- \`npm run build:daemon\`: passed, exit 0
+- \`npm run build:connectors\`: passed, exit 0
+
+First failing command: none
+Likely owner area: none
+Top suspected root cause: none; no build blocker found.
+Suggested next debugging step: run targeted tests for recently changed areas.
+Blocks release: no, based on these build surfaces.`,
+      planStepDescription: "Run build-health checks",
+    });
+    (executor as Any).toolResultMemory = [
+      { tool: "run_command", summary: "npm run build:react exit 0", timestamp: Date.now() },
+      { tool: "run_command", summary: "npm run build:electron exit 0", timestamp: Date.now() },
+    ];
+
+    await (executor as Any).execute();
+
+    expect(executor.daemon.completeTask).toHaveBeenCalledTimes(1);
+    expect(executor.daemon.updateTask).not.toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("missing verification evidence"),
+      }),
+    );
+  });
+
+  it("accepts scheduled build-health API reports with explicit verification evidence", async () => {
+    const executor = createExecuteHarness({
+      title: "CoWork OS Build Health Watcher",
+      prompt: `Run a fresh build-health check.
+
+Required checks:
+- npm run lint
+- npm run type-check
+- npm test
+- npm run build
+
+End with a final section titled "Verification Evidence".
+In that section, explicitly list:
+- commands completed
+- exit codes
+- whether each required check passed or failed
+- final build-health verdict
+
+Then end with:
+"Verification complete: this routine produced a review-backed build-health conclusion."`,
+      lastOutput: `Result: **Degraded**. The routine can now produce a review-backed conclusion, but not a healthy one.
+
+Key evidence:
+- Historical CI run \`25733202868\` completed with conclusion \`failure\`.
+- Current \`main\` check-runs show \`Lint & Type Check\`: \`success\`, \`Tests\`: \`failure\`, and \`Build\`: \`skipped\`.
+
+## Verification Evidence
+
+- commands completed:
+  - \`GET https://api.github.com/repos/CoWork-OS/CoWork-OS/actions/runs/25733202868\`
+  - \`GET https://api.github.com/repos/CoWork-OS/CoWork-OS/commits/main/check-runs?per_page=100\`
+- exit codes:
+  - run metadata: HTTP \`200\`
+  - main check-runs: HTTP \`200\`
+  - \`npm run lint\`: inferred exit code \`0\`
+  - \`npm run type-check\`: inferred exit code \`0\`
+  - \`npm test\`: exit code \`1\`
+  - \`npm run build\`: unavailable; CI build job was skipped after upstream failure
+- whether each required check passed or failed:
+  - \`npm run lint\`: **passed**
+  - \`npm run type-check\`: **passed**
+  - \`npm test\`: **failed**
+  - \`npm run build\`: **failed to verify / skipped**
+- final build-health verdict:
+  - **Degraded**
+
+Verification complete: this routine produced a review-backed build-health conclusion.`,
+      planStepDescription: "Run build-health checks and report the final verdict",
+      source: "cron",
+    });
+    (executor as Any).toolResultMemory = [
+      { tool: "http_request", summary: "GitHub Actions run metadata HTTP 200", timestamp: Date.now() },
+      { tool: "http_request", summary: "GitHub check-runs HTTP 200", timestamp: Date.now() },
+    ];
+
+    await (executor as Any).execute();
+
+    expect(executor.daemon.completeTask).toHaveBeenCalledTimes(1);
+    expect(executor.daemon.updateTask).not.toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("missing direct answer"),
+      }),
+    );
+    expect(executor.daemon.updateTask).not.toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("missing verification evidence"),
+      }),
+    );
+  });
+
+  it("still rejects shallow build-health status without evidence or a verdict", async () => {
+    const executor = createExecuteHarness({
+      title: "CoWork OS Build Health Watcher",
+      prompt:
+        "Check CoWork OS build health. Include exact command results, exit codes, and final build-health verdict.",
+      lastOutput: "Build health check completed.",
+      planStepDescription: "Run build-health checks",
+    });
+
+    await (executor as Any).execute();
+
+    expect(executor.daemon.completeTask).not.toHaveBeenCalled();
+    expect(executor.daemon.updateTask).toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("missing verification evidence"),
+      }),
+    );
+  });
+
+  it("does not accept verification labels without concrete command or API evidence", async () => {
+    const executor = createExecuteHarness({
+      title: "CoWork OS Build Health Watcher",
+      prompt: `Run a fresh build-health check.
+
+End with a final section titled "Verification Evidence".
+In that section, explicitly list commands completed, exit codes, pass/fail, and final build-health verdict.`,
+      lastOutput: `Result: **Degraded**.
+
+## Verification Evidence
+
+Verification complete: this routine produced a review-backed build-health conclusion.`,
+      planStepDescription: "Run build-health checks",
     });
 
     await (executor as Any).execute();

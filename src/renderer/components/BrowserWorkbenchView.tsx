@@ -66,6 +66,21 @@ type BrowserViewportOverride = {
   mobile: boolean;
   label: string;
 };
+type YouTubeAskSource = {
+  videoId: string;
+  title?: string;
+  channel?: string;
+  startMs: number;
+  endMs?: number;
+  text: string;
+  url: string;
+};
+type YouTubeAskState = {
+  answer?: string;
+  sources?: YouTubeAskSource[];
+  suggestedFollowUps?: string[];
+  error?: string;
+} | null;
 
 type BrowserWorkbenchViewProps = {
   taskId: string;
@@ -125,6 +140,40 @@ function getExternalBrowserUrl(rawUrl: string): string | null {
   } catch {
     return null;
   }
+}
+
+function getYouTubeVideoId(rawUrl: string): string | null {
+  try {
+    const parsed = new URL(normalizeUrl(rawUrl));
+    const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+    const validId = (value: string | null | undefined) =>
+      value && /^[a-zA-Z0-9_-]{11}$/.test(value) ? value : null;
+    if (host === "youtu.be") {
+      return validId(parsed.pathname.split("/").filter(Boolean)[0]);
+    }
+    if (host === "youtube.com" || host === "m.youtube.com" || host === "music.youtube.com") {
+      const watchId = validId(parsed.searchParams.get("v"));
+      if (watchId) return watchId;
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      if (parts[0] === "embed" || parts[0] === "shorts" || parts[0] === "live") {
+        return validId(parts[1]);
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function formatYouTubeTimestamp(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function getPartition(workspaceId?: string): string {
@@ -281,6 +330,10 @@ export function BrowserWorkbenchView({
   const [browserCursor, setBrowserCursor] = useState<BrowserCursorState>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [snapshotOverlay, setSnapshotOverlay] = useState(false);
+  const [youtubeAskOpen, setYoutubeAskOpen] = useState(false);
+  const [youtubeQuestion, setYoutubeQuestion] = useState("");
+  const [youtubeAskBusy, setYoutubeAskBusy] = useState(false);
+  const [youtubeAskResult, setYoutubeAskResult] = useState<YouTubeAskState>(null);
   const partition = useMemo(() => getPartition(workspaceId), [workspaceId]);
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) || tabs[0],
@@ -302,6 +355,7 @@ export function BrowserWorkbenchView({
       ? viewportSize
       : null;
   const hasVisibleWebview = Boolean(visibleWebviewSize);
+  const activeIsYouTube = Boolean(getYouTubeVideoId(activeUrl || urlText));
   const voiceInput = useVoiceInput({
     onTranscript: (text) => {
       setVoiceNotice("");
@@ -863,6 +917,47 @@ export function BrowserWorkbenchView({
     }
   }, [message, onSendMessage, sending]);
 
+  const askCurrentYouTubeVideo = useCallback(async (questionOverride?: string) => {
+    const question = (questionOverride || youtubeQuestion).trim();
+    const currentUrl = activeUrlRef.current || activeUrl || urlText;
+    if (!workspaceId) {
+      setYoutubeAskResult({ error: "Open a workspace first." });
+      return;
+    }
+    if (!currentUrl || !getYouTubeVideoId(currentUrl)) {
+      setYoutubeAskResult({ error: "Open a YouTube video first." });
+      return;
+    }
+    if (!question) {
+      setYoutubeAskResult({ error: "Ask a question first." });
+      return;
+    }
+    setYoutubeAskBusy(true);
+    setYoutubeAskResult(null);
+    try {
+      const result = await window.electronAPI.askYouTubeVideo?.({
+        workspaceId,
+        url: currentUrl,
+        question,
+        limit: 8,
+      });
+      setYoutubeAskResult(result || { error: "No result returned." });
+    } catch (error) {
+      setYoutubeAskResult({ error: error instanceof Error ? error.message : "Ask failed." });
+    } finally {
+      setYoutubeAskBusy(false);
+    }
+  }, [activeUrl, urlText, workspaceId, youtubeQuestion]);
+
+  const sendYouTubeAnswerToChat = useCallback(async () => {
+    if (!onSendMessage || !youtubeAskResult?.answer) return;
+    const sources = (youtubeAskResult.sources || [])
+      .slice(0, 6)
+      .map((source) => `- ${formatYouTubeTimestamp(source.startMs)} ${source.url}`)
+      .join("\n");
+    await onSendMessage(`${youtubeAskResult.answer}${sources ? `\n\nSources:\n${sources}` : ""}`);
+  }, [onSendMessage, youtubeAskResult]);
+
   return (
     <section
       className={`browser-workbench browser-workbench-${mode}${
@@ -1008,6 +1103,17 @@ export function BrowserWorkbenchView({
             </span>
           )}
           {toolbarNotice && <span className="browser-workbench-toolbar-notice">{toolbarNotice}</span>}
+          {activeIsYouTube && (
+            <button
+              type="button"
+              className={`browser-workbench-nav-btn browser-workbench-action-btn ${youtubeAskOpen ? "is-active" : ""}`}
+              onClick={() => setYoutubeAskOpen((current) => !current)}
+              title="Ask video"
+              aria-label="Ask video"
+            >
+              <Search className="browser-workbench-lucide-icon" size={16} strokeWidth={2.2} aria-hidden="true" />
+            </button>
+          )}
           <button
             type="button"
             className="browser-workbench-nav-btn browser-workbench-action-btn"
@@ -1055,6 +1161,87 @@ export function BrowserWorkbenchView({
           </button>
         </div>
       </div>
+      {activeIsYouTube && youtubeAskOpen && (
+        <div className="browser-workbench-youtube-ask">
+          <form
+            className="browser-workbench-youtube-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void askCurrentYouTubeVideo();
+            }}
+          >
+            <input
+              value={youtubeQuestion}
+              onChange={(event) => setYoutubeQuestion(event.target.value)}
+              placeholder="Ask this video"
+              aria-label="Ask this video"
+            />
+            <button
+              type="submit"
+              className="browser-workbench-youtube-submit"
+              disabled={youtubeAskBusy || !youtubeQuestion.trim()}
+              title="Ask"
+              aria-label="Ask"
+            >
+              <ArrowUp size={15} strokeWidth={2.4} aria-hidden="true" />
+            </button>
+          </form>
+          {youtubeAskBusy && (
+            <div className="browser-workbench-youtube-status">Reading transcript...</div>
+          )}
+          {youtubeAskResult?.error && (
+            <div className="browser-workbench-youtube-error">{youtubeAskResult.error}</div>
+          )}
+          {youtubeAskResult?.answer && (
+            <div className="browser-workbench-youtube-answer">
+              <p>{youtubeAskResult.answer}</p>
+              {onSendMessage && (
+                <button
+                  type="button"
+                  className="browser-workbench-youtube-secondary"
+                  onClick={() => void sendYouTubeAnswerToChat()}
+                >
+                  Send to chat
+                </button>
+              )}
+            </div>
+          )}
+          {!!youtubeAskResult?.sources?.length && (
+            <div className="browser-workbench-youtube-sources">
+              {youtubeAskResult.sources.slice(0, 6).map((source) => (
+                <button
+                  key={`${source.videoId}-${source.startMs}-${source.text.slice(0, 16)}`}
+                  type="button"
+                  className="browser-workbench-youtube-source"
+                  onClick={() => openTab(source.url)}
+                  title={source.url}
+                >
+                  <span className="browser-workbench-youtube-source-time">
+                    {formatYouTubeTimestamp(source.startMs)}
+                  </span>
+                  <span className="browser-workbench-youtube-source-text">{source.text}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {!!youtubeAskResult?.suggestedFollowUps?.length && (
+            <div className="browser-workbench-youtube-followups">
+              {youtubeAskResult.suggestedFollowUps.slice(0, 3).map((followUp) => (
+                <button
+                  key={followUp}
+                  type="button"
+                  onClick={() => {
+                    setYoutubeQuestion(followUp);
+                    void askCurrentYouTubeVideo(followUp);
+                  }}
+                >
+                  {followUp}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div
         className={`browser-workbench-surface ${controlledViewport ? "has-controlled-viewport" : ""}`}
         ref={surfaceRef}

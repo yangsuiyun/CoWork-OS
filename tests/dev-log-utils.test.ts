@@ -7,6 +7,7 @@ import {
   createDevLogEvent,
   formatDevLogTextLine,
   inferDevLogLevel,
+  isIgnorableDevLogLine,
   redactDevLogLine,
   serializeDevLogEvent,
 } from "../scripts/dev-log-utils.mjs";
@@ -94,6 +95,16 @@ describe("dev-log-utils", () => {
     expect(
       inferDevLogLevel("Error fetching email 67486: Error: IMAP command timeout", "stderr"),
     ).toBe("warn");
+  });
+
+  it("marks known Electron macOS native menu warnings as ignorable dev-log noise", () => {
+    expect(
+      isIgnorableDevLogLine(
+        "[electron] 2026-05-25 10:11:41.912 Electron[11303:37884501] representedObject is not a WeakPtrToElectronMenuModelAsNSObject",
+      ),
+    ).toBe(true);
+    expect(isIgnorableDevLogLine("[electron] Uncaught ReferenceError: selectedTaskSwitchId is not defined"))
+      .toBe(false);
   });
 
   it("still classifies real stderr failures as errors", () => {

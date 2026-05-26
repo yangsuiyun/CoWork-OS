@@ -24,6 +24,14 @@ import {
   type ToolUsage,
 } from "../utils/task-event-derived";
 import {
+  getInlinePreviewKindForGeneratedFile,
+  type GeneratedInlinePreviewKind,
+} from "./MainContent/artifact-logic";
+import { canPreviewWebPageInApp } from "../../shared/web-page-formats";
+import { canOpenSpreadsheetInApp } from "../../shared/spreadsheet-formats";
+import { canPreviewDocumentInApp } from "../../shared/document-formats";
+import { canPreviewPresentationInApp } from "../../shared/presentation-formats";
+import {
   getProgressSectionMaterialSignature,
   getQueueSectionMaterialSignature,
   getQueueStatusSignature,
@@ -189,6 +197,7 @@ const PRESENTATION_FILE_EXTENSIONS = new Set(["key", "odp", "potx", "ppsx", "ppt
 const VIDEO_FILE_EXTENSIONS = new Set(["avi", "m4v", "mov", "mp4", "mpeg", "mpg", "webm"]);
 const AUDIO_FILE_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "ogg", "wav"]);
 const ARCHIVE_FILE_EXTENSIONS = new Set(["7z", "bz2", "dmg", "gz", "rar", "tar", "tgz", "zip"]);
+type ArtifactOpeners = Partial<Record<GeneratedInlinePreviewKind, (path: string) => void>>;
 
 function getFileExtension(path: string): string {
   const fileName = path.split(/[\\/]/).pop() || path;
@@ -621,9 +630,48 @@ interface RightPanelProps {
   queueStatus?: QueueStatus | null;
   onSelectTask?: (taskId: string) => void;
   onCancelTask?: (taskId: string) => void;
+  onOpenSpreadsheetArtifact?: (path: string) => void;
+  onOpenDocumentArtifact?: (path: string) => void;
+  onOpenPresentationArtifact?: (path: string) => void;
+  onOpenWebArtifact?: (path: string) => void;
   rendererPerfLoggingEnabled?: boolean;
   highlightOutputPath?: string | null;
   onHighlightConsumed?: () => void;
+}
+
+export function openPreviewableFileInSidebar(
+  filePath: string,
+  openers: ArtifactOpeners,
+  fallback: (path: string) => void,
+): void {
+  const kind = getInlinePreviewKindForGeneratedFile({ path: filePath });
+  switch (kind) {
+    case "html":
+      if (canPreviewWebPageInApp(filePath) && openers.html) {
+        openers.html(filePath);
+        return;
+      }
+      break;
+    case "spreadsheet":
+      if (canOpenSpreadsheetInApp(filePath) && openers.spreadsheet) {
+        openers.spreadsheet(filePath);
+        return;
+      }
+      break;
+    case "document":
+      if (canPreviewDocumentInApp(filePath) && openers.document) {
+        openers.document(filePath);
+        return;
+      }
+      break;
+    case "presentation":
+      if (canPreviewPresentationInApp(filePath) && openers.presentation) {
+        openers.presentation(filePath);
+        return;
+      }
+      break;
+  }
+  fallback(filePath);
 }
 
 function getRightPanelTaskSignature(task: Task | undefined): string {
@@ -1125,7 +1173,7 @@ const FolderSection = memo(function FolderSection({
   filesTitleText,
   toggleSection,
   fileItemRefs,
-  setViewerFilePath,
+  onOpenFile,
   rendererPerfLoggingEnabled,
   getFileActionSymbol,
 }: {
@@ -1138,7 +1186,7 @@ const FolderSection = memo(function FolderSection({
   filesTitleText: string;
   toggleSection: () => void;
   fileItemRefs: React.MutableRefObject<Map<string, HTMLDivElement | null>>;
-  setViewerFilePath: React.Dispatch<React.SetStateAction<string | null>>;
+  onOpenFile: (path: string) => void;
   rendererPerfLoggingEnabled: boolean;
   getFileActionSymbol: (action: FileInfo["action"]) => string;
 }) {
@@ -1196,7 +1244,7 @@ const FolderSection = memo(function FolderSection({
                     path={file.path}
                     workspacePath={workspace?.path}
                     className="cli-file-name"
-                    onOpenViewer={setViewerFilePath}
+                    onOpenViewer={onOpenFile}
                   />
                 </div>
               );
@@ -1229,6 +1277,7 @@ const FolderSection = memo(function FolderSection({
   prev.outputSummary?.primaryOutputPath === next.outputSummary?.primaryOutputPath &&
   prev.outputSummary?.outputCount === next.outputSummary?.outputCount &&
   getFilesSignature(prev.files) === getFilesSignature(next.files) &&
+  prev.onOpenFile === next.onOpenFile &&
   prev.rendererPerfLoggingEnabled === next.rendererPerfLoggingEnabled
 );
 
@@ -1552,6 +1601,10 @@ function RightPanelComponent({
   queueStatus,
   onSelectTask,
   onCancelTask,
+  onOpenSpreadsheetArtifact,
+  onOpenDocumentArtifact,
+  onOpenPresentationArtifact,
+  onOpenWebArtifact,
   rendererPerfLoggingEnabled = false,
   highlightOutputPath = null,
   onHighlightConsumed,
@@ -1589,6 +1642,26 @@ function RightPanelComponent({
   const [taskFeedbackDismissed, setTaskFeedbackDismissed] = useState(false);
   const fileItemRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
   const agentContext = useAgentContext();
+  const openFileFromFilesSection = useCallback(
+    (filePath: string) => {
+      openPreviewableFileInSidebar(
+        filePath,
+        {
+          html: onOpenWebArtifact,
+          spreadsheet: onOpenSpreadsheetArtifact,
+          document: onOpenDocumentArtifact,
+          presentation: onOpenPresentationArtifact,
+        },
+        setViewerFilePath,
+      );
+    },
+    [
+      onOpenDocumentArtifact,
+      onOpenPresentationArtifact,
+      onOpenSpreadsheetArtifact,
+      onOpenWebArtifact,
+    ],
+  );
 
   // Active context: connectors + skills
   const [activeContext, setActiveContext] = useState<{
@@ -2299,7 +2372,7 @@ function RightPanelComponent({
         filesTitleText={filesTitleText}
         toggleSection={() => toggleSection("folder")}
         fileItemRefs={fileItemRefs}
-        setViewerFilePath={setViewerFilePath}
+        onOpenFile={openFileFromFilesSection}
         rendererPerfLoggingEnabled={rendererPerfLoggingEnabled}
         getFileActionSymbol={getFileActionSymbol}
       />
@@ -2422,6 +2495,10 @@ function areRightPanelPropsEqual(prev: RightPanelProps, next: RightPanelProps): 
     getTaskListSignature(prev.runningTasks || []) === getTaskListSignature(next.runningTasks || []) &&
     getTaskListSignature(prev.queuedTasks || []) === getTaskListSignature(next.queuedTasks || []) &&
     getQueueStatusSignature(prev.queueStatus) === getQueueStatusSignature(next.queueStatus) &&
+    prev.onOpenSpreadsheetArtifact === next.onOpenSpreadsheetArtifact &&
+    prev.onOpenDocumentArtifact === next.onOpenDocumentArtifact &&
+    prev.onOpenPresentationArtifact === next.onOpenPresentationArtifact &&
+    prev.onOpenWebArtifact === next.onOpenWebArtifact &&
     prev.rendererPerfLoggingEnabled === next.rendererPerfLoggingEnabled &&
     prev.highlightOutputPath === next.highlightOutputPath &&
     prev.onSelectTask === next.onSelectTask &&

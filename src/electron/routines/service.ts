@@ -33,6 +33,7 @@ const DEFAULT_RUN_LIST_LIMIT = 50;
 
 type RoutineRunRecord = RoutineRun & {
   runKey?: string;
+  dedupeKey?: string;
 };
 
 export class RoutineService {
@@ -103,10 +104,30 @@ export class RoutineService {
     const rows = this.deps.db
       .prepare(
         `SELECT * FROM routine_runs
-         WHERE backing_task_id = ? AND status IN ('queued', 'running')
+         WHERE backing_task_id = ?
+           AND (
+             status IN ('queued', 'running')
+             OR (status = 'failed' AND error_summary LIKE 'Timed out after %')
+           )
          ORDER BY updated_at DESC`,
       )
       .all(normalizedTaskId) as Any[];
+    for (const row of rows) {
+      await this.refreshTaskBackedRun(this.mapRunRecord(row));
+    }
+  }
+
+  async reconcileStaleTimeoutRuns(): Promise<void> {
+    if (!this.deps.getTaskSnapshot) return;
+    const rows = this.deps.db
+      .prepare(
+        `SELECT * FROM routine_runs
+         WHERE backing_task_id IS NOT NULL
+           AND error_summary LIKE 'Timed out after %'
+           AND status IN ('failed', 'running')
+         ORDER BY updated_at DESC`,
+      )
+      .all() as Any[];
     for (const row of rows) {
       await this.refreshTaskBackedRun(this.mapRunRecord(row));
     }
@@ -269,6 +290,7 @@ export class RoutineService {
     const runKey = `cron:${event.jobId}:${event.runAtMs ?? event.nextRunAtMs ?? this.deps.now()}`;
     const existing = this.findRunByKey(runKey);
     const startedAt = event.runAtMs ?? existing?.startedAt ?? this.deps.now();
+    const backingTaskId = event.taskId ?? existing?.backingTaskId;
     const base = {
       runKey,
       routineId: routineMatch.routine.id,
@@ -276,8 +298,12 @@ export class RoutineService {
       triggerType: routineMatch.trigger.type,
       startedAt,
       sourceEventSummary: summarizeCronEvent(event),
-      backingTaskId: event.taskId ?? existing?.backingTaskId,
-      outputStatus: mapCronOutputStatus(event.status, Boolean(event.taskId)),
+      backingTaskId,
+      outputStatus: mapCronOutputStatus(
+        event.status,
+        Boolean(backingTaskId),
+        Boolean(event.taskStillRunning),
+      ),
     } as const;
 
     if (event.action === "started") {
@@ -288,10 +314,11 @@ export class RoutineService {
       return;
     }
 
+    const status = mapCronStatus(event.status, Boolean(backingTaskId), Boolean(event.taskStillRunning));
     this.upsertRun({
       ...base,
-      finishedAt: this.deps.now(),
-      status: mapCronStatus(event.status),
+      finishedAt: status === "queued" || status === "running" ? undefined : this.deps.now(),
+      status,
       errorSummary: event.error,
     });
   }
@@ -387,6 +414,7 @@ export class RoutineService {
         error_summary TEXT,
         artifacts_summary TEXT,
         run_key TEXT,
+        dedupe_key TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -394,6 +422,8 @@ export class RoutineService {
       ON routine_runs(routine_id, started_at DESC, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_routine_runs_run_key
       ON routine_runs(run_key);
+      CREATE INDEX IF NOT EXISTS idx_routine_runs_backing_task
+      ON routine_runs(routine_id, backing_task_id);
     `);
 
     if (!columnExists(this.deps.db, "automation_routines", "definition_json")) {
@@ -402,6 +432,15 @@ export class RoutineService {
     if (!columnExists(this.deps.db, "routine_runs", "run_key")) {
       this.deps.db.exec("ALTER TABLE routine_runs ADD COLUMN run_key TEXT");
     }
+    if (!columnExists(this.deps.db, "routine_runs", "dedupe_key")) {
+      this.deps.db.exec("ALTER TABLE routine_runs ADD COLUMN dedupe_key TEXT");
+    }
+    this.reconcileRoutineRunDedupeKeys();
+    this.deps.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_routine_runs_dedupe_key
+      ON routine_runs(dedupe_key)
+      WHERE dedupe_key IS NOT NULL;
+    `);
   }
 
   private mapRow(row: Any): Routine {
@@ -894,7 +933,11 @@ export class RoutineService {
       ? this.deps.db
           .prepare(
             `SELECT * FROM routine_runs
-             WHERE routine_id = ? AND status IN ('queued', 'running')
+             WHERE routine_id = ?
+               AND (
+                 status IN ('queued', 'running')
+                 OR (status = 'failed' AND backing_task_id IS NOT NULL AND error_summary LIKE 'Timed out after %')
+               )
              ORDER BY updated_at DESC`,
           )
           .all(routineId)
@@ -902,12 +945,18 @@ export class RoutineService {
           .prepare(
             `SELECT * FROM routine_runs
              WHERE status IN ('queued', 'running')
+                OR (status = 'failed' AND backing_task_id IS NOT NULL AND error_summary LIKE 'Timed out after %')
              ORDER BY updated_at DESC`,
           )
           .all()) as Any[];
 
     for (const row of rows) {
       const run = this.mapRunRecord(row);
+      if (run.backingTaskId && this.deps.getTaskSnapshot && isCronTimeoutSummary(run.errorSummary)) {
+        await this.refreshTaskBackedRun(run);
+        continue;
+      }
+
       if (run.backingManagedSessionId && this.deps.getManagedSessionSnapshot) {
         const snapshot = await this.deps.getManagedSessionSnapshot(run.backingManagedSessionId);
         if (!snapshot) continue;
@@ -939,14 +988,19 @@ export class RoutineService {
     const snapshot = await this.deps.getTaskSnapshot(run.backingTaskId);
     if (!snapshot) return;
     const status = mapTaskSnapshotStatus(snapshot.status, snapshot.terminalStatus);
+    const routine = this.get(run.routineId);
+    const isNonTerminal = status === "queued" || status === "running";
+    const isFailed = status === "failed";
     this.upsertRun({
       ...run,
       status,
-      finishedAt:
-        status === "queued" || status === "running"
-          ? run.finishedAt
-          : snapshot.completedAt || run.finishedAt || this.deps.now(),
-      errorSummary: snapshot.error || run.errorSummary,
+      finishedAt: isNonTerminal ? undefined : snapshot.completedAt || run.finishedAt || this.deps.now(),
+      outputStatus: mapTaskBackedOutputStatus(run.outputStatus, status, routine),
+      errorSummary: isFailed
+        ? snapshot.error || run.errorSummary
+        : isCronTimeoutSummary(run.errorSummary)
+          ? undefined
+          : run.errorSummary,
       artifactsSummary: snapshot.resultSummary || run.artifactsSummary,
     });
   }
@@ -969,11 +1023,11 @@ export class RoutineService {
     artifactsSummary?: string;
   }): RoutineRun {
     const now = this.deps.now();
-    const existing = input.runKey
-      ? this.findRunByKey(input.runKey)
-      : input.id
-        ? this.findRunById(input.id)
-        : null;
+    const dedupeKey = this.computeRoutineRunDedupeKey(input);
+    const existing =
+      (dedupeKey ? this.findRunByDedupeKey(dedupeKey) : null) ||
+      (input.runKey ? this.findRunByKey(input.runKey) : null) ||
+      (input.id ? this.findRunById(input.id) : null);
     const id = existing?.id || input.id || randomUUID();
     const createdAt = existing?.createdAt || input.createdAt || now;
     this.deps.db
@@ -981,8 +1035,8 @@ export class RoutineService {
         `INSERT OR REPLACE INTO routine_runs
          (id, routine_id, trigger_id, trigger_type, status, started_at, finished_at, source_event_summary,
           backing_task_id, backing_managed_session_id, output_status, error_summary, artifacts_summary,
-          run_key, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          run_key, dedupe_key, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -999,6 +1053,7 @@ export class RoutineService {
         input.errorSummary || null,
         input.artifactsSummary || null,
         input.runKey || null,
+        dedupeKey || null,
         createdAt,
         now,
       );
@@ -1022,6 +1077,13 @@ export class RoutineService {
     };
   }
 
+  private findRunByDedupeKey(dedupeKey: string): RoutineRunRecord | null {
+    const row = this.deps.db
+      .prepare("SELECT * FROM routine_runs WHERE dedupe_key = ? ORDER BY updated_at DESC LIMIT 1")
+      .get(dedupeKey) as Any | undefined;
+    return row ? this.mapRunRecord(row) : null;
+  }
+
   private findRunByKey(runKey: string): RoutineRunRecord | null {
     const row = this.deps.db
       .prepare("SELECT * FROM routine_runs WHERE run_key = ? ORDER BY updated_at DESC LIMIT 1")
@@ -1036,10 +1098,78 @@ export class RoutineService {
     return row ? this.mapRunRecord(row) : null;
   }
 
+  private computeRoutineRunDedupeKey(input: {
+    routineId: string;
+    runKey?: string;
+    backingTaskId?: string;
+    backingManagedSessionId?: string;
+  }): string | null {
+    const normalizedManagedSessionId = String(input.backingManagedSessionId || "").trim();
+    if (normalizedManagedSessionId) {
+      return `managed:${input.routineId}:${normalizedManagedSessionId}`;
+    }
+
+    const normalizedTaskId = String(input.backingTaskId || "").trim();
+    if (normalizedTaskId) {
+      const routine = this.get(input.routineId);
+      const targetTaskId = routine ? getRoutineTargetTaskId(routine) : null;
+      if (!targetTaskId || targetTaskId !== normalizedTaskId) {
+        return `task:${input.routineId}:${normalizedTaskId}`;
+      }
+    }
+
+    const normalizedRunKey = String(input.runKey || "").trim();
+    if (normalizedRunKey) return `key:${input.routineId}:${normalizedRunKey}`;
+    return null;
+  }
+
+  private reconcileRoutineRunDedupeKeys(): void {
+    const rows = this.deps.db.prepare("SELECT * FROM routine_runs").all() as Any[];
+    const groups = new Map<string, RoutineRunRecord[]>();
+    const rowsWithoutKey: RoutineRunRecord[] = [];
+    for (const row of rows) {
+      const run = this.mapRunRecord(row);
+      const dedupeKey = this.computeRoutineRunDedupeKey(run);
+      if (!dedupeKey) {
+        rowsWithoutKey.push(run);
+        continue;
+      }
+      run.dedupeKey = dedupeKey;
+      const existing = groups.get(dedupeKey) || [];
+      existing.push(run);
+      groups.set(dedupeKey, existing);
+    }
+
+    const updateKey = this.deps.db.prepare("UPDATE routine_runs SET dedupe_key = ? WHERE id = ?");
+    const clearKey = this.deps.db.prepare("UPDATE routine_runs SET dedupe_key = NULL WHERE id = ?");
+    const deleteRun = this.deps.db.prepare("DELETE FROM routine_runs WHERE id = ?");
+    const apply = this.deps.db.transaction(() => {
+      for (const run of rowsWithoutKey) {
+        clearKey.run(run.id);
+      }
+      for (const [dedupeKey, runs] of groups.entries()) {
+        if (runs.length === 1) {
+          updateKey.run(dedupeKey, runs[0].id);
+          continue;
+        }
+        const preferred = runs.reduce((best, candidate) => preferRoutineRun(best, candidate));
+        for (const run of runs) {
+          if (run.id === preferred.id) {
+            updateKey.run(dedupeKey, run.id);
+          } else {
+            deleteRun.run(run.id);
+          }
+        }
+      }
+    });
+    apply();
+  }
+
   private mapRunRecord(row: Any): RoutineRunRecord {
     return {
       ...this.mapRunRow(row),
       runKey: row.run_key ? String(row.run_key) : undefined,
+      dedupeKey: row.dedupe_key ? String(row.dedupe_key) : undefined,
     };
   }
 
@@ -1585,7 +1715,12 @@ function resolveConnectorAllowedTools(connectorIds: string[]): string[] {
   return Array.from(out);
 }
 
-function mapCronStatus(status?: CronEvent["status"]): RoutineRunStatus {
+function mapCronStatus(
+  status?: CronEvent["status"],
+  hasTaskId = false,
+  taskStillRunning = false,
+): RoutineRunStatus {
+  if (status === "timeout" && hasTaskId && taskStillRunning) return "running";
   switch (status) {
     case "ok":
       return "completed";
@@ -1606,10 +1741,32 @@ function mapCronStatus(status?: CronEvent["status"]): RoutineRunStatus {
 function mapCronOutputStatus(
   status: CronEvent["status"] | undefined,
   hasTaskId: boolean,
+  taskStillRunning = false,
 ): RoutineRun["outputStatus"] {
   if (!hasTaskId) return "none";
+  if (status === "timeout" && taskStillRunning) return "queued";
   if (status === "error" || status === "timeout") return "failed";
   return "queued";
+}
+
+function mapTaskBackedOutputStatus(
+  current: RoutineRun["outputStatus"],
+  status: RoutineRunStatus,
+  routine?: Routine | null,
+): RoutineRun["outputStatus"] {
+  if (status === "failed") return "failed";
+  if (current === "failed") return routineOutputStatusAfterTaskCompletion(routine);
+  return current;
+}
+
+function routineOutputStatusAfterTaskCompletion(routine?: Routine | null): RoutineRun["outputStatus"] {
+  if (!routine) return "queued";
+  if (routineHasWebhookResponse(routine)) return "responded";
+  return routine.outputs.some((output) => output.kind !== "task_only") ? "queued" : "none";
+}
+
+function isCronTimeoutSummary(value?: string): boolean {
+  return typeof value === "string" && /^Timed out after \d+s$/i.test(value.trim());
 }
 
 function summarizeCronEvent(event: CronEvent): string {

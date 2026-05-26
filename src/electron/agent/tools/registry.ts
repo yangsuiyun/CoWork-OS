@@ -38,6 +38,7 @@ import { BrowserTools } from "./browser-tools";
 import { ShellTools } from "./shell-tools";
 import { ImageTools } from "./image-tools";
 import { VideoTools } from "./video-tools";
+import { YouTubeTools } from "./youtube-tools";
 import { VisionTools } from "./vision-tools";
 import { SystemTools } from "./system-tools";
 import { CronTools } from "./cron-tools";
@@ -509,6 +510,7 @@ export class ToolRegistry {
   private shellTools: ShellTools;
   private imageTools: ImageTools;
   private videoTools: VideoTools;
+  private youtubeTools: YouTubeTools;
   private visionTools: VisionTools;
   private systemTools: SystemTools;
   private computerUseTools: ComputerUseTools;
@@ -584,6 +586,7 @@ export class ToolRegistry {
     this.shellTools = new ShellTools(workspace, daemon, taskId);
     this.imageTools = new ImageTools(workspace, daemon, taskId);
     this.videoTools = new VideoTools(workspace, daemon, taskId);
+    this.youtubeTools = new YouTubeTools(workspace, daemon, taskId);
     this.visionTools = new VisionTools(workspace, daemon, taskId);
     this.systemTools = new SystemTools(workspace, daemon, taskId);
     this.computerUseTools = new ComputerUseTools(workspace, daemon, taskId);
@@ -1009,6 +1012,7 @@ export class ToolRegistry {
     this.shellTools.setWorkspace(workspace);
     this.imageTools.setWorkspace(workspace);
     this.videoTools.setWorkspace(workspace);
+    this.youtubeTools.setWorkspace(workspace);
     this.visionTools.setWorkspace(workspace);
     this.systemTools.setWorkspace(workspace);
     this.computerUseTools.setWorkspace(workspace);
@@ -1228,6 +1232,9 @@ export class ToolRegistry {
     if (VideoTools.isAvailable()) {
       allTools.push(...VideoTools.getToolDefinitions());
     }
+
+    // YouTube transcript tools are local/best-effort and do not require YouTube API keys.
+    allTools.push(...YouTubeTools.getToolDefinitions());
 
     // Vision tools (image understanding); may surface setup guidance if API keys are missing
     allTools.push(...VisionTools.getToolDefinitions());
@@ -1851,6 +1858,23 @@ export class ToolRegistry {
       }
       return result;
     }, readParallelSchedulerSpec);
+    register("youtube_ingest_video", async ({ request }) =>
+      this.youtubeTools.ingestVideo(request.input),
+    );
+    register("youtube_ask_video", async ({ request }) =>
+      this.youtubeTools.askVideo(request.input),
+    );
+    register("youtube_ask_or_ingest_video", async ({ request }) =>
+      this.youtubeTools.askOrIngestVideo(request.input),
+    );
+    register("youtube_search_ingested_segments", async ({ request }) =>
+      this.youtubeTools.searchSegments(request.input),
+      readParallelSchedulerSpec,
+    );
+    register("youtube_list_ingested_videos", async ({ request }) =>
+      this.youtubeTools.listVideos(request.input),
+      readParallelSchedulerSpec,
+    );
     register("tool_search", async ({ request }) =>
       this.searchDeferredTools(request.input?.query || "", request.input?.limit),
     );
@@ -2009,6 +2033,23 @@ export class ToolRegistry {
     register("show_in_folder", async ({ request }) => this.systemTools.showInFolder(request.input.path));
     register("get_env", async ({ request }) => this.systemTools.getEnvVariable(request.input.name));
     register("get_app_paths", async () => this.systemTools.getAppPaths());
+    register("resolve_app_bundle_id", async ({ request }) =>
+      this.systemTools.resolveAppBundleId(request.input.appName),
+    );
+    register("find_macos_app_processes", async ({ request }) =>
+      this.systemTools.findMacOSAppProcesses(request.input),
+      readParallelSchedulerSpec,
+    );
+    register("terminate_macos_app_processes", async ({ request }) =>
+      this.systemTools.terminateMacOSAppProcesses(request.input),
+    );
+    register("list_macos_launch_agents", async ({ request }) =>
+      this.systemTools.listMacOSLaunchAgents(request.input),
+      readParallelSchedulerSpec,
+    );
+    register("disable_macos_launch_agents", async ({ request }) =>
+      this.systemTools.disableMacOSLaunchAgents(request.input),
+    );
     register("run_applescript", async ({ request }) => this.systemTools.runAppleScript(request.input.script), exclusiveSchedulerSpec);
     register("generate_image", async ({ request }) =>
       this.imageTools.generateImage(request.input, {
@@ -3144,6 +3185,11 @@ System Tools:
 - show_in_folder: Reveal file in Finder/Explorer
 - get_env: Read environment variable
 - get_app_paths: Get system paths (home, downloads, etc.)
+- resolve_app_bundle_id: Resolve macOS app names to exact bundle identifiers before AppleScript application id use
+- find_macos_app_processes: Find matching macOS app/helper processes without shell pipelines
+- terminate_macos_app_processes: Terminate matching macOS app/helper processes after approval
+- list_macos_launch_agents: Inspect LaunchAgents/LaunchDaemons that may relaunch an app
+- disable_macos_launch_agents: Unload and move matching user LaunchAgent plists aside after approval
 - run_applescript: Execute exact AppleScript on macOS (explicit AppleScript requests or low-level fallback only)
 - search_memories: Search workspace memories, .cowork/ knowledge files, and imported conversations for past context
 - search_quotes: Search exact quoted wording across transcripts, task messages, imported memories, and workspace notes
@@ -3592,6 +3638,11 @@ ${skillDescriptions}`;
     if (name === "generate_video") return await this.videoTools.generateVideo(input);
     if (name === "get_video_generation_job") return await this.videoTools.getVideoGenerationJob(input);
     if (name === "cancel_video_generation_job") return await this.videoTools.cancelVideoGenerationJob(input);
+    if (name === "youtube_ingest_video") return await this.youtubeTools.ingestVideo(input);
+    if (name === "youtube_ask_video") return await this.youtubeTools.askVideo(input);
+    if (name === "youtube_ask_or_ingest_video") return await this.youtubeTools.askOrIngestVideo(input);
+    if (name === "youtube_search_ingested_segments") return this.youtubeTools.searchSegments(input);
+    if (name === "youtube_list_ingested_videos") return this.youtubeTools.listVideos(input);
 
     // Vision tools
     if (name === "analyze_image") return await this.visionTools.analyzeImage(input);
@@ -3626,6 +3677,11 @@ ${skillDescriptions}`;
     if (name === "show_in_folder") return await this.systemTools.showInFolder(input.path);
     if (name === "get_env") return await this.systemTools.getEnvVariable(input.name);
     if (name === "get_app_paths") return this.systemTools.getAppPaths();
+    if (name === "resolve_app_bundle_id") return await this.systemTools.resolveAppBundleId(input.appName);
+    if (name === "find_macos_app_processes") return await this.systemTools.findMacOSAppProcesses(input);
+    if (name === "terminate_macos_app_processes") return await this.systemTools.terminateMacOSAppProcesses(input);
+    if (name === "list_macos_launch_agents") return await this.systemTools.listMacOSLaunchAgents(input);
+    if (name === "disable_macos_launch_agents") return await this.systemTools.disableMacOSLaunchAgents(input);
     if (name === "run_applescript") return await this.systemTools.runAppleScript(input.script);
 
     // Computer use tools (CUA)

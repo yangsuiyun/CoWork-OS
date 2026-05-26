@@ -219,11 +219,14 @@ export class StrategicPlannerService {
 
   async runNow(request: StrategicPlannerRunRequest): Promise<StrategicPlannerRun> {
     const trigger = request.trigger || "manual";
-    const config = this.getConfig(request.companyId);
     const company = this.core.getCompany(request.companyId);
     if (!company) {
       throw new Error(`Company not found: ${request.companyId}`);
     }
+    if (!this.isPlanningEligibleCompany(company)) {
+      throw new Error(`Company is not active: ${request.companyId}`);
+    }
+    const config = this.getConfig(request.companyId);
     if (this.activeRuns.has(request.companyId)) {
       throw new Error(`Planner run already active for company: ${request.companyId}`);
     }
@@ -300,7 +303,7 @@ export class StrategicPlannerService {
           Date.now(),
           runId,
         );
-      this.updateConfig(request.companyId, { lastRunAt: Date.now() });
+      this.recordSuccessfulRunConfigUpdate(request.companyId, Date.now());
       return this.getRunOrThrow(runId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -323,6 +326,8 @@ export class StrategicPlannerService {
     for (const config of this.listConfigs()) {
       if (!config.enabled) continue;
       if (this.activeRuns.has(config.companyId)) continue;
+      const company = this.core.getCompany(config.companyId);
+      if (!company || !this.isPlanningEligibleCompany(company)) continue;
       const lastRunAt = config.lastRunAt || 0;
       const intervalMs = config.intervalMinutes * 60 * 1000;
       if (lastRunAt && Date.now() - lastRunAt < intervalMs) continue;
@@ -334,6 +339,53 @@ export class StrategicPlannerService {
       } catch (error) {
         this.log("Planner tick failed", config.companyId, error);
       }
+    }
+  }
+
+  private isPlanningEligibleCompany(company: Company): boolean {
+    return company.status === "active";
+  }
+
+  private recordSuccessfulRunConfigUpdate(companyId: string, completedAt: number): void {
+    try {
+      this.updateConfig(companyId, { lastRunAt: completedAt });
+      return;
+    } catch (error) {
+      this.log("Failed to update planner config after successful run; attempting repair", companyId, error);
+    }
+
+    try {
+      this.deps.db
+        .prepare(
+          `
+            UPDATE strategic_planner_configs
+            SET last_run_at = ?,
+                updated_at = ?,
+                planning_workspace_id = CASE
+                  WHEN planning_workspace_id IS NULL
+                    OR EXISTS (
+                      SELECT 1 FROM workspaces
+                      WHERE workspaces.id = strategic_planner_configs.planning_workspace_id
+                    )
+                  THEN planning_workspace_id
+                  ELSE NULL
+                END,
+                planner_agent_role_id = CASE
+                  WHEN planner_agent_role_id IS NULL
+                    OR EXISTS (
+                      SELECT 1 FROM agent_roles
+                      WHERE agent_roles.id = strategic_planner_configs.planner_agent_role_id
+                        AND agent_roles.is_active != 0
+                    )
+                  THEN planner_agent_role_id
+                  ELSE NULL
+                END
+            WHERE company_id = ?
+          `,
+        )
+        .run(completedAt, completedAt, companyId);
+    } catch (error) {
+      this.log("Failed to repair planner config after successful run", companyId, error);
     }
   }
 
