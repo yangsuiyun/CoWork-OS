@@ -14,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **First-run onboarding docs and UX**: documented the staged first-run setup flow, ChatGPT subscription sign-in path, local Ollama detection, free-option provider badges for OpenRouter/Gemini/Groq, and the fixed-frame onboarding recap with a scrollable review body.
-- **Mission Control semantics**: clarified Mission Control docs and UI language around Heartbeat agents, the global runtime queue, and workspace-scoped Mission Board work so enabled background roles are not mistaken for currently running tasks.
 
 ### Fixed
 - **Memory FTS performance on Electron main thread**: eliminated synchronous SQLite FTS blocking (1.5s spikes → no slow FTS on task path) via a dedicated prompt-recall fast path that skips imported-global search, hybrid semantic scoring, and double `getFullDetails` round-trips; batched tier-tracking UPDATEs; LRU cache for prompt-recall results; background marker-based lookups switched from FTS to direct LIKE queries; composite `(workspace_id, created_at DESC)` index; and richer slow-FTS instrumentation with token count, row count, limit, and workspace context. See [Memory FTS Performance](memory-fts-performance.md).
@@ -24,6 +23,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Collaborative team run phase tracking**: added `execute` phase to `AgentTeamRunPhase` so the UI shows "Agents are executing..." during active child task work instead of "Thinking...".
 - **Read-only review safety**: review tasks automatically snapshot git state at start and restrict system interaction tools (screenshots, clicks, mouse) to prevent accidental workspace modifications.
 - **Workspace verification deduplication**: identical verification commands in the same workspace are deduplicated at the daemon level, preventing concurrent `tsc --noEmit` or build processes.
+
+## [0.5.48] - 2026-05-28
+
+### Added
+- **Release notes for 0.5.48**: see [Release Notes 0.5.48](release-notes-0.5.48.md).
+- **Side Chat**: `/side [question]` opens a right-side read-only side conversation for the selected running task, with hidden parent context, live parent-status snapshots for progress questions, and tools denied.
+- **Secure MCP Tunnels**: added self-hosted outbound-only private MCP access with a relay, local tunnel client, separate client/caller tokens, policy enforcement, audit logs, Settings UI, and relay smoke coverage.
+- **YouTube video intelligence**: added YouTube transcript ingestion, segment storage/search, video Q&A, Browser Workbench YouTube ask UI, and native YouTube tools.
+- **Timeline/sidebar paging**: added sidebar summary loading, cursor-based sidebar pagination, task timeline page/detail IPC APIs, timeline payload sanitization, and performance QA scripts.
+
+### Changed
+- **Mission Control semantics**: clarified Mission Control docs and UI language around Heartbeat agents, the global runtime queue, and workspace-scoped Mission Board work so enabled background roles are not mistaken for currently running tasks.
+- **Scheduler reliability**: cron jobs now persist run leases before task creation, tag scheduled tasks with `scheduledJobId`, detect active scheduled work after restart, and avoid duplicate runs.
+- **Routine reconciliation**: routine runs now dedupe duplicate backing-task dispatches, preserve distinct thread follow-ups, and repair stale timeout rows when backing tasks later finish.
+- **Completion contract handling**: text-only briefs with file paths no longer require file artifacts, and recovery steps no longer overwrite stronger final deliverables with narrow operational status.
+
+### Fixed
+- **Tool policy read-only enforcement**: an explicit empty task allowlist now denies all tools, while an omitted allowlist remains unrestricted.
+- **Glob and file-path safeguards**: glob scans skip generated/dependency folders case-insensitively, reject generated search roots, cap scan duration, and file tools expand `~` paths before resolution.
+- **macOS sandbox path aliases**: sandbox profiles now include `/var` and `/private/var` aliases for workspace, temp, and allowed paths.
+- **Browser/webview URL policy**: Browser Workbench now applies explicit webview URL policy and short-lived allowlisting for local HTML previews.
 
 ## [0.5.45] - 2026-05-14
 
@@ -1091,6 +1111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| 0.5.48 | 2026-05-28 | Side Chat, Secure MCP Tunnels, YouTube video intelligence, timeline/sidebar paging, scheduler/routine reliability, and runtime safety fixes |
+| 0.5.47 | 2026-05-21 | Long-session reliability, off-main-thread memory recall, renderer stability, location approval safety, Maps MCP workflows, and private-memory filtering |
 | 0.5.45 | 2026-05-14 | Agent Builder, finance/legal packs, channel specialization, Google Workspace Tasks/Slides, mailbox queue upgrades, runtime policy controls, Dreaming, and multitask lanes |
 | 0.3.90 | 2026-02-23 | Git worktree isolation, collaborative mode, multi-LLM mode, agent comparison, task pinning, wrap-up, git tools, executor refactoring |
 | 0.3.84 | 2026-02-14 | Fixes CI installability check module resolution so release validation passes and desktop packaging can continue |
@@ -1114,7 +1136,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 0.1.0 | 2025-01-24 | First public release with core features |
 | 0.0.1 | 2025-01-20 | Initial development setup |
 
-[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.45...HEAD
+[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.48...HEAD
+[0.5.48]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.47...v0.5.48
+[0.5.47]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.45...v0.5.47
 [0.5.45]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.44...v0.5.45
 [0.5.44]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.43...v0.5.44
 [0.5.43]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.42...v0.5.43

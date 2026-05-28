@@ -192,8 +192,8 @@ features:
     details: Bundled legal practice packs expose upstream-style slash commands through CoWork's plugin-pack system. Legal workflow selections are editable before launch, and matter-heavy tasks can show structured main-view intake cards such as the dedicated demand-letter intake form.
   - title: Multitask Command
     details: `/multitask [N] <task>` starts a fresh collaborative run, splits the prompt into 2-8 lane-specific child tasks, respects the global task queue, and synthesizes the lane outputs through the existing team orchestration flow.
-  - title: Latest Release 0.5.45
-    details: Agent Builder, finance and legal workflow packs, channel specialization, Google Workspace Tasks/Slides support, mailbox compose/send upgrades, runtime network/sandbox policy controls, Dreaming memory curation, and /multitask lane fan-out.
+  - title: Latest Release 0.5.48
+    details: Side Chat, self-hosted Secure MCP Tunnels, YouTube video intelligence, timeline/sidebar paging, scheduler duplicate-run guards, routine reconciliation, and runtime safety fixes.
   - title: Inbox Agent
     details: Local-first email workspace with Classic and Today modes, AI triage, Ask Inbox sidebar chat with live agentic steps and hybrid evidence retrieval, `@Inbox` main-composer routing, manual reply/reply-all/forward, editable AI drafts, commitment queues, sender cleanup, attachment indexing, and resync-safe background sync.
   - title: Managed Devices
