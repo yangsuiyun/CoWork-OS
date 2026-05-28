@@ -20,6 +20,11 @@ describe("message shortcuts", () => {
       args: "all uncommitted fixes",
       shortcut: expect.objectContaining({ name: "review", action: "review" }),
     });
+    expect(parseLeadingMessageAppShortcut("/side how is it going?")).toMatchObject({
+      matched: true,
+      args: "how is it going?",
+      shortcut: expect.objectContaining({ name: "side", action: "side" }),
+    });
   });
 
   it("does not match unknown slash commands", () => {

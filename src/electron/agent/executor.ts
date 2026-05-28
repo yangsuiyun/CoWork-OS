@@ -306,6 +306,7 @@ import {
   responseHasReasonedConclusionSignal as responseHasReasonedConclusionSignalUtil,
   responseHasVerificationSignal as responseHasVerificationSignalUtil,
   responseLooksOperationalOnly as responseLooksOperationalOnlyUtil,
+  shouldPreserveExistingDeliverableForRecovery as shouldPreserveExistingDeliverableForRecoveryUtil,
   shouldRequireExecutionEvidence as shouldRequireExecutionEvidenceUtil,
 } from "./executor-completion-utils";
 import {
@@ -6794,6 +6795,17 @@ ${transcript}
       extraChatRules?: string[];
     },
   ): LLMSystemBlock[] {
+    const isSideChat = this.task.source === "side_chat";
+    const sideChatRules = isSideChat
+      ? [
+          "- This is a side conversation forked from an active parent session.",
+          "- Treat inherited transcript and tool output as read-only reference context.",
+          "- Answer the user's side question without redirecting, pausing, renaming, or continuing the parent task.",
+          "- Do not claim to have changed files, run commands, or controlled the parent session.",
+          "- If a LIVE_PARENT_STATUS block is present, it is authoritative for progress, status, and current-state questions.",
+          "- Do not answer progress/status/current-state questions from prior side-chat history alone.",
+        ]
+      : [];
     const rules = isThinkMode
       ? [
           "Thinking rules:",
@@ -6809,6 +6821,7 @@ ${transcript}
           "- Keep replies concise and conversational.",
           "- This is a check-in conversation, not a full task execution turn.",
           "- Respond naturally as a friendly teammate.",
+          ...sideChatRules,
           ...(ctx.extraChatRules || []),
         ].join("\n");
 
@@ -6828,6 +6841,14 @@ ${transcript}
       buildSystemBlock(
         "chat_current_time",
         `Current time: ${getCurrentDateTimeContext()}`,
+        "turn",
+        false,
+      ),
+      buildSystemBlock(
+        `side_chat_live_parent:${hashPromptCacheValue(this.task.agentConfig?.sideChatTurnContext || "")}`,
+        isSideChat && this.task.agentConfig?.sideChatTurnContext
+          ? this.task.agentConfig.sideChatTurnContext
+          : "",
         "turn",
         false,
       ),
@@ -20049,8 +20070,18 @@ You are continuing a previous conversation. The context from the previous conver
     // was too aggressive and caused delivered results to be cut short.
     const truncated = text.length > 4000 ? `${text.slice(0, 4000)}…` : text;
     if (!this.isVerificationStep(step)) {
-      this.lastAssistantOutput = truncated;
-      this.lastNonVerificationOutput = truncated;
+      const preserveExistingDeliverable =
+        this.isRecoveryPlanStep(step) &&
+        shouldPreserveExistingDeliverableForRecoveryUtil({
+          existingDeliverable: this.lastNonVerificationOutput,
+          recoveryText: truncated,
+          minResultSummaryLength: TaskExecutor.MIN_RESULT_SUMMARY_LENGTH,
+          contract: this.buildCompletionContract(),
+        });
+      if (!preserveExistingDeliverable) {
+        this.lastAssistantOutput = truncated;
+        this.lastNonVerificationOutput = truncated;
+      }
     } else {
       if (!this.lastAssistantOutput) {
         this.lastAssistantOutput = truncated;
@@ -32054,14 +32085,16 @@ Return ONLY a JSON object:
       }
     }
 
-    await this.sendMessageUnified(message, images, quotedAssistantMessage);
+    await this.sendMessageUnified(message, images, quotedAssistantMessage, {
+      agentConfigOverride: options?.agentConfigOverride,
+    });
   }
 
   private async sendMessageUnified(
     message: string,
     images?: ImageAttachment[],
     quotedAssistantMessage?: QuotedAssistantMessage,
-    opts?: { recoveredFromTurnLimit?: boolean },
+    opts?: { recoveredFromTurnLimit?: boolean; agentConfigOverride?: AgentConfig },
   ): Promise<void> {
     let executionMessage = message;
     const recoveredFromTurnLimit = opts?.recoveredFromTurnLimit === true;
@@ -32074,6 +32107,12 @@ Return ONLY a JSON object:
       this.task = {
         ...this.task,
         ...persistedTask,
+        agentConfig: opts?.agentConfigOverride
+          ? {
+              ...(persistedTask.agentConfig || this.task.agentConfig || {}),
+              ...opts.agentConfigOverride,
+            }
+          : persistedTask.agentConfig || this.task.agentConfig,
       };
     }
     this.lastAwaitingUserInputReasonCode =

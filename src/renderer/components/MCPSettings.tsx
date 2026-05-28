@@ -61,12 +61,69 @@ interface MCPUpdateInfo {
   latestVersion: string;
 }
 
+type SecureMcpTunnelTargetType = "cowork-host" | "http";
+type SecureMcpTunnelState = "stopped" | "connecting" | "connected" | "reconnecting" | "error";
+
+interface SecureMcpTunnelPolicy {
+  allowedTools: string[];
+  readOnly: boolean;
+  maxRequestBytes: number;
+  maxResponseBytes: number;
+  requestTimeoutMs: number;
+}
+
+interface SecureMcpTunnelConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+  relayUrl: string;
+  targetType: SecureMcpTunnelTargetType;
+  targetUrl?: string;
+  coworkHostPort?: number;
+  policy: SecureMcpTunnelPolicy;
+  hasClientToken: boolean;
+  hasCallerToken: boolean;
+  lastConnectedAt?: number;
+  lastError?: string;
+}
+
+interface SecureMcpTunnelStatus {
+  tunnelId: string;
+  name: string;
+  state: SecureMcpTunnelState;
+  relayUrl: string;
+  targetUrl: string;
+  connectedAt?: number;
+  lastConnectedAt?: number;
+  lastError?: string;
+  reconnectAttempts: number;
+  lastRequestAt?: number;
+}
+
+interface SecureMcpTunnelAuditEvent {
+  id: string;
+  tunnelId: string;
+  timestamp: number;
+  caller?: string;
+  method: string;
+  toolName?: string;
+  approved: boolean;
+  status: "success" | "blocked" | "error";
+  durationMs?: number;
+  error?: string;
+}
+
 export function MCPSettings() {
   const [settings, setSettings] = useState<MCPSettingsData | null>(null);
   const [serverStatuses, setServerStatuses] = useState<MCPServerStatus[]>([]);
+  const [secureTunnels, setSecureTunnels] = useState<SecureMcpTunnelConfig[]>([]);
+  const [secureTunnelStatuses, setSecureTunnelStatuses] = useState<SecureMcpTunnelStatus[]>([]);
+  const [secureTunnelAudit, setSecureTunnelAudit] = useState<SecureMcpTunnelAuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [activeView, setActiveView] = useState<"servers" | "registry" | "settings">("servers");
+  const [activeView, setActiveView] = useState<"servers" | "registry" | "tunnels" | "settings">(
+    "servers",
+  );
 
   // Add server form state
   const [showAddForm, setShowAddForm] = useState(false);
@@ -74,6 +131,16 @@ export function MCPSettings() {
   const [newServerCommand, setNewServerCommand] = useState("");
   const [newServerArgs, setNewServerArgs] = useState("");
   const [newServerEnv, setNewServerEnv] = useState("");
+  const [showAddTunnelForm, setShowAddTunnelForm] = useState(false);
+  const [newTunnelName, setNewTunnelName] = useState("CoWork tools");
+  const [newTunnelRelayUrl, setNewTunnelRelayUrl] = useState("http://127.0.0.1:8787");
+  const [newTunnelTargetType, setNewTunnelTargetType] =
+    useState<SecureMcpTunnelTargetType>("cowork-host");
+  const [newTunnelTargetUrl, setNewTunnelTargetUrl] = useState("http://127.0.0.1:3333/mcp");
+  const [newTunnelClientToken, setNewTunnelClientToken] = useState("");
+  const [newTunnelCallerToken, setNewTunnelCallerToken] = useState("");
+  const [newTunnelAllowedTools, setNewTunnelAllowedTools] = useState("");
+  const [newTunnelReadOnly, setNewTunnelReadOnly] = useState(false);
 
   // Tools modal state
   const [viewingToolsFor, setViewingToolsFor] = useState<string | null>(null);
@@ -121,19 +188,31 @@ export function MCPSettings() {
     const unsubscribe = window.electronAPI.onMCPStatusChange((statuses) => {
       setServerStatuses(statuses);
     });
+    const unsubscribeTunnels = window.electronAPI.onSecureMcpTunnelStatusChange((statuses) => {
+      setSecureTunnelStatuses(statuses);
+    });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      unsubscribeTunnels();
+    };
   }, []);
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const [loadedSettings, statuses] = await Promise.all([
+      const [loadedSettings, statuses, tunnelSettings, tunnelStatuses, tunnelAudit] = await Promise.all([
         window.electronAPI.getMCPSettings(),
         window.electronAPI.getMCPStatus(),
+        window.electronAPI.getSecureMcpTunnelSettings(),
+        window.electronAPI.getSecureMcpTunnelStatus(),
+        window.electronAPI.getSecureMcpTunnelAudit(),
       ]);
       setSettings(loadedSettings);
       setServerStatuses(statuses);
+      setSecureTunnels(tunnelSettings.tunnels || []);
+      setSecureTunnelStatuses(tunnelStatuses || []);
+      setSecureTunnelAudit(tunnelAudit || []);
     } catch (error) {
       console.error("Failed to load MCP settings:", error);
     } finally {
@@ -181,6 +260,73 @@ export function MCPSettings() {
       alert(`Failed to add server: ${error.message}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleAddTunnel = async () => {
+    if (!newTunnelName || !newTunnelRelayUrl) return;
+    try {
+      setSaving(true);
+      const allowedTools = newTunnelAllowedTools
+        .split("\n")
+        .map((tool) => tool.trim())
+        .filter(Boolean);
+      await window.electronAPI.createSecureMcpTunnel({
+        name: newTunnelName,
+        relayUrl: newTunnelRelayUrl,
+        targetType: newTunnelTargetType,
+        targetUrl: newTunnelTargetType === "http" ? newTunnelTargetUrl : undefined,
+        coworkHostPort: 3333,
+        clientToken: newTunnelClientToken || undefined,
+        callerToken: newTunnelCallerToken || undefined,
+        enabled: false,
+        policy: {
+          allowedTools,
+          readOnly: newTunnelReadOnly,
+        },
+      });
+      setShowAddTunnelForm(false);
+      setNewTunnelClientToken("");
+      setNewTunnelCallerToken("");
+      await loadData();
+    } catch (error: Any) {
+      alert(`Failed to add tunnel: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleStartTunnel = async (tunnelId: string) => {
+    try {
+      setSaving(true);
+      await window.electronAPI.startSecureMcpTunnel(tunnelId);
+      await loadData();
+    } catch (error: Any) {
+      alert(`Failed to start tunnel: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleStopTunnel = async (tunnelId: string) => {
+    try {
+      setSaving(true);
+      await window.electronAPI.stopSecureMcpTunnel(tunnelId);
+      await loadData();
+    } catch (error: Any) {
+      alert(`Failed to stop tunnel: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemoveTunnel = async (tunnelId: string) => {
+    if (!confirm("Remove this secure MCP tunnel?")) return;
+    try {
+      await window.electronAPI.deleteSecureMcpTunnel(tunnelId);
+      await loadData();
+    } catch (error: Any) {
+      alert(`Failed to remove tunnel: ${error.message}`);
     }
   };
 
@@ -482,6 +628,24 @@ export function MCPSettings() {
     }
   };
 
+  const getTunnelStatus = (tunnelId: string): SecureMcpTunnelStatus | undefined => {
+    return secureTunnelStatuses.find((status) => status.tunnelId === tunnelId);
+  };
+
+  const getTunnelStatusColor = (state: SecureMcpTunnelState): string => {
+    switch (state) {
+      case "connected":
+        return "var(--color-success)";
+      case "connecting":
+      case "reconnecting":
+        return "var(--color-warning)";
+      case "error":
+        return "var(--color-error)";
+      default:
+        return "var(--color-text-tertiary)";
+    }
+  };
+
   if (loading) {
     return <div className="settings-loading">Loading MCP settings...</div>;
   }
@@ -501,6 +665,12 @@ export function MCPSettings() {
           onClick={() => setActiveView("registry")}
         >
           Browse Registry
+        </button>
+        <button
+          className={`mcp-nav-button ${activeView === "tunnels" ? "active" : ""}`}
+          onClick={() => setActiveView("tunnels")}
+        >
+          Secure Tunnels
         </button>
         <button
           className={`mcp-nav-button ${activeView === "settings" ? "active" : ""}`}
@@ -790,6 +960,221 @@ export function MCPSettings() {
             }}
             installedServerIds={settings?.servers.map((s) => s.name) || []}
           />
+        </div>
+      )}
+
+      {activeView === "tunnels" && (
+        <div className="settings-section">
+          <div className="settings-section-header">
+            <h3>Secure MCP Tunnels</h3>
+            <button
+              className="button-small button-primary"
+              onClick={() => setShowAddTunnelForm(!showAddTunnelForm)}
+            >
+              {showAddTunnelForm ? "Cancel" : "+ Add Tunnel"}
+            </button>
+          </div>
+          <p className="settings-description">
+            Expose selected local MCP tools through an outbound-only CoWork relay. No public port is
+            opened on this machine.
+          </p>
+
+          {showAddTunnelForm && (
+            <div className="mcp-add-form">
+              <h4>Add Secure MCP Tunnel</h4>
+              <div className="settings-field">
+                <label>Tunnel Name</label>
+                <input
+                  className="settings-input"
+                  value={newTunnelName}
+                  onChange={(e) => setNewTunnelName(e.target.value)}
+                />
+              </div>
+              <div className="settings-field">
+                <label>Relay URL</label>
+                <input
+                  className="settings-input"
+                  value={newTunnelRelayUrl}
+                  onChange={(e) => setNewTunnelRelayUrl(e.target.value)}
+                  placeholder="http://127.0.0.1:8787"
+                />
+              </div>
+              <div className="settings-field">
+                <label>Target</label>
+                <select
+                  className="settings-select"
+                  value={newTunnelTargetType}
+                  onChange={(e) =>
+                    setNewTunnelTargetType(e.target.value as SecureMcpTunnelTargetType)
+                  }
+                >
+                  <option value="cowork-host">CoWork MCP host</option>
+                  <option value="http">Private HTTP MCP URL</option>
+                </select>
+              </div>
+              {newTunnelTargetType === "http" && (
+                <div className="settings-field">
+                  <label>Target URL</label>
+                  <input
+                    className="settings-input"
+                    value={newTunnelTargetUrl}
+                    onChange={(e) => setNewTunnelTargetUrl(e.target.value)}
+                    placeholder="http://127.0.0.1:3333/mcp"
+                  />
+                </div>
+              )}
+              <div className="settings-field">
+                <label>Client Token</label>
+                <input
+                  type="password"
+                  className="settings-input"
+                  value={newTunnelClientToken}
+                  onChange={(e) => setNewTunnelClientToken(e.target.value)}
+                  placeholder="Paste the relay client token"
+                />
+              </div>
+              <div className="settings-field">
+                <label>Caller Token</label>
+                <input
+                  type="password"
+                  className="settings-input"
+                  value={newTunnelCallerToken}
+                  onChange={(e) => setNewTunnelCallerToken(e.target.value)}
+                  placeholder="Optional: paste the relay caller token for local reference"
+                />
+              </div>
+              <div className="settings-field">
+                <label>Allowed Tools</label>
+                <textarea
+                  className="settings-textarea"
+                  rows={4}
+                  value={newTunnelAllowedTools}
+                  onChange={(e) => setNewTunnelAllowedTools(e.target.value)}
+                  placeholder="One tool name per line. Leave empty to allow all."
+                />
+              </div>
+              <div className="settings-field">
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={newTunnelReadOnly}
+                    onChange={(e) => setNewTunnelReadOnly(e.target.checked)}
+                  />
+                  <span>Read-only mode</span>
+                </label>
+              </div>
+              <div className="mcp-form-actions">
+                <button
+                  className="button-primary"
+                  onClick={handleAddTunnel}
+                  disabled={!newTunnelName || !newTunnelRelayUrl || !newTunnelClientToken || saving}
+                >
+                  {saving ? "Adding..." : "Add Tunnel"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {secureTunnels.length === 0 ? (
+            <div className="mcp-empty-state">
+              <p>No secure MCP tunnels configured.</p>
+            </div>
+          ) : (
+            <div className="mcp-server-list">
+              {secureTunnels.map((tunnel) => {
+                const status = getTunnelStatus(tunnel.id);
+                const state = status?.state || "stopped";
+                const recentAudit = secureTunnelAudit
+                  .filter((event) => event.tunnelId === tunnel.id)
+                  .slice(0, 3);
+                return (
+                  <div key={tunnel.id} className="mcp-server-card">
+                    <div className="mcp-server-header">
+                      <div className="mcp-server-info">
+                        <div className="mcp-server-name-row">
+                          <span className="mcp-server-name">{tunnel.name}</span>
+                          <span
+                            className="mcp-server-status"
+                            style={{ color: getTunnelStatusColor(state) }}
+                          >
+                            <span
+                              className="mcp-status-dot"
+                              style={{ backgroundColor: getTunnelStatusColor(state) }}
+                            />
+                            {state}
+                          </span>
+                        </div>
+                        <span className="mcp-server-command">
+                          {tunnel.relayUrl} {"->"}{" "}
+                          {status?.targetUrl ||
+                            (tunnel.targetType === "cowork-host"
+                              ? `http://127.0.0.1:${tunnel.coworkHostPort || 3333}/mcp`
+                              : tunnel.targetUrl)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {(status?.lastError || tunnel.lastError) && (
+                      <div className="mcp-server-error">
+                        <span className="mcp-error-icon">
+                          <AlertTriangle size={14} strokeWidth={2} />
+                        </span>
+                        {status?.lastError || tunnel.lastError}
+                      </div>
+                    )}
+
+                    <div className="mcp-server-tools-count">
+                      {tunnel.policy.allowedTools.length > 0
+                        ? `${tunnel.policy.allowedTools.length} allowed tools`
+                        : "All MCP tools allowed"}
+                      {tunnel.policy.readOnly ? " · read-only" : ""}
+                    </div>
+
+                    <div className="mcp-server-actions">
+                      {state === "connected" || state === "connecting" || state === "reconnecting" ? (
+                        <button
+                          className="button-small button-secondary"
+                          onClick={() => handleStopTunnel(tunnel.id)}
+                          disabled={saving}
+                        >
+                          Stop
+                        </button>
+                      ) : (
+                        <button
+                          className="button-small button-primary"
+                          onClick={() => handleStartTunnel(tunnel.id)}
+                          disabled={saving || !tunnel.hasClientToken}
+                        >
+                          Start
+                        </button>
+                      )}
+                      <button
+                        className="button-small button-danger"
+                        onClick={() => handleRemoveTunnel(tunnel.id)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+
+                    {recentAudit.length > 0 && (
+                      <div className="mcp-tools-list">
+                        {recentAudit.map((event) => (
+                          <div key={event.id} className="mcp-tool-item">
+                            <div className="mcp-tool-name">
+                              {event.toolName || event.method} · {event.status}
+                            </div>
+                            {event.error && (
+                              <div className="mcp-tool-description">{event.error}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

@@ -2124,6 +2124,10 @@ export interface AgentConfig {
    * When provided, only tools in this list are exposed to the model.
    */
   allowedTools?: string[];
+  /** Internal one-turn side-chat context injected by the daemon; never persisted as user-visible transcript. */
+  sideChatTurnContext?: string;
+  /** Internal scheduled-job identifier used to prevent duplicate cron task creation after restarts. */
+  scheduledJobId?: string;
   /** User-selected integration mentions for soft tool-routing guidance. */
   integrationMentions?: IntegrationMentionSelection[];
   /** Optional origin channel that created the task (used for channel-aware gating) */
@@ -2464,7 +2468,8 @@ export interface Task {
     | "improvement"
     | "subconscious"
     | "symphony"
-    | "managed_agent_panel";
+    | "managed_agent_panel"
+    | "side_chat";
   // Strategy/routing controls
   strategyLock?: boolean; // When true, do not re-route intent at runtime
   budgetProfile?: "balanced" | "strict" | "aggressive";
@@ -8252,6 +8257,17 @@ export const IPC_CHANNELS = {
   MCP_HOST_STOP: "mcp:hostStop",
   MCP_HOST_GET_STATUS: "mcp:hostGetStatus",
 
+  // Secure MCP Tunnels
+  SECURE_MCP_TUNNELS_GET_SETTINGS: "secureMcpTunnels:getSettings",
+  SECURE_MCP_TUNNELS_CREATE: "secureMcpTunnels:create",
+  SECURE_MCP_TUNNELS_UPDATE: "secureMcpTunnels:update",
+  SECURE_MCP_TUNNELS_DELETE: "secureMcpTunnels:delete",
+  SECURE_MCP_TUNNELS_START: "secureMcpTunnels:start",
+  SECURE_MCP_TUNNELS_STOP: "secureMcpTunnels:stop",
+  SECURE_MCP_TUNNELS_GET_STATUS: "secureMcpTunnels:getStatus",
+  SECURE_MCP_TUNNELS_GET_AUDIT: "secureMcpTunnels:getAudit",
+  SECURE_MCP_TUNNELS_STATUS_CHANGE: "secureMcpTunnels:statusChange",
+
   // MCP Events
   MCP_SERVER_STATUS_CHANGE: "mcp:serverStatusChange",
 
@@ -9440,6 +9456,69 @@ export interface TunnelStatusData {
   url?: string;
   error?: string;
   startedAt?: number;
+}
+
+export type SecureMcpTunnelTargetType = "cowork-host" | "http";
+export type SecureMcpTunnelConnectionState =
+  | "stopped"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "error";
+
+export interface SecureMcpTunnelPolicy {
+  allowedTools: string[];
+  readOnly: boolean;
+  maxRequestBytes: number;
+  maxResponseBytes: number;
+  requestTimeoutMs: number;
+}
+
+export interface SecureMcpTunnelDisplayConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+  relayUrl: string;
+  targetType: SecureMcpTunnelTargetType;
+  targetUrl?: string;
+  coworkHostPort?: number;
+  policy: SecureMcpTunnelPolicy;
+  createdAt: number;
+  updatedAt: number;
+  lastConnectedAt?: number;
+  lastError?: string;
+  hasClientToken: boolean;
+  hasCallerToken: boolean;
+}
+
+export interface SecureMcpTunnelDisplaySettings {
+  tunnels: SecureMcpTunnelDisplayConfig[];
+}
+
+export interface SecureMcpTunnelStatus {
+  tunnelId: string;
+  name: string;
+  state: SecureMcpTunnelConnectionState;
+  relayUrl: string;
+  targetUrl: string;
+  connectedAt?: number;
+  lastConnectedAt?: number;
+  lastError?: string;
+  reconnectAttempts: number;
+  lastRequestAt?: number;
+}
+
+export interface SecureMcpTunnelAuditEvent {
+  id: string;
+  tunnelId: string;
+  timestamp: number;
+  caller?: string;
+  method: string;
+  toolName?: string;
+  approved: boolean;
+  status: "success" | "blocked" | "error";
+  durationMs?: number;
+  error?: string;
 }
 
 // Search Provider types

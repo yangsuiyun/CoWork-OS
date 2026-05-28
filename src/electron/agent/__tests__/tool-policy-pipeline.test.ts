@@ -51,6 +51,29 @@ describe("ToolPolicyPipeline", () => {
     expect(result.trace.finalDecision).toBe("allow");
   });
 
+  it("treats a configured empty allow-list as deny-all at execution time", async () => {
+    const result = await evaluateToolPolicyPipeline({
+      workspace,
+      toolName: "read_file",
+      toolInput: { path: "foo.ts" },
+      allowedTools: new Set(),
+    });
+
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toBe("tool not present in task allowlist");
+  });
+
+  it("treats an absent allow-list as no restriction", async () => {
+    const result = await evaluateToolPolicyPipeline({
+      workspace,
+      toolName: "read_file",
+      toolInput: { path: "foo.ts" },
+      // allowedTools intentionally omitted (undefined) — means "no allowlist".
+    });
+
+    expect(result.decision).toBe("allow");
+  });
+
   it("records the permissions stage and requires approval for ask decisions", async () => {
     const result = await evaluateToolPolicyPipeline({
       workspace,

@@ -413,6 +413,11 @@ interface MainContentProps {
       integrationMentions?: IntegrationMentionSelection[];
     },
   ) => void;
+  onOpenSideChat?: (request: {
+    taskId: string;
+    fromEventId?: string;
+    initialMessage?: string;
+  }) => void | Promise<void>;
   onStartOnboarding?: () => void;
   onStartFreshSession?: () => void;
   onCreateTask?: (
@@ -3128,6 +3133,7 @@ function MainContentComponent({
   onOpenChildAgentSidebar,
   onSelectTask,
   onSendMessage,
+  onOpenSideChat,
   onStartOnboarding,
   onStartFreshSession,
   onCreateTask,
@@ -6148,6 +6154,37 @@ function MainContentComponent({
       return;
     }
 
+    if (appSlashCommand.matched && appSlashCommand.shortcut?.action === "side") {
+      if (!task?.id || !onOpenSideChat) {
+        setAttachmentError("/side needs an active task to reference.");
+        return;
+      }
+      if (hasAttachments) {
+        setAttachmentError("/side currently accepts text questions only.");
+        return;
+      }
+      const sideQuestion = String(appSlashCommand.args || "").trim();
+      pendingProgrammaticResizeRef.current = true;
+      setInputValue("");
+      setPendingAttachments([]);
+      setIntegrationMentionSpans([]);
+      setMentionOpen(false);
+      setMentionQuery("");
+      setMentionTarget(null);
+      setSlashOpen(false);
+      setSlashQuery("");
+      setSlashTarget(null);
+      setModeSuggestions([]);
+      setActiveWelcomeSuggestionDraft(null);
+      setQuotedAssistantMessage(null);
+      setAttachmentError(null);
+      void onOpenSideChat({
+        taskId: task.id,
+        ...(sideQuestion ? { initialMessage: sideQuestion } : {}),
+      });
+      return;
+    }
+
     if (
       !hasAttachments &&
       taskCanBecomeRoutineFromFollowUp(task) &&
@@ -7516,7 +7553,7 @@ function MainContentComponent({
     try {
       const forkedTask = await window.electronAPI.forkTaskSession({
         taskId: task.id,
-        branchLabel: "side-chat",
+        branchLabel: "fork",
       });
       await onTasksChanged?.();
       if (forkedTask?.id) {
@@ -7527,13 +7564,19 @@ function MainContentComponent({
     }
   }, [closeTaskHeaderMenu, onSelectTask, onTasksChanged, remoteSession, task]);
 
+  const handleTaskHeaderSideChat = useCallback(async () => {
+    if (!task || remoteSession || !onOpenSideChat) return;
+    closeTaskHeaderMenu();
+    await onOpenSideChat({ taskId: task.id });
+  }, [closeTaskHeaderMenu, onOpenSideChat, remoteSession, task]);
+
   const handleForkTaskSessionFromEvent = useCallback(
     async (event: TaskEvent) => {
       if (!task || remoteSession || !event.id) return;
       try {
         const forkedTask = await window.electronAPI.forkTaskSession({
           taskId: event.taskId || task.id,
-          branchLabel: "side-chat",
+          branchLabel: "fork",
           fromEventId: event.id,
         });
         await onTasksChanged?.();
@@ -9290,6 +9333,19 @@ function MainContentComponent({
                     <GitFork size={17} aria-hidden="true" />
                     <span>Fork session</span>
                   </button>
+                  {onOpenSideChat && (
+                    <button
+                      type="button"
+                      className="main-header-task-menu-item"
+                      role="menuitem"
+                      data-task-header-menu-option
+                      disabled={Boolean(remoteSession)}
+                      onClick={handleTaskHeaderSideChat}
+                    >
+                      <MessageCircle size={17} aria-hidden="true" />
+                      <span>Open side chat</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="main-header-task-menu-item"
@@ -10317,6 +10373,7 @@ function areMainContentPropsEqual(prev: MainContentProps, next: MainContentProps
     prev.onOpenWebArtifact === next.onOpenWebArtifact &&
     prev.onOpenBrowserWorkbenchSidebar === next.onOpenBrowserWorkbenchSidebar &&
     prev.onOpenWebLinkInSidebar === next.onOpenWebLinkInSidebar &&
+    prev.onOpenSideChat === next.onOpenSideChat &&
     prev.onOpenChildAgentSidebar === next.onOpenChildAgentSidebar
   );
 }

@@ -104,7 +104,7 @@ import { AgentTeamItemRepository } from "../agents/AgentTeamItemRepository";
 import { AgentTeamThoughtRepository } from "../agents/AgentTeamThoughtRepository";
 import { AgentTeamOrchestrator } from "../agents/AgentTeamOrchestrator";
 import { MultitaskLanePlanner } from "../agents/MultitaskLanePlanner";
-import { formatAgentRoleDisplay } from "../agents/agent-role-display";
+import { buildSubagentDisplayName } from "../agents/subagent-display-names";
 import { selectAgentsForTask } from "../agents/capabilityMatcher";
 import { TaskLabelRepository } from "../database/TaskLabelRepository";
 import { WorkingStateRepository } from "../agents/WorkingStateRepository";
@@ -244,6 +244,7 @@ import {
   DeleteImportedEntrySchema,
   SetImportedRecallIgnoredSchema,
   StepFeedbackSchema,
+  ForkSessionSchema,
   HealthSourceInputSchema,
   HealthWorkflowRequestSchema,
   HealthImportFilesSchema,
@@ -312,6 +313,8 @@ import { getChannelRegistry as _getChannelRegistry } from "../gateway/channel-re
 import type { MCPSettings, MCPServerConfig } from "../mcp/types";
 import { MCPHostServer } from "../mcp/host/MCPHostServer";
 import { CoWorkHostProvider } from "../mcp/host/CoWorkHostProvider";
+import { SecureMcpTunnelSettingsManager } from "../tunnels/settings";
+import { SecureMcpTunnelSupervisor } from "../tunnels/TunnelSupervisor";
 import { BuiltinToolsSettingsManager } from "../agent/tools/builtin-settings";
 import {
   ChronicleCaptureService,
@@ -4949,17 +4952,23 @@ export async function setupIpcHandlers(
             // One item per agent — each gets the full prompt (Grok model).
             // Exclude "Synthesis" role from initial items — it is created only after all
             // sub-agents complete, in the synthesis phase.
+            let subagentIndex = 0;
             for (let i = 0; i < members.length; i++) {
               const m = members[i];
               if (m.displayName === "Synthesis") continue;
               teamItemRepo.create({
                 teamRunId: run.id,
-                title: formatAgentRoleDisplay(m.displayName, m.icon),
+                title: buildSubagentDisplayName({
+                  role: m,
+                  workerRole: "researcher",
+                  index: subagentIndex,
+                }),
                 description: prompt,
                 ownerAgentRoleId: m.id,
                 status: "todo",
                 sortOrder: (i + 1) * 10,
               });
+              subagentIndex += 1;
             }
           }
 
@@ -5313,22 +5322,28 @@ export async function setupIpcHandlers(
         prompt?: string;
         branchLabel?: string;
         fromEventId?: string;
+        sideChat?: boolean;
+        initialMessage?: string;
       },
     ) => {
       checkRateLimit(IPC_CHANNELS.TASK_FORK_SESSION);
-      const taskId = validateInput(UUIDSchema, data.taskId, "task ID");
+      const validated = validateInput(ForkSessionSchema, data, "fork session");
       const fromEventId =
-        typeof data.fromEventId === "string" &&
-        data.fromEventId.trim().length > 0
-          ? data.fromEventId.trim()
+        typeof validated.fromEventId === "string" && validated.fromEventId.trim().length > 0
+          ? validated.fromEventId.trim()
           : undefined;
       return agentDaemon.forkTaskSession({
-        taskId,
-        ...(typeof data.prompt === "string" ? { prompt: data.prompt } : {}),
-        ...(typeof data.branchLabel === "string"
-          ? { branchLabel: data.branchLabel }
+        taskId: validated.taskId,
+        ...(typeof validated.prompt === "string" ? { prompt: validated.prompt } : {}),
+        ...(typeof validated.branchLabel === "string"
+          ? { branchLabel: validated.branchLabel }
           : {}),
         ...(fromEventId ? { fromEventId } : {}),
+        ...(validated.sideChat === true ? { sideChat: true } : {}),
+        ...(typeof validated.initialMessage === "string" &&
+        validated.initialMessage.trim().length > 0
+          ? { initialMessage: validated.initialMessage.trim() }
+          : {}),
       });
     },
   );
@@ -10905,6 +10920,145 @@ export function setupHealthHandlers(): void {
 /**
  * Set up MCP (Model Context Protocol) IPC handlers
  */
+function ensureMCPHostProvider(): void {
+  const hostServer = MCPHostServer.getInstance();
+  if (hostServer.hasToolProvider()) {
+    return;
+  }
+  const hostDb = DatabaseManager.getInstance().getDatabase();
+  const hostWorkspaceRepo = new WorkspaceRepository(hostDb);
+  const hostTaskRepo = new TaskRepository(hostDb);
+  const hostTaskEventRepo = new TaskEventRepository(hostDb);
+  const hostArtifactRepo = new ArtifactRepository(hostDb);
+  const mcpClientManager = MCPClientManager.getInstance();
+  hostServer.setToolProvider(
+    new CoWorkHostProvider({
+      workspaceRepo: hostWorkspaceRepo,
+      taskRepo: hostTaskRepo,
+      taskEventRepo: hostTaskEventRepo,
+      artifactRepo: hostArtifactRepo,
+      toolDelegate: {
+        getTools() {
+          return mcpClientManager.getAllTools();
+        },
+        async executeTool(name: string, args: Record<string, Any>) {
+          return mcpClientManager.callTool(name, args);
+        },
+      },
+    }),
+  );
+}
+
+const SecureMcpTunnelPolicySchema = z
+  .object({
+    allowedTools: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+    readOnly: z.boolean().optional(),
+    maxRequestBytes: z.number().int().min(1024).max(10 * 1024 * 1024).optional(),
+    maxResponseBytes: z.number().int().min(1024).max(25 * 1024 * 1024).optional(),
+    requestTimeoutMs: z.number().int().min(1000).max(300000).optional(),
+  })
+  .optional();
+
+const SecureMcpTunnelCreateSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  relayUrl: z.string().url().max(500),
+  targetType: z.enum(["cowork-host", "http"]),
+  targetUrl: z.string().url().max(500).optional(),
+  coworkHostPort: z.number().int().min(1024).max(65535).optional(),
+  clientToken: z.string().max(2000).optional(),
+  callerToken: z.string().max(2000).optional(),
+  policy: SecureMcpTunnelPolicySchema,
+  enabled: z.boolean().optional(),
+});
+
+const SecureMcpTunnelUpdateSchema = SecureMcpTunnelCreateSchema.partial();
+
+function setupSecureMcpTunnelHandlers(): void {
+  const supervisor = SecureMcpTunnelSupervisor.getInstance();
+
+  // Gate activation (start) behind the feature flag. Config-authoring
+  // (create/update/delete) stays available so the settings UI can prepare
+  // tunnels before the flag is set; tokens persist encrypted via safeStorage.
+  const assertSecureMcpTunnelsEnabled = (): void => {
+    if (process.env.COWORK_SECURE_MCP_TUNNELS !== "1") {
+      throw new Error(
+        "Secure MCP tunnels are disabled. Set COWORK_SECURE_MCP_TUNNELS=1 to enable.",
+      );
+    }
+  };
+
+  ipcMain.handle(IPC_CHANNELS.SECURE_MCP_TUNNELS_GET_SETTINGS, async () => {
+    return SecureMcpTunnelSettingsManager.getSettingsForDisplay();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SECURE_MCP_TUNNELS_CREATE, async (_, input) => {
+    const validated = validateInput(
+      SecureMcpTunnelCreateSchema,
+      input,
+      "secure MCP tunnel",
+    );
+    return SecureMcpTunnelSettingsManager.addTunnel(validated);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SECURE_MCP_TUNNELS_UPDATE, async (_, id: string, updates) => {
+    const validatedId = validateInput(UUIDSchema, id, "secure MCP tunnel ID");
+    const validatedUpdates = validateInput(
+      SecureMcpTunnelUpdateSchema,
+      updates,
+      "secure MCP tunnel update",
+    );
+    const updated = SecureMcpTunnelSettingsManager.updateTunnel(validatedId, validatedUpdates);
+    if (!updated) {
+      throw new Error("Secure MCP tunnel not found");
+    }
+    return updated;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SECURE_MCP_TUNNELS_DELETE, async (_, id: string) => {
+    const validatedId = validateInput(UUIDSchema, id, "secure MCP tunnel ID");
+    await supervisor.stopTunnel(validatedId);
+    return { success: SecureMcpTunnelSettingsManager.removeTunnel(validatedId) };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SECURE_MCP_TUNNELS_START, async (_, id: string) => {
+    assertSecureMcpTunnelsEnabled();
+    const validatedId = validateInput(UUIDSchema, id, "secure MCP tunnel ID");
+    const tunnel = SecureMcpTunnelSettingsManager.getTunnel(validatedId);
+    if (!tunnel) {
+      throw new Error("Secure MCP tunnel not found");
+    }
+    if (tunnel.targetType === "cowork-host") {
+      ensureMCPHostProvider();
+      const hostServer = MCPHostServer.getInstance();
+      const desiredPort = tunnel.coworkHostPort || 3333;
+      if (
+        hostServer.isRunning() &&
+        (hostServer.getTransportMode() !== "http" || hostServer.getHttpPort() !== desiredPort)
+      ) {
+        await hostServer.stop();
+      }
+      if (!hostServer.isRunning()) {
+        await hostServer.startHttp(desiredPort);
+      }
+    }
+    return supervisor.startTunnel(validatedId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SECURE_MCP_TUNNELS_STOP, async (_, id: string) => {
+    const validatedId = validateInput(UUIDSchema, id, "secure MCP tunnel ID");
+    return supervisor.stopTunnel(validatedId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SECURE_MCP_TUNNELS_GET_STATUS, async () => {
+    return supervisor.getStatuses();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SECURE_MCP_TUNNELS_GET_AUDIT, async (_, id?: string) => {
+    const validatedId = id ? validateInput(UUIDSchema, id, "secure MCP tunnel ID") : undefined;
+    return supervisor.getAuditEvents(validatedId);
+  });
+}
+
 function setupMCPHandlers(): void {
   // Configure rate limits for MCP channels
   rateLimiter.configure(
@@ -10930,6 +11084,14 @@ function setupMCPHandlers(): void {
 
   // Initialize MCP settings manager
   MCPSettingsManager.initialize();
+  SecureMcpTunnelSettingsManager.initialize();
+  const secureTunnelSupervisor = SecureMcpTunnelSupervisor.getInstance();
+  void secureTunnelSupervisor.startEnabledTunnels();
+  secureTunnelSupervisor.on("status", (statuses) => {
+    BrowserWindow.getAllWindows().forEach((window) => {
+      window.webContents.send(IPC_CHANNELS.SECURE_MCP_TUNNELS_STATUS_CHANGE, statuses);
+    });
+  });
 
   // Get settings
   ipcMain.handle(IPC_CHANNELS.MCP_GET_SETTINGS, async () => {
@@ -11130,33 +11292,7 @@ function setupMCPHandlers(): void {
     IPC_CHANNELS.MCP_HOST_START,
     async (_, requestedPort?: number) => {
       const hostServer = MCPHostServer.getInstance();
-
-      // If no tool provider is set, create a minimal one that exposes MCP tools
-      // from connected servers (useful for tool aggregation/forwarding)
-      if (!hostServer.hasToolProvider()) {
-        const hostDb = DatabaseManager.getInstance().getDatabase();
-        const hostWorkspaceRepo = new WorkspaceRepository(hostDb);
-        const hostTaskRepo = new TaskRepository(hostDb);
-        const hostTaskEventRepo = new TaskEventRepository(hostDb);
-        const hostArtifactRepo = new ArtifactRepository(hostDb);
-        const mcpClientManager = MCPClientManager.getInstance();
-        hostServer.setToolProvider(
-          new CoWorkHostProvider({
-            workspaceRepo: hostWorkspaceRepo,
-            taskRepo: hostTaskRepo,
-            taskEventRepo: hostTaskEventRepo,
-            artifactRepo: hostArtifactRepo,
-            toolDelegate: {
-              getTools() {
-                return mcpClientManager.getAllTools();
-              },
-              async executeTool(name: string, args: Record<string, Any>) {
-                return mcpClientManager.callTool(name, args);
-              },
-            },
-          }),
-        );
-      }
+      ensureMCPHostProvider();
 
       if (
         typeof requestedPort === "number" &&
@@ -11193,6 +11329,8 @@ function setupMCPHandlers(): void {
         : 0,
     };
   });
+
+  setupSecureMcpTunnelHandlers();
 
   // =====================
   // Built-in Tools Settings Handlers

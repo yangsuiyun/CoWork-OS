@@ -2007,7 +2007,10 @@ if (!gotTheLock) {
               title: preparedCouncilTask.title,
               prompt: preparedCouncilTask.prompt,
               workspaceId: preparedCouncilTask.workspaceId,
-              agentConfig: preparedCouncilTask.agentConfig,
+              agentConfig: {
+                ...preparedCouncilTask.agentConfig,
+                ...(params.jobId ? { scheduledJobId: params.jobId } : {}),
+              },
               source: "cron",
             });
             councilService?.bindRunTask(preparedCouncilTask.runId, task.id);
@@ -2017,6 +2020,7 @@ if (!gotTheLock) {
           const mergedAgentConfig = {
             ...(params.agentConfig ? params.agentConfig : {}),
             ...(params.modelKey ? { modelKey: params.modelKey } : {}),
+            ...(params.jobId ? { scheduledJobId: params.jobId } : {}),
             allowUserInput,
           };
           const task = await agentDaemon.createTask({
@@ -2149,6 +2153,45 @@ if (!gotTheLock) {
             verificationReport: task?.verificationReport,
             events,
           });
+        },
+        findActiveTaskForJob: async (params) => {
+          if (params.runMode !== "new_task") return null;
+          const title = typeof params.taskTitle === "string" ? params.taskTitle.trim() : "";
+          if (!title) return null;
+          const activeStatuses = new Set([
+            "queued",
+            "planning",
+            "executing",
+            "interrupted",
+            "paused",
+            "blocked",
+          ]);
+          const tasks = taskRepo.findByWorkspace(params.workspaceId, 50, 0);
+          const exactJobMatch = tasks.find(
+            (task) =>
+              task.source === "cron" &&
+              task.agentConfig?.scheduledJobId === params.jobId &&
+              activeStatuses.has(task.status),
+          );
+          if (exactJobMatch) {
+            return { id: exactJobMatch.id, status: exactJobMatch.status };
+          }
+          if (!params.allowTitleFallback) return null;
+
+          // Title fallback only exists for legacy tasks that predate scheduledJobId
+          // tagging. If more than one untagged active cron task shares the title,
+          // we cannot tell which job owns it — bail rather than risk linking a job
+          // to another job's task.
+          const titleMatches = tasks.filter(
+            (task) =>
+              task.source === "cron" &&
+              !task.agentConfig?.scheduledJobId &&
+              task.title === title &&
+              activeStatuses.has(task.status),
+          );
+          if (titleMatches.length !== 1) return null;
+          const match = titleMatches[0];
+          return { id: match.id, status: match.status };
         },
         // Channel delivery handler - sends job results to messaging platforms
         deliverToChannel: async (params) => {

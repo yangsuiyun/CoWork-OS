@@ -124,6 +124,60 @@ describe("TaskExecutor completion contract integration", () => {
     expect(contract.artifactKind).toBe("file");
   });
 
+  it("does not treat text-only daily briefs as file artifact requests", () => {
+    const executor = createExecuteHarness({
+      title: "Daily CoWork OS Project Brief",
+      prompt: `Create my daily CoWork OS development brief.
+
+Inspect the local repo and summarize:
+
+1. Current repo state
+- current branch
+- dirty files
+- untracked files that look important
+
+4. Suggested work for today
+Give me the top 3 tasks for today, ordered by leverage.
+For each task include:
+- exact files/areas involved
+
+Use concise engineering judgment. Include exact evidence: file paths, command results, timestamps from logs, and relevant script names.`,
+      lastOutput: "Daily brief prepared.",
+    });
+
+    const contract = (executor as Any).buildCompletionContract();
+
+    expect(contract.requiresArtifactEvidence).toBe(false);
+    expect(contract.artifactKind).toBe("none");
+  });
+
+  it("does not treat concise briefs with file paths as file artifact requests", () => {
+    const executor = createExecuteHarness({
+      title: "Daily CoWork OS Project Brief",
+      prompt:
+        "Create my daily development brief. Include file paths, dirty files, and untracked files.",
+      lastOutput: "Daily brief prepared.",
+    });
+
+    const contract = (executor as Any).buildCompletionContract();
+
+    expect(contract.requiresArtifactEvidence).toBe(false);
+    expect(contract.artifactKind).toBe("none");
+  });
+
+  it("treats explicit markdown file output without a dot extension as an artifact request", () => {
+    const executor = createExecuteHarness({
+      title: "Findings export",
+      prompt: "Write the findings as a markdown file.",
+      lastOutput: "Prepared findings.",
+    });
+
+    const contract = (executor as Any).buildCompletionContract();
+
+    expect(contract.requiresArtifactEvidence).toBe(true);
+    expect(contract.artifactKind).toBe("file");
+  });
+
   it("treats presentation prompts as requiring a pptx artifact", () => {
     const executor = createExecuteHarness({
       title: "CoWork OS presentation",
@@ -164,6 +218,151 @@ checklist_contract:
     expect(contract.requiredArtifactExtensions).toContain(".md");
     expect(contract.artifactKind).toBe("file");
     expect((executor as Any).hasArtifactEvidence(contract)).toBe(true);
+  });
+
+  it("preserves a substantive brief when a later recovery step reports narrow evidence", () => {
+    const brief = `Daily CoWork OS project brief.
+
+Current repo state: branch main has modified executor and cron files.
+Health signals: reviewed logs/dev-latest.log and no build command was run.
+Product priorities: release stabilization and dependency triage remain active.
+
+Suggested work for today:
+1. Verify scheduler reliability because cron recovery changed executor paths.
+2. Inspect SideChatPanel files because untracked UI work is present.
+3. Run type-check because shared types changed.
+
+Watchlist: stale local artifacts and generated logs should be reviewed.
+
+Verification evidence: reviewed git state, .cowork/PRIORITIES.md, logs/dev-latest.log, and scratchpad evidence. Overall status: degraded.`;
+    const recovery = `Alternative strategy succeeded.
+
+Used:
+
+\`\`\`bash
+GIT_PAGER=cat git -c core.pager=cat log --no-color --oneline --decorate=short -n 10
+\`\`\`
+
+Saved to scratchpad under \`repo-state-recent-commits-alt-log\`.`;
+    const executor = createExecuteHarness({
+      title: "Daily CoWork OS Project Brief",
+      prompt: "Create my daily CoWork OS development brief and summarize suggested work.",
+      lastOutput: brief,
+    });
+
+    (executor as Any).recordAssistantOutput(
+      [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: recovery }],
+        },
+      ],
+      { id: "recovery-1", description: "Try an alternative toolchain", kind: "recovery" },
+    );
+
+    expect((executor as Any).lastAssistantOutput).toBe(brief);
+    expect((executor as Any).lastNonVerificationOutput).toBe(brief);
+    expect((executor as Any).getBestFinalResponseCandidate()).toBe(brief);
+  });
+
+  it("uses a substantive recovery answer when it is the better deliverable", () => {
+    const oldBrief = `Initial repo brief.
+
+Current repo state: branch main has local changes.
+Suggested work: inspect scheduler output.
+Watchlist: missing dev logs.`;
+    const recovery = `Fallback analysis found the current blocker.
+
+Overall status: degraded because the scheduler completed data gathering but finalization used the wrong output candidate.
+
+Suggested work:
+1. Fix recovery candidate selection.
+2. Add regression tests around final summaries.
+
+Verification evidence: reviewed executor completion contract tests and executor output tracking.`;
+    const executor = createExecuteHarness({
+      title: "Daily CoWork OS Project Brief",
+      prompt: "Create my daily CoWork OS development brief and summarize suggested work.",
+      lastOutput: oldBrief,
+    });
+
+    (executor as Any).recordAssistantOutput(
+      [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: recovery }],
+        },
+      ],
+      { id: "recovery-1", description: "Try an alternative toolchain", kind: "recovery" },
+    );
+
+    expect((executor as Any).lastAssistantOutput).toBe(recovery);
+    expect((executor as Any).lastNonVerificationOutput).toBe(recovery);
+    expect((executor as Any).getBestFinalResponseCandidate()).toBe(recovery);
+  });
+
+  it("completes with the substantive brief after a narrow recovery status", async () => {
+    const brief = `Daily CoWork OS project brief.
+
+Current repo state: branch main has modified executor and cron files.
+Health signals: reviewed logs/dev-latest.log and no build command was run.
+Product priorities: release stabilization and dependency triage remain active.
+
+Suggested work for today:
+1. Verify scheduler reliability because cron recovery changed executor paths.
+2. Inspect SideChatPanel files because untracked UI work is present.
+3. Run type-check because shared types changed.
+
+Watchlist: stale local artifacts and generated logs should be reviewed.
+
+Verification evidence: reviewed git state, .cowork/PRIORITIES.md, logs/dev-latest.log, and scratchpad evidence. Overall status: degraded.`;
+    const recovery = `Alternative strategy succeeded.
+
+Used:
+
+\`\`\`bash
+GIT_PAGER=cat git -c core.pager=cat log --no-color --oneline --decorate=short -n 10
+\`\`\`
+
+Saved to scratchpad under \`repo-state-recent-commits-alt-log\`.`;
+    const executor = createExecuteHarness({
+      title: "Daily CoWork OS Project Brief",
+      prompt: "Create my daily CoWork OS development brief and summarize suggested work.",
+      lastOutput: "",
+    });
+    executor.executePlan = vi.fn(async function executePlanStub(this: Any) {
+      const current = this.plan?.steps?.[0];
+      if (current) {
+        current.status = "completed";
+        current.completedAt = Date.now();
+      }
+      this.recordAssistantOutput(
+        [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: brief }],
+          },
+        ],
+        { id: "deliverable-1", description: "Prepare the brief", kind: "execution" },
+      );
+      this.recordAssistantOutput(
+        [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: recovery }],
+          },
+        ],
+        { id: "recovery-1", description: "Try an alternative toolchain", kind: "recovery" },
+      );
+    });
+
+    await (executor as Any).execute();
+
+    expect(executor.daemon.completeTask).toHaveBeenCalledWith(
+      "task-1",
+      brief,
+      expect.any(Object),
+    );
   });
 
   it("counts planCompletedEffectively as execution evidence during finalization", () => {

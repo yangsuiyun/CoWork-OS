@@ -37,6 +37,14 @@ const MAX_TIMEOUT_MS = 2147483647;
 const DEFAULT_MAX_CONCURRENT_RUNS = 1;
 const DEFAULT_JOB_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const DEFAULT_MAX_HISTORY_ENTRIES = 10;
+const ACTIVE_TASK_STATUSES = new Set([
+  "queued",
+  "planning",
+  "executing",
+  "interrupted",
+  "paused",
+  "blocked",
+]);
 
 // Default logger
 const defaultLog = {
@@ -63,6 +71,7 @@ interface CronServiceState {
       | "getTaskResultText"
       | "resolveTemplateVariables"
       | "resolveWorkspaceContext"
+      | "findActiveTaskForJob"
     >
   > & {
     nowMs: () => number;
@@ -78,6 +87,7 @@ interface CronServiceState {
     deliverToChannel?: CronServiceDeps["deliverToChannel"];
     resolveTemplateVariables?: CronServiceDeps["resolveTemplateVariables"];
     resolveWorkspaceContext?: CronServiceDeps["resolveWorkspaceContext"];
+    findActiveTaskForJob?: CronServiceDeps["findActiveTaskForJob"];
   };
   store: CronStoreFile | null;
   timer: ReturnType<typeof setTimeout> | null;
@@ -108,6 +118,7 @@ export class CronService {
         deliverToChannel: deps.deliverToChannel,
         resolveTemplateVariables: deps.resolveTemplateVariables,
         resolveWorkspaceContext: deps.resolveWorkspaceContext,
+        findActiveTaskForJob: deps.findActiveTaskForJob,
       },
       store: null,
       timer: null,
@@ -139,13 +150,8 @@ export class CronService {
       const enabledCount = this.state.store.jobs.filter((j) => j.enabled).length;
       log.info(`Cron service started with ${enabledCount} enabled jobs`);
 
-      // Compute next run times for all enabled jobs
       const nowMs = deps.nowMs();
-      for (const job of this.state.store.jobs) {
-        if (job.enabled && !job.state.nextRunAtMs) {
-          job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, nowMs);
-        }
-      }
+      await this.reconcileLoadedJobs(nowMs);
 
       await this.persist();
       this.armTimer();
@@ -477,6 +483,18 @@ export class CronService {
         }
       }
 
+      const activeRun = await this.findActivePersistedRun(job);
+      if (activeRun) {
+        job.state.lastTaskId = activeRun.id;
+        job.state.runningAtMs = job.state.runningAtMs ?? nowMs;
+        job.state.lastRunAtMs = job.state.lastRunAtMs ?? job.state.runningAtMs;
+        if (job.enabled && (!job.state.nextRunAtMs || job.state.nextRunAtMs <= nowMs)) {
+          job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, job.state.runningAtMs);
+        }
+        await this.persist();
+        return { ok: true, ran: false, reason: "already-running" };
+      }
+
       // Execute the job
       return this.executeJob(job, nowMs);
     });
@@ -511,6 +529,104 @@ export class CronService {
 
   private emit(evt: CronEvent): void {
     this.state.deps.onEvent?.(evt);
+  }
+
+  private getJobTimeoutMs(job: CronJob): number {
+    return Math.max(1, Math.floor(job.timeoutMs ?? this.state.deps.defaultTimeoutMs));
+  }
+
+  private isActiveTaskStatus(status: unknown): boolean {
+    return typeof status === "string" && ACTIVE_TASK_STATUSES.has(status);
+  }
+
+  private isUniqueEnabledTaskTitle(job: CronJob): boolean {
+    const store = this.ensureStore();
+    const title = job.taskTitle || `Scheduled: ${job.name}`;
+    return (
+      store.jobs.filter(
+        (candidate) =>
+          candidate.enabled &&
+          (candidate.taskTitle || `Scheduled: ${candidate.name}`) === title &&
+          (candidate.runMode ?? "new_task") === (job.runMode ?? "new_task"),
+      ).length === 1
+    );
+  }
+
+  private async findActivePersistedRun(job: CronJob): Promise<{ id: string; status: string } | null> {
+    if (job.state.lastTaskId && this.state.deps.getTaskStatus) {
+      const task = await this.state.deps.getTaskStatus(job.state.lastTaskId);
+      if (task && this.isActiveTaskStatus(task.status)) {
+        return { id: job.state.lastTaskId, status: task.status };
+      }
+    }
+
+    const finder = this.state.deps.findActiveTaskForJob;
+    if (!finder) return null;
+    const task = await finder({
+      jobId: job.id,
+      taskTitle: job.taskTitle || `Scheduled: ${job.name}`,
+      workspaceId: job.workspaceId,
+      runMode: job.runMode ?? "new_task",
+      allowTitleFallback: this.isUniqueEnabledTaskTitle(job),
+    });
+    if (task && this.isActiveTaskStatus(task.status)) {
+      return task;
+    }
+    return null;
+  }
+
+  private async reconcileLoadedJobs(nowMs: number): Promise<void> {
+    const { log } = this.getContext();
+    const store = this.ensureStore();
+
+    for (const job of store.jobs) {
+      if (!job.enabled) {
+        if (job.state.nextRunAtMs !== undefined || job.state.runningAtMs !== undefined) {
+          job.state.nextRunAtMs = undefined;
+          job.state.runningAtMs = undefined;
+        }
+        continue;
+      }
+
+      const activeRun = await this.findActivePersistedRun(job);
+      if (activeRun) {
+        job.state.lastTaskId = activeRun.id;
+        job.state.runningAtMs = job.state.runningAtMs ?? nowMs;
+        job.state.lastRunAtMs = job.state.lastRunAtMs ?? job.state.runningAtMs;
+        const nextAfterRun = computeNextRunAtMs(job.schedule, job.state.runningAtMs);
+        if (!job.state.nextRunAtMs || job.state.nextRunAtMs <= nowMs) {
+          job.state.nextRunAtMs = nextAfterRun;
+        }
+        log.warn(
+          `Cron job "${job.name}" has active task ${activeRun.id}; preserving run lease instead of creating a duplicate`,
+        );
+        continue;
+      }
+
+      if (job.state.runningAtMs !== undefined) {
+        const timedOutAtMs = job.state.runningAtMs + this.getJobTimeoutMs(job);
+        if (timedOutAtMs <= nowMs) {
+          job.state.lastStatus = "timeout";
+          job.state.lastError =
+            `Scheduled run interrupted before completion after app restart; ` +
+            `started at ${new Date(job.state.runningAtMs).toISOString()}`;
+          job.state.runningAtMs = undefined;
+        }
+      }
+
+      if (!job.state.nextRunAtMs) {
+        job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, nowMs);
+        continue;
+      }
+
+      if (job.state.nextRunAtMs <= nowMs && (job.state.lastRunAtMs ?? 0) >= job.state.nextRunAtMs) {
+        const coveredRunAtMs = job.state.nextRunAtMs;
+        job.state.nextRunAtMs = computeNextRunAtMs(job.schedule, coveredRunAtMs);
+        log.warn(
+          `Advanced already-recorded cron run for "${job.name}" from ${new Date(coveredRunAtMs).toISOString()}`,
+        );
+      }
+    }
   }
 
   private async resolveWorkspaceContext(
@@ -568,15 +684,24 @@ export class CronService {
     const { deps, log } = this.getContext();
     const store = this.ensureStore();
 
-    // Track that this job is running
+    // Track that this job is running. The try/finally below brackets the entire
+    // run so runningJobIds is always cleared, even on an early return or throw.
     this.state.runningJobIds.add(job.id);
 
+    try {
     log.info(`Executing job: ${job.name} (${job.id})`);
     this.emit({ jobId: job.id, action: "started", runAtMs: nowMs });
 
     const prevRunAtMs = job.state.lastRunAtMs;
     job.state.runningAtMs = nowMs;
     job.state.lastRunAtMs = nowMs;
+    job.state.lastStatus = undefined;
+    job.state.lastError = undefined;
+    if (!job.deleteAfterRun) {
+      job.state.nextRunAtMs = job.enabled ? computeNextRunAtMs(job.schedule, nowMs) : undefined;
+    }
+    await this.persist();
+    this.armTimer();
 
     const startTime = Date.now();
     let taskId: string | undefined;
@@ -644,22 +769,25 @@ export class CronService {
               agentConfig,
             });
             job.state.lastTaskId = taskId;
+            await this.persist();
             log.info(`Job ${job.name} sent scheduled follow-up to task ${taskId}`);
           }
         }
       } else {
         // Create a task with optional model override
         const result = await deps.createTask({
+          jobId: job.id,
           title: job.taskTitle || `Scheduled: ${job.name}`,
           prompt: renderedPrompt,
           workspaceId: workspaceIdForRun,
           modelKey: job.modelKey,
           allowUserInput: job.allowUserInput ?? false,
-          agentConfig,
+          agentConfig: { ...agentConfig, scheduledJobId: job.id },
         });
 
         taskId = result.id;
         job.state.lastTaskId = taskId;
+        await this.persist();
         log.info(`Job ${job.name} created task ${taskId}`);
       }
 
@@ -822,9 +950,6 @@ export class CronService {
       job.state.runHistory = job.state.runHistory.slice(0, maxEntries);
     }
 
-    // Remove from running jobs
-    this.state.runningJobIds.delete(job.id);
-
     // Handle one-shot jobs
     if (job.deleteAfterRun) {
       const index = store.jobs.findIndex((j) => j.id === job.id);
@@ -883,6 +1008,9 @@ export class CronService {
       return { ok: true, ran: true, taskId };
     } else {
       return { ok: false, error: errorMsg || "Unknown error" };
+    }
+    } finally {
+      this.state.runningJobIds.delete(job.id);
     }
   }
 

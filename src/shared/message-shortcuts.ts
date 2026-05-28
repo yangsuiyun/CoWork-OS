@@ -6,6 +6,7 @@ export type MessageAppShortcutName =
   | "goal"
   | "multitask"
   | "compact"
+  | "side"
   | "doctor"
   | "undo"
   | "review";
@@ -15,6 +16,7 @@ export type MessageAppShortcutAction =
   | "clear"
   | "plan"
   | "cost"
+  | "side"
   | "diagnostic"
   | "safe-workflow"
   | "review";
@@ -68,6 +70,12 @@ export const MESSAGE_APP_SHORTCUTS: MessageAppShortcut[] = [
     description: "Summarize long context into a compact continuation brief.",
     icon: "🗜️",
     action: "safe-workflow",
+  },
+  {
+    name: "side",
+    description: "Ask a question in a side conversation without steering this task.",
+    icon: "☉",
+    action: "side",
   },
   {
     name: "doctor",

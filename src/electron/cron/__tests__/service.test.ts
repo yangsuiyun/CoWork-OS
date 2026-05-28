@@ -79,6 +79,7 @@ describe("CronService", () => {
     if (service) {
       await service.stop();
     }
+    vi.useRealTimers();
   });
 
   describe("start/stop lifecycle", () => {
@@ -106,6 +107,129 @@ describe("CronService", () => {
       // Service should be stopped
       const status = await service.status();
       expect(status.jobCount).toBe(0);
+    });
+
+    it("keeps a missed overdue run due on startup so it can catch up", async () => {
+      vi.useFakeTimers();
+      (loadCronStore as ReturnType<typeof vi.fn>).mockResolvedValue({
+        version: 1,
+        jobs: [
+          {
+            id: "job-stale",
+            name: "Stale Job",
+            enabled: true,
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            workspaceId: "ws-1",
+            taskPrompt: "Run stale work",
+            schedule: { kind: "every", everyMs: 60000 },
+            state: {
+              nextRunAtMs: 900000,
+              runHistory: [],
+              totalRuns: 0,
+              successfulRuns: 0,
+              failedRuns: 0,
+            },
+          },
+        ],
+      } satisfies CronStoreFile);
+
+      service = createService({ nowMs: () => 1000000, defaultTimeoutMs: 10000 });
+      await service.start();
+
+      const job = await service.get("job-stale");
+      expect(job?.state.lastStatus).toBeUndefined();
+      expect(job?.state.nextRunAtMs).toBe(900000);
+      expect(job?.state.runHistory).toHaveLength(0);
+      expect(mockCreateTask).not.toHaveBeenCalled();
+      vi.useRealTimers();
+    });
+
+    it("preserves an active matching cron task on startup instead of creating a duplicate", async () => {
+      (loadCronStore as ReturnType<typeof vi.fn>).mockResolvedValue({
+        version: 1,
+        jobs: [
+          {
+            id: "job-active",
+            name: "Active Job",
+            enabled: true,
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            workspaceId: "ws-1",
+            taskPrompt: "Run active work",
+            taskTitle: "Daily CoWork OS Project Brief",
+            schedule: { kind: "every", everyMs: 60000 },
+            state: {
+              nextRunAtMs: 900000,
+              runHistory: [],
+              totalRuns: 0,
+              successfulRuns: 0,
+              failedRuns: 0,
+            },
+          },
+        ],
+      } satisfies CronStoreFile);
+
+      service = createService({
+        nowMs: () => 1000000,
+        findActiveTaskForJob: async () => ({ id: "task-active", status: "interrupted" }),
+      });
+      await service.start();
+
+      const job = await service.get("job-active");
+      expect(job?.state.lastTaskId).toBe("task-active");
+      expect(job?.state.runningAtMs).toBe(1000000);
+      expect(job?.state.nextRunAtMs).toBe(1060000);
+
+      const result = await service.run("job-active", "due");
+      expect(result).toEqual({ ok: true, ran: false, reason: "not-due" });
+      expect(mockCreateTask).not.toHaveBeenCalled();
+    });
+
+    it("does not use title fallback when multiple enabled jobs share a task title", async () => {
+      const finder = vi.fn().mockResolvedValue(null);
+      (loadCronStore as ReturnType<typeof vi.fn>).mockResolvedValue({
+        version: 1,
+        jobs: [
+          {
+            id: "job-a",
+            name: "Shared A",
+            enabled: true,
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            workspaceId: "ws-1",
+            taskPrompt: "Run A",
+            taskTitle: "Shared Title",
+            schedule: { kind: "every", everyMs: 60000 },
+            state: { nextRunAtMs: 900000, runHistory: [] },
+          },
+          {
+            id: "job-b",
+            name: "Shared B",
+            enabled: true,
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            workspaceId: "ws-1",
+            taskPrompt: "Run B",
+            taskTitle: "Shared Title",
+            schedule: { kind: "every", everyMs: 60000 },
+            state: { nextRunAtMs: 1200000, runHistory: [] },
+          },
+        ],
+      } satisfies CronStoreFile);
+
+      service = createService({
+        nowMs: () => 1000000,
+        findActiveTaskForJob: finder,
+      });
+      await service.start();
+
+      expect(finder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          jobId: "job-a",
+          allowTitleFallback: false,
+        }),
+      );
     });
   });
 
@@ -496,6 +620,137 @@ describe("CronService", () => {
           allowUserInput: false,
         }),
       );
+    });
+
+    it("persists the run lease before waiting for task creation", async () => {
+      let resolveCreateTask: (value: { id: string }) => void = () => {};
+      const snapshots: CronStoreFile[] = [];
+      (saveCronStore as ReturnType<typeof vi.fn>).mockImplementation(async (_path, store) => {
+        snapshots.push(JSON.parse(JSON.stringify(store)) as CronStoreFile);
+      });
+      const createTask = vi.fn(
+        () =>
+          new Promise<{ id: string }>((resolve) => {
+            resolveCreateTask = resolve;
+          }),
+      ) as CronServiceDeps["createTask"] & ReturnType<typeof vi.fn>;
+
+      service = createService({
+        nowMs: () => 1000000,
+        createTask,
+      });
+      await service.start();
+
+      await service.add({
+        name: "Lease Test",
+        enabled: true,
+        workspaceId: "ws-1",
+        taskPrompt: "Run this task",
+        schedule: { kind: "every", everyMs: 60000 },
+        state: { nextRunAtMs: 900000 },
+      });
+      snapshots.length = 0;
+
+      const runPromise = service.run("job-1", "force");
+
+      await vi.waitFor(() => {
+        expect(snapshots.length).toBeGreaterThan(0);
+      });
+      expect(snapshots[0].jobs[0].state.runningAtMs).toBe(1000000);
+      expect(snapshots[0].jobs[0].state.lastRunAtMs).toBe(1000000);
+      expect(snapshots[0].jobs[0].state.nextRunAtMs).toBe(1060000);
+      expect(snapshots[0].jobs[0].state.lastTaskId).toBeUndefined();
+
+      resolveCreateTask({ id: "task-created" });
+      await runPromise;
+
+      expect(createTask.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          jobId: "job-1",
+          agentConfig: expect.objectContaining({ scheduledJobId: "job-1" }),
+        }),
+      );
+      expect(snapshots.some((snapshot) => snapshot.jobs[0].state.lastTaskId === "task-created")).toBe(
+        true,
+      );
+    });
+
+    it("does not create a due run when the previous cron task is still active", async () => {
+      service = createService({
+        nowMs: () => 1000000,
+        getTaskStatus: async () => ({ status: "executing" }),
+      });
+      await service.start();
+
+      await service.add({
+        name: "Duplicate Guard",
+        enabled: true,
+        workspaceId: "ws-1",
+        taskPrompt: "Run this task",
+        schedule: { kind: "at", atMs: 900000 },
+      });
+      await service.update("job-1", {
+        state: {
+          nextRunAtMs: 900000,
+          runningAtMs: 900000,
+          lastTaskId: "task-existing",
+        },
+      });
+
+      const result = await service.run("job-1", "due");
+
+      expect(result).toEqual({ ok: true, ran: false, reason: "already-running" });
+      expect(mockCreateTask).not.toHaveBeenCalled();
+    });
+
+    it("persists thread follow-up lastTaskId immediately after sending", async () => {
+      const snapshots: CronStoreFile[] = [];
+      (saveCronStore as ReturnType<typeof vi.fn>).mockImplementation(async (_path, store) => {
+        snapshots.push(JSON.parse(JSON.stringify(store)) as CronStoreFile);
+      });
+      const sendTaskMessage = vi
+        .fn()
+        .mockResolvedValue({ queued: true }) as CronServiceDeps["sendTaskMessage"];
+      service = createService({ nowMs: () => 1000000, sendTaskMessage });
+      await service.start();
+
+      await service.add({
+        name: "Follow-up Lease",
+        enabled: true,
+        workspaceId: "ws-1",
+        taskPrompt: "Continue",
+        schedule: { kind: "every", everyMs: 60000 },
+        runMode: "thread_follow_up",
+        targetTaskId: "task-existing",
+      });
+      snapshots.length = 0;
+
+      await service.run("job-1", "force");
+
+      expect(sendTaskMessage).toHaveBeenCalledTimes(1);
+      expect(
+        snapshots.some((snapshot) => snapshot.jobs[0].state.lastTaskId === "task-existing"),
+      ).toBe(true);
+    });
+
+    it("cleans the in-memory running marker when task creation fails", async () => {
+      const errorCreateTask = vi
+        .fn()
+        .mockRejectedValue(new Error("Task creation failed")) as CronServiceDeps["createTask"];
+      service = createService({ createTask: errorCreateTask });
+      await service.start();
+
+      await service.add({
+        name: "Error Cleanup Test",
+        enabled: true,
+        workspaceId: "ws-1",
+        taskPrompt: "Test",
+        schedule: { kind: "every", everyMs: 60000 },
+      });
+
+      await service.run("job-1", "force");
+
+      expect((service as Any).state.runningJobIds.has("job-1")).toBe(false);
     });
 
     it("should render custom template variables", async () => {

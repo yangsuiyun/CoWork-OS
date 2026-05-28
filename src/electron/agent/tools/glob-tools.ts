@@ -9,6 +9,33 @@ import { LLMTool } from "../llm/types";
  * Similar to Claude Code's Glob tool for finding files by pattern
  */
 export class GlobTools {
+  private static readonly MAX_SCAN_DURATION_MS = 25_000;
+  private static readonly SKIP_DIRS = new Set([
+    "node_modules",
+    ".git",
+    ".svn",
+    ".hg",
+    "dist",
+    "build",
+    ".build",
+    "release",
+    "out",
+    ".cowork",
+    ".cache",
+    ".parcel-cache",
+    ".turbo",
+    "coverage",
+    ".next",
+    ".nuxt",
+    "__pycache__",
+    ".pytest_cache",
+    "venv",
+    ".venv",
+    "env",
+    ".env",
+  ]);
+  private static readonly SKIP_RELATIVE_PREFIXES = [".claude/worktrees/"];
+
   constructor(
     private workspace: Workspace,
     private daemon: AgentDaemon,
@@ -89,6 +116,12 @@ export class GlobTools {
 
       if (!fs.existsSync(basePath)) {
         throw new Error(`Path does not exist: ${searchPath || "."}`);
+      }
+      if (
+        basePath !== normalizedWorkspace &&
+        this.isGeneratedSearchRoot(basePath, normalizedWorkspace)
+      ) {
+        throw new Error(`Search path is a generated or dependency directory: ${searchPath || "."}`);
       }
 
       // Parse the glob pattern
@@ -187,6 +220,7 @@ export class GlobTools {
       directoriesScanned: 0,
       maxFilesScanned: limits.maxFiles,
       maxDirectoriesScanned: limits.maxDirectories,
+      startedAtMs: Date.now(),
       scanTruncated: false,
     };
 
@@ -212,11 +246,16 @@ export class GlobTools {
       directoriesScanned: number;
       maxFilesScanned: number;
       maxDirectoriesScanned: number;
+      startedAtMs: number;
       scanTruncated: boolean;
     },
     depth: number = 0,
   ): Promise<void> {
     if (scanState.scanTruncated) return;
+    if (Date.now() - scanState.startedAtMs > GlobTools.MAX_SCAN_DURATION_MS) {
+      scanState.scanTruncated = true;
+      return;
+    }
 
     // Limit recursion depth to prevent infinite loops
     if (depth > 50) return;
@@ -227,33 +266,7 @@ export class GlobTools {
     }
     scanState.directoriesScanned += 1;
 
-    // Skip common non-code directories
-    const dirName = path.basename(currentPath);
-    const skipDirs = [
-      "node_modules",
-      ".git",
-      ".svn",
-      ".hg",
-      "dist",
-      "build",
-      "release",
-      "out",
-      ".cowork",
-      ".cache",
-      ".parcel-cache",
-      ".turbo",
-      "coverage",
-      ".next",
-      ".nuxt",
-      "__pycache__",
-      ".pytest_cache",
-      "venv",
-      ".venv",
-      "env",
-      ".env",
-    ];
-
-    if (depth > 0 && skipDirs.includes(dirName)) {
+    if (this.shouldSkipDirectory(currentPath, basePath, depth)) {
       return;
     }
 
@@ -314,6 +327,36 @@ export class GlobTools {
       maxFiles: Math.min(Math.max(safeMaxResults * 300, 5000), 50000),
       maxDirectories: Math.min(Math.max(safeMaxResults * 50, 1000), 10000),
     };
+  }
+
+  private shouldSkipDirectory(currentPath: string, basePath: string, depth: number): boolean {
+    if (depth <= 0) return false;
+    const dirName = path.basename(currentPath).toLowerCase();
+    if (GlobTools.SKIP_DIRS.has(dirName)) return true;
+
+    const relativePath = path.relative(basePath, currentPath).split(path.sep).join("/");
+    const normalizedRelative = relativePath.endsWith("/")
+      ? relativePath.toLowerCase()
+      : `${relativePath.toLowerCase()}/`;
+    return GlobTools.SKIP_RELATIVE_PREFIXES.some((prefix) =>
+      normalizedRelative.startsWith(prefix),
+    );
+  }
+
+  private isGeneratedSearchRoot(basePath: string, workspacePath: string): boolean {
+    const relative = this.isWithinWorkspace(basePath, workspacePath)
+      ? path.relative(workspacePath, basePath)
+      : basePath;
+    const normalized = relative.split(path.sep).join("/").toLowerCase();
+    if (!normalized || normalized === ".") return false;
+    const segments = normalized.split("/").filter(Boolean);
+    if (segments.some((segment) => GlobTools.SKIP_DIRS.has(segment))) {
+      return true;
+    }
+    const normalizedWithSlash = normalized.endsWith("/") ? normalized : `${normalized}/`;
+    return GlobTools.SKIP_RELATIVE_PREFIXES.some((prefix) =>
+      normalizedWithSlash.startsWith(prefix),
+    );
   }
 
   /**

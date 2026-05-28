@@ -97,6 +97,8 @@
     "build:location-helper-macos": "node scripts/build_location_helper_macos.mjs",
     "build:location-helpers": "node scripts/copy_location_helpers.mjs",
     "dev:electron": "tsc -p tsconfig.electron.json && cross-env ELECTRON_RUN_AS_NODE= NODE_ENV=development electron .",
+    "tunnel-relay:dev": "npm run build:electron && node dist/electron/electron/tunnels/relay.js",
+    "tunnel-relay:test": "npm run build:electron && node scripts/smoke-secure-mcp-tunnel.mjs",
     "build": "npm run build:react && npm run build:healthkit-bridge && npm run build:location-helper-macos && npm run build:location-helpers && concurrently -n electron,daemon \"npm run build:electron\" \"npm run build:daemon\" && npm run build:connectors",
     "build:react": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",

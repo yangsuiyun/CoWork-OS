@@ -3,6 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 
 // Mock electron
 vi.mock("electron", () => ({
@@ -37,6 +40,7 @@ const mockWorkspace: Workspace = {
 
 describe("GlobTools", () => {
   let globTools: GlobTools;
+  let tempDirs: string[] = [];
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -45,6 +49,10 @@ describe("GlobTools", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    for (const dir of tempDirs) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    tempDirs = [];
   });
 
   describe("getToolDefinitions", () => {
@@ -127,6 +135,61 @@ describe("GlobTools", () => {
           tool: "glob",
         }),
       );
+    });
+  });
+
+  describe("scan safeguards", () => {
+    it("skips generated build folders case-insensitively and excludes worktrees", async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "cowork-glob-"));
+      tempDirs.push(root);
+      fs.mkdirSync(path.join(root, "src"), { recursive: true });
+      fs.mkdirSync(path.join(root, "Build"), { recursive: true });
+      fs.mkdirSync(path.join(root, ".build"), { recursive: true });
+      fs.mkdirSync(path.join(root, ".claude", "worktrees", "branch", "src"), {
+        recursive: true,
+      });
+      fs.writeFileSync(path.join(root, "src", "keep.ts"), "export const keep = true;\n");
+      fs.writeFileSync(path.join(root, "Build", "skip.ts"), "export const skip = true;\n");
+      fs.writeFileSync(path.join(root, ".build", "skip.ts"), "export const skip = true;\n");
+      fs.writeFileSync(
+        path.join(root, ".claude", "worktrees", "branch", "src", "skip.ts"),
+        "export const skip = true;\n",
+      );
+
+      globTools = new GlobTools(
+        {
+          ...mockWorkspace,
+          path: root,
+        },
+        mockDaemon as Any,
+        "test-task-id",
+      );
+
+      const result = await globTools.glob({ pattern: "**/*.ts", maxResults: 20 });
+
+      expect(result.success).toBe(true);
+      expect(result.matches.map((match) => match.path)).toEqual(["src/keep.ts"]);
+    });
+
+    it("rejects explicit generated search roots", async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "cowork-glob-"));
+      tempDirs.push(root);
+      fs.mkdirSync(path.join(root, "release"), { recursive: true });
+      fs.writeFileSync(path.join(root, "release", "artifact.txt"), "artifact\n");
+
+      globTools = new GlobTools(
+        {
+          ...mockWorkspace,
+          path: root,
+        },
+        mockDaemon as Any,
+        "test-task-id",
+      );
+
+      const result = await globTools.glob({ pattern: "**/*", path: "release" });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("generated or dependency directory");
     });
   });
 });

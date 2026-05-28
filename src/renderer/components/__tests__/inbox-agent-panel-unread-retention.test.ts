@@ -15,7 +15,7 @@ function makeThread(id: string, unreadCount: number): MailboxThreadListItem {
     labels: [],
     category: "updates",
     todayBucket: "good_to_know",
-    domainCategory: "work",
+    domainCategory: "ops",
     priorityBand: "low",
     priorityScore: 0,
     urgencyScore: 0,

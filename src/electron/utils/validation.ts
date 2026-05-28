@@ -474,6 +474,15 @@ export const StepFeedbackSchema = z.object({
   message: z.string().max(MAX_PROMPT_LENGTH).optional(),
 });
 
+export const ForkSessionSchema = z.object({
+  taskId: z.string().uuid(),
+  prompt: z.string().max(MAX_PROMPT_LENGTH).optional(),
+  branchLabel: z.string().max(200).optional(),
+  fromEventId: z.string().max(200).optional(),
+  sideChat: z.boolean().optional(),
+  initialMessage: z.string().max(MAX_PROMPT_LENGTH).optional(),
+});
+
 export const FileImportSchema = z.object({
   workspaceId: WorkspaceIdSchema,
   files: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).min(1).max(20),

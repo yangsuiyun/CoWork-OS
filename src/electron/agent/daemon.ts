@@ -24,6 +24,7 @@ import { MentionRepository } from "../agents/MentionRepository";
 import { buildAgentDispatchPrompt } from "../agents/agent-dispatch";
 import { extractMentionedRoles } from "../agents/mentions";
 import { selectAgentsForTask } from "../agents/capabilityMatcher";
+import { buildSubagentDisplayName } from "../agents/subagent-display-names";
 import { recordLlmCallError, recordLlmCallSuccess } from "./llm/usage-telemetry";
 import {
   Task,
@@ -1847,6 +1848,8 @@ export class AgentDaemon extends EventEmitter {
     prompt?: string;
     branchLabel?: string;
     fromEventId?: string;
+    sideChat?: boolean;
+    initialMessage?: string;
   }): Promise<Task> {
     const sourceTask = this.taskRepo.findById(params.taskId);
     if (!sourceTask) {
@@ -1857,6 +1860,10 @@ export class AgentDaemon extends EventEmitter {
       typeof params.prompt === "string" && params.prompt.trim().length > 0
         ? params.prompt.trim()
         : undefined;
+    const initialMessage =
+      params.sideChat && typeof params.initialMessage === "string"
+        ? params.initialMessage.trim()
+        : "";
     const forkHistory = this.buildForkHistory(sourceEvents, {
       fromEventId: params.fromEventId,
       useSelectedUserMessageAsPrompt: !explicitPrompt,
@@ -1872,12 +1879,32 @@ export class AgentDaemon extends EventEmitter {
       sourceTask.rawPrompt ||
       sourceTask.prompt;
 
+    const sideChatAgentConfig: AgentConfig | undefined = params.sideChat
+      ? {
+          ...sourceTask.agentConfig,
+          conversationMode: "chat",
+          executionMode: "chat",
+          executionModeSource: "user",
+          autonomousMode: false,
+          permissionMode: undefined,
+          shellAccess: false,
+          requireWorktree: false,
+          allowUserInput: true,
+          humanInputPolicy: "hard_blockers",
+          toolRestrictions: ["*"],
+          allowedTools: [],
+          maxTurns: 2,
+          windowTurnCap: 2,
+          lifetimeMaxTurns: 8,
+        }
+      : sourceTask.agentConfig;
+
     const { task: forkedTask, derived } = this.createTaskRecord({
       title: `${sourceTask.title} (${branchLabel})`,
       prompt: nextPrompt,
       workspaceId: sourceTask.workspaceId,
-      agentConfig: sourceTask.agentConfig,
-      source: sourceTask.source || "manual",
+      agentConfig: sideChatAgentConfig,
+      source: params.sideChat ? "side_chat" : sourceTask.source || "manual",
       taskOverrides: {
         sessionId: crypto.randomUUID(),
         branchFromTaskId: sourceTask.id,
@@ -1897,8 +1924,18 @@ export class AgentDaemon extends EventEmitter {
       branchLabel,
       branchFromEventId: params.fromEventId,
       copiedEvents: forkHistory.events.length,
+      sideChat: params.sideChat === true,
     });
     this.logTaskIntentRouted(forkedTask.id, derived);
+    if (params.sideChat && initialMessage) {
+      void this.sendMessage(forkedTask.id, initialMessage).catch((error) => {
+        log.error(`[AgentDaemon] Failed to start sidechat ${forkedTask.id}:`, error);
+        this.logEvent(forkedTask.id, "log", {
+          message: "Side conversation failed to start",
+          error: String((error as Any)?.message || error),
+        });
+      });
+    }
 
     return forkedTask;
   }
@@ -1957,8 +1994,12 @@ export class AgentDaemon extends EventEmitter {
     sourceTaskId: string;
     targetTaskId: string;
     events: TaskEvent[];
+    startSeq?: number;
   }): void {
-    let seq = 0;
+    let seq =
+      typeof params.startSeq === "number" && Number.isFinite(params.startSeq)
+        ? Math.max(0, Math.floor(params.startSeq))
+        : 0;
     for (const event of params.events) {
       seq += 1;
       const payload =
@@ -1990,6 +2031,202 @@ export class AgentDaemon extends EventEmitter {
       });
     }
     this.taskSeqById.set(params.targetTaskId, seq);
+  }
+
+  private getForkedFromEventId(event: TaskEvent, sourceTaskId: string): string | undefined {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload : undefined;
+    if (!payload || Array.isArray(payload)) return undefined;
+    if (payload.forkedFromTaskId !== sourceTaskId) return undefined;
+    return typeof payload.forkedFromEventId === "string" && payload.forkedFromEventId.trim().length > 0
+      ? payload.forkedFromEventId.trim()
+      : undefined;
+  }
+
+  private refreshSideChatParentSnapshot(task: Task): void {
+    if (task.source !== "side_chat") return;
+    const parentTaskId = task.branchFromTaskId;
+    if (!parentTaskId) return;
+    const sourceTask = this.taskRepo.findById(parentTaskId);
+    if (!sourceTask) return;
+    // Never pull events across a workspace boundary — a side-chat may only
+    // mirror the parent it was forked from within the same workspace.
+    if (sourceTask.workspaceId !== task.workspaceId) {
+      log.warn(
+        `[AgentDaemon] Refusing side-chat snapshot refresh across workspaces (side-chat ${task.id} -> parent ${parentTaskId})`,
+      );
+      return;
+    }
+
+    const targetEvents = this.eventRepo.findByTaskId(task.id);
+    const clonedSourceEventIds = new Set<string>();
+    let maxSeq = 0;
+    for (const event of targetEvents) {
+      if (typeof event.seq === "number" && Number.isFinite(event.seq)) {
+        maxSeq = Math.max(maxSeq, Math.floor(event.seq));
+      }
+      const sourceEventId = this.getForkedFromEventId(event, parentTaskId);
+      if (sourceEventId) clonedSourceEventIds.add(sourceEventId);
+    }
+
+    const allMissingEvents = this.getTaskEventsForReplay(parentTaskId).filter((event) => {
+      if (!this.isForkReplayEvent(event)) return false;
+      const sourceEventId = event.eventId || event.id;
+      if (!sourceEventId) return false;
+      return !clonedSourceEventIds.has(sourceEventId);
+    });
+    if (allMissingEvents.length === 0) return;
+
+    // Bound the per-refresh clone so a long-running parent (thousands of events)
+    // cannot trigger an unbounded copy on every side-chat turn. We keep the most
+    // recent events, which carry the latest status the side-chat asks about.
+    const SIDE_CHAT_REFRESH_EVENT_CAP = 200;
+    const missingEvents =
+      allMissingEvents.length > SIDE_CHAT_REFRESH_EVENT_CAP
+        ? allMissingEvents.slice(-SIDE_CHAT_REFRESH_EVENT_CAP)
+        : allMissingEvents;
+
+    this.cloneForkHistoryEvents({
+      sourceTaskId: parentTaskId,
+      targetTaskId: task.id,
+      events: missingEvents,
+      startSeq: maxSeq,
+    });
+    this.logEvent(task.id, "log", {
+      message: "Side conversation refreshed parent session context",
+      sourceTaskId: parentTaskId,
+      copiedEvents: missingEvents.length,
+    });
+  }
+
+  private isSideChatTask(task: Task): boolean {
+    return task.source === "side_chat";
+  }
+
+  private isSideChatStatusQuestion(message: string): boolean {
+    // Note: no bare "now" alternative — it matched unrelated phrases like
+    // "not now" or "I know what to do now". Status intent is already covered by
+    // the explicit phrases below.
+    return /\b(how(?:'s| is)? it going|how(?:'s| is)? this going|status|progress|current(?:ly)?|latest|update|what(?:'s| is) happening|where (?:are we|is it)|still running|done yet|finished yet)\b/i.test(
+      message,
+    );
+  }
+
+  private truncateSideChatContextText(value: string, maxLength = 420): string {
+    const normalized = value.replace(/\s+/g, " ").trim();
+    if (normalized.length <= maxLength) return normalized;
+    return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
+  }
+
+  private extractSideChatEventText(event: TaskEvent): string {
+    const payload =
+      event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+        ? (event.payload as Record<string, unknown>)
+        : undefined;
+    const candidates = [
+      payload?.message,
+      payload?.summary,
+      payload?.text,
+      payload?.content,
+      payload?.error,
+      payload?.command,
+      payload?.cmd,
+      payload?.toolName,
+      payload?.name,
+      payload?.title,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim().length > 0) {
+        return this.truncateSideChatContextText(candidate);
+      }
+    }
+    if (payload && typeof payload.status === "string" && payload.status.trim().length > 0) {
+      return `status=${payload.status.trim()}`;
+    }
+    return "";
+  }
+
+  private formatSideChatStatusEvent(event: TaskEvent): string {
+    const type = this.resolveLegacyEventType(event);
+    const timestamp =
+      typeof event.timestamp === "number" && Number.isFinite(event.timestamp)
+        ? new Date(event.timestamp).toISOString()
+        : "";
+    const text = this.extractSideChatEventText(event);
+    const status = typeof event.status === "string" && event.status.length > 0 ? ` [${event.status}]` : "";
+    return `- ${timestamp ? `${timestamp} ` : ""}${type}${status}${text ? `: ${text}` : ""}`;
+  }
+
+  private buildSideChatParentStatusContext(task: Task, message: string): string | undefined {
+    if (!this.isSideChatTask(task) || !this.isSideChatStatusQuestion(message)) return undefined;
+    const parentTaskId = task.branchFromTaskId;
+    if (!parentTaskId) return undefined;
+    const parentTask = this.taskRepo.findById(parentTaskId);
+    if (!parentTask) return undefined;
+
+    const parentEvents = this.getTaskEventsForReplay(parentTaskId);
+    const activeParent = this.activeTasks.get(parentTaskId);
+    const runtimeState = activeParent?.executor?.isRunning
+      ? "running"
+      : activeParent?.status || "not active in memory";
+    const activeStage = this.activeTimelineStageByTask.get(parentTaskId);
+    const activeStepIds = Array.from(this.activeStepIdsByTask.get(parentTaskId) || []);
+    const failedStepIds = Array.from(this.failedPlanStepsByTask.get(parentTaskId) || []);
+    const latestEvents = parentEvents
+      .filter((event) => {
+        const type = this.resolveLegacyEventType(event);
+        return (
+          type === "user_message" ||
+          type === "assistant_message" ||
+          type === "task_status" ||
+          type === "task_completed" ||
+          type === "task_cancelled" ||
+          type === "task_failed" ||
+          type === "executing" ||
+          type === "log" ||
+          type === "error" ||
+          type === "tool_call" ||
+          type === "tool_result" ||
+          type.startsWith("timeline_") ||
+          type.startsWith("step_")
+        );
+      })
+      .slice(-14)
+      .map((event) => this.formatSideChatStatusEvent(event))
+      .filter((line) => line.trim().length > 0);
+
+    return [
+      "LIVE_PARENT_STATUS",
+      `Generated at: ${new Date().toISOString()}`,
+      `User side question: ${this.truncateSideChatContextText(message, 240)}`,
+      `Parent task id: ${parentTask.id}`,
+      `Parent task title: ${parentTask.title || "(untitled)"}`,
+      `Parent task status: ${parentTask.status || "unknown"}`,
+      `Parent runtime state: ${runtimeState}`,
+      parentTask.error ? `Parent error: ${this.truncateSideChatContextText(parentTask.error)}` : "",
+      typeof parentTask.resultSummary === "string" && parentTask.resultSummary.trim().length > 0
+        ? `Parent result summary: ${this.truncateSideChatContextText(parentTask.resultSummary)}`
+        : "",
+      activeStage ? `Active timeline stage: ${activeStage}` : "",
+      activeStepIds.length > 0 ? `Active step ids: ${activeStepIds.slice(0, 8).join(", ")}` : "",
+      failedStepIds.length > 0 ? `Failed step ids: ${failedStepIds.slice(0, 8).join(", ")}` : "",
+      latestEvents.length > 0
+        ? ["Recent live parent events:", ...latestEvents].join("\n")
+        : "Recent live parent events: none available",
+      [
+        "Side-chat answer policy:",
+        "- For progress/status/current-state questions, answer from LIVE_PARENT_STATUS first.",
+        "- Treat prior side-chat answers as historical conversation only; do not use them as the current parent status.",
+        "- If the live parent events do not contain a newer result, say that directly and name the latest visible parent event/status.",
+        "- Do not claim to run tools, change files, or steer the parent task from this side chat.",
+      ].join("\n"),
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  private buildSideChatTurnAgentConfigOverride(task: Task, message: string): AgentConfig | undefined {
+    const sideChatTurnContext = this.buildSideChatParentStatusContext(task, message);
+    return sideChatTurnContext ? { sideChatTurnContext } : undefined;
   }
 
   /**
@@ -2739,6 +2976,7 @@ export class AgentDaemon extends EventEmitter {
       status: "running",
       collaborativeMode: true,
     });
+    let subagentIndex = 0;
     for (let i = 0; i < members.length; i++) {
       teamMemberRepo.add({
         teamId: team.id,
@@ -2749,12 +2987,17 @@ export class AgentDaemon extends EventEmitter {
       if (members[i].displayName === "Synthesis") continue;
       teamItemRepo.create({
         teamRunId: run.id,
-        title: members[i].displayName,
+        title: buildSubagentDisplayName({
+          role: members[i],
+          workerRole: "researcher",
+          index: subagentIndex,
+        }),
         description: task.prompt,
         ownerAgentRoleId: members[i].id,
         status: "todo",
         sortOrder: (i + 1) * 10,
       });
+      subagentIndex += 1;
     }
     this.emitTeamRunEvent({ type: "team_run_created", timestamp: Date.now(), run });
     void this.teamOrchestrator.tickRun(run.id, "daemon_programmatic_collab");
@@ -8839,7 +9082,6 @@ export class AgentDaemon extends EventEmitter {
       "permissionMode" | "shellAccess" | "integrationMentions" | "agentConfigOverride"
     >,
   ): Promise<{ queued: boolean }> {
-    let cached = this.activeTasks.get(taskId);
     let executor: TaskExecutor;
 
     // Always get fresh task and workspace from DB to pick up permission changes
@@ -8847,17 +9089,33 @@ export class AgentDaemon extends EventEmitter {
     if (!task) {
       throw new Error(`Task ${taskId} not found`);
     }
-    const overrideResult = this.applyTaskFollowUpOverrides(task, options);
+    let cached = this.activeTasks.get(taskId);
+    if (this.isSideChatTask(task) && !cached?.executor.isRunning) {
+      this.refreshSideChatParentSnapshot(task);
+      this.activeTasks.delete(taskId);
+      cached = undefined;
+    }
+    const sideChatAgentConfigOverride = this.buildSideChatTurnAgentConfigOverride(task, message);
+    const effectiveOptions = sideChatAgentConfigOverride
+      ? {
+          ...options,
+          agentConfigOverride: {
+            ...options?.agentConfigOverride,
+            ...sideChatAgentConfigOverride,
+          },
+        }
+      : options;
+    const overrideResult = this.applyTaskFollowUpOverrides(task, effectiveOptions);
     if (overrideResult.changed) {
       this.taskRepo.update(taskId, { agentConfig: overrideResult.task.agentConfig });
     }
     const { task: roleAdjustedTask } = this.applyAgentRoleOverrides(overrideResult.task);
-    const effectiveTask = options?.agentConfigOverride
+    const effectiveTask = effectiveOptions?.agentConfigOverride
       ? {
           ...roleAdjustedTask,
           agentConfig: {
-            ...(roleAdjustedTask.agentConfig || {}),
-            ...options.agentConfigOverride,
+            ...roleAdjustedTask.agentConfig,
+            ...effectiveOptions.agentConfigOverride,
           },
         }
       : roleAdjustedTask;
@@ -8904,7 +9162,7 @@ export class AgentDaemon extends EventEmitter {
         images,
         quotedAssistantMessage,
         integrationMentions,
-        options?.agentConfigOverride,
+        effectiveOptions?.agentConfigOverride,
       );
       // Emit user_message event immediately so the UI shows the message right away.
       // The executor's sendMessageLegacy won't re-emit because the message is
@@ -8919,7 +9177,7 @@ export class AgentDaemon extends EventEmitter {
 
     // Send the message (executor is idle, acquire mutex normally)
     await executor.sendMessage(message, images, quotedAssistantMessage, {
-      agentConfigOverride: options?.agentConfigOverride,
+      agentConfigOverride: effectiveOptions?.agentConfigOverride,
     });
     return { queued: false };
   }

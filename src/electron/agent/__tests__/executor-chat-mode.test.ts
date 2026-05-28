@@ -161,6 +161,38 @@ describe("TaskExecutor chat mode", () => {
     expect((TaskExecutor as Any).prototype.isExplicitChatExecutionMode.call(executor)).toBe(false);
   });
 
+  it("injects live parent status as a turn-scoped sidechat system block", () => {
+    const executor = Object.create(TaskExecutor.prototype) as Any;
+    executor.task = {
+      id: "side-task",
+      source: "side_chat",
+      branchLabel: "side-chat",
+      agentConfig: {
+        conversationMode: "chat",
+        executionMode: "chat",
+        sideChatTurnContext: "LIVE_PARENT_STATUS\nParent task status: executing",
+      },
+    };
+    executor.workspace = { path: "/tmp" };
+
+    const blocks = (TaskExecutor as Any).prototype.buildChatOrThinkSystemBlocks.call(
+      executor,
+      false,
+      {
+        identityPrompt: "",
+        roleContext: "",
+        profileContext: "",
+        personalityPrompt: "",
+        extraChatRules: [],
+      },
+    );
+
+    expect(blocks.some((block: Any) => block.text.includes("LIVE_PARENT_STATUS"))).toBe(true);
+    expect(blocks.some((block: Any) => block.text.includes("authoritative for progress"))).toBe(
+      true,
+    );
+  });
+
   it("returns a single chat response without entering the task pipeline", async () => {
     const executor = Object.create(TaskExecutor.prototype) as Any;
     const companionPrompt = vi.fn().mockResolvedValue(undefined);

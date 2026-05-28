@@ -49,6 +49,7 @@ export type SettingsCategory =
   | "permissions"
   | "hooks"
   | "mcp"
+  | "secure-mcp-tunnels"
   | "controlplane"
   | "channels"
   | "builtintools"

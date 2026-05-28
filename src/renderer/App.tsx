@@ -143,6 +143,9 @@ const MainContent = lazy(() =>
 const RightPanel = lazy(() =>
   import("./components/RightPanel").then((module) => ({ default: module.RightPanel })),
 );
+const SideChatPanel = lazy(() =>
+  import("./components/SideChatPanel").then((module) => ({ default: module.SideChatPanel })),
+);
 const TerminalTabsDock = lazy(() =>
   import("./components/TerminalTabsDock").then((module) => ({ default: module.TerminalTabsDock })),
 );
@@ -621,6 +624,14 @@ type RemoteTaskView = {
   task: Task;
   events: TaskEvent[];
 };
+type SideChatState = {
+  parentTaskId: string;
+  parentTask: Task | null;
+  task: Task | null;
+  events: TaskEvent[];
+  loading: boolean;
+  sending: boolean;
+};
 
 type SelectedTaskWorkspaceViewProps = {
   task: Task | undefined;
@@ -651,6 +662,7 @@ type SelectedTaskWorkspaceViewProps = {
   effectiveRightCollapsed: boolean;
   terminalTabsOpen: boolean;
   browserWorkbenchRequest: BrowserWorkbenchOpenRequest | null;
+  sideChat: SideChatState | null;
   rightPanelInput: {
     task: Task | undefined;
     workspace: Workspace | null;
@@ -676,6 +688,14 @@ type SelectedTaskWorkspaceViewProps = {
       integrationMentions?: IntegrationMentionSelection[];
     },
   ) => Promise<void>;
+  onOpenSideChat: (request: {
+    taskId: string;
+    fromEventId?: string;
+    initialMessage?: string;
+  }) => Promise<void>;
+  onSendSideChatMessage: (message: string) => Promise<void>;
+  onCloseSideChat: () => void;
+  onOpenSideChatFullThread: (taskId: string) => void | Promise<void>;
   onStartOnboarding: () => void;
   onStartFreshSession?: () => void;
   onCreateTask: (
@@ -772,10 +792,15 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   effectiveRightCollapsed,
   terminalTabsOpen,
   browserWorkbenchRequest,
+  sideChat,
   rightPanelInput,
   onSelectChildTask,
   onSelectTask,
   onSendMessage,
+  onOpenSideChat,
+  onSendSideChatMessage,
+  onCloseSideChat,
+  onOpenSideChatFullThread,
   onStartOnboarding,
   onStartFreshSession,
   onCreateTask,
@@ -824,6 +849,12 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
     readPersistedSpreadsheetSidebarWidth,
   );
   const [isSpreadsheetResizing, setIsSpreadsheetResizing] = useState(false);
+  useEffect(() => {
+    if (!sideChat?.task?.id) return;
+    setSpreadsheetArtifact(null);
+    setBrowserWorkbench(null);
+    setSpawnedAgentSidebar(null);
+  }, [sideChat?.task?.id]);
   const openSpreadsheetArtifact = useCallback((path: string) => {
     setBrowserWorkbench(null);
     setSpawnedAgentSidebar(null);
@@ -1333,7 +1364,7 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
 
   const hasSpreadsheetSidebar =
     Boolean(
-      (spreadsheetArtifact || browserWorkbench || spawnedAgentSidebar) &&
+      (spreadsheetArtifact || browserWorkbench || spawnedAgentSidebar || sideChat) &&
         workspace?.path &&
         !remoteTaskView,
     );
@@ -1408,10 +1439,42 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
           onOpenWebLinkInSidebar={
             task && workspace?.path && !remoteTaskView ? openWebLinkInBrowserSidebar : undefined
           }
+          onOpenSideChat={onOpenSideChat}
           onOpenChildAgentSidebar={openSpawnedAgentSidebar}
         />
       </Suspense>
-      {(spreadsheetArtifact || browserWorkbench || spawnedAgentSidebar) &&
+      {sideChat && workspace?.path && !remoteTaskView ? (
+        <>
+          <ResizableDividerHandle
+            className="spreadsheet-sidebar-resize-handle"
+            role="separator"
+            orientation="vertical"
+            aria-label="Resize side conversation"
+            aria-valuemin={SPREADSHEET_SIDEBAR_MIN_WIDTH}
+            aria-valuenow={Math.round(spreadsheetSidebarWidth)}
+            tabIndex={0}
+            onPointerDown={handleSpreadsheetResizePointerDown}
+            onKeyDown={handleSpreadsheetResizeKeyDown}
+          />
+          <div
+            className="spreadsheet-resizable-sidebar"
+            style={{ width: `${spreadsheetSidebarWidth}px` }}
+          >
+            <Suspense fallback={<RightPanelFallback />}>
+              <SideChatPanel
+                parentTask={sideChat.parentTask}
+                sideTask={sideChat.task}
+                events={sideChat.events}
+                loading={sideChat.loading}
+                sending={sideChat.sending}
+                onSendMessage={onSendSideChatMessage}
+                onClose={onCloseSideChat}
+                onOpenSideTask={onOpenSideChatFullThread}
+              />
+            </Suspense>
+          </div>
+        </>
+      ) : (spreadsheetArtifact || browserWorkbench || spawnedAgentSidebar) &&
       workspace?.path &&
       !remoteTaskView ? (
         <>
@@ -1578,6 +1641,7 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   prev.effectiveRightCollapsed === next.effectiveRightCollapsed &&
   prev.terminalTabsOpen === next.terminalTabsOpen &&
   prev.browserWorkbenchRequest?.requestId === next.browserWorkbenchRequest?.requestId &&
+  prev.sideChat === next.sideChat &&
   prev.rightPanelInput === next.rightPanelInput
 );
 
@@ -1804,6 +1868,7 @@ export function App() {
   const [browserUrl, setBrowserUrl] = useState<string>("");
   const [browserWorkbenchRequest, setBrowserWorkbenchRequest] =
     useState<BrowserWorkbenchOpenRequest | null>(null);
+  const [sideChat, setSideChat] = useState<SideChatState | null>(null);
   const [settingsTab, setSettingsTab] = useState<
     | "appearance"
     | "llm"
@@ -1945,6 +2010,8 @@ export function App() {
   const pendingApprovalsRef = useRef<Map<string, ApprovalRequest>>(new Map());
   const pendingInputRequestsRef = useRef<Map<string, InputRequest>>(new Map());
   const eventsRef = useRef<TaskEvent[]>([]);
+  const sideChatRef = useRef<SideChatState | null>(null);
+  const sideChatRequestSeqRef = useRef(0);
   const selectedTaskIdRef = useRef<string | null>(null);
   const fetchedFullTaskForMentionMetadataRef = useRef<Set<string>>(new Set());
   const currentViewRef = useRef<AppView>("main");
@@ -2785,6 +2852,10 @@ export function App() {
     eventsRef.current = events;
   }, [events]);
 
+  useEffect(() => {
+    sideChatRef.current = sideChat;
+  }, [sideChat]);
+
   useLayoutEffect(() => {
     selectedTaskIdRef.current = selectedTaskId;
   }, [selectedTaskId]);
@@ -2952,6 +3023,73 @@ export function App() {
         type: effectiveType,
       } as TaskEvent;
       noteRendererTaskEventReceived(event, rendererPerfLoggingEnabled);
+      const sideChatTaskId = sideChatRef.current?.task?.id;
+      const sideChatParentTaskId = sideChatRef.current?.parentTaskId;
+      const isSideChatTaskEvent = sideChatTaskId === event.taskId;
+      if (sideChatParentTaskId && sideChatParentTaskId === event.taskId) {
+        setSideChat((prev) => {
+          if (!prev || prev.parentTaskId !== event.taskId || !prev.parentTask) return prev;
+          const parentStatus =
+            isLlmRequestCancelledEvent(event)
+              ? undefined
+              : event.type === "task_status"
+                ? event.payload?.status
+                : TASK_EVENT_STATUS_MAP[event.type];
+          const nextParentTask =
+            parentStatus && typeof parentStatus === "string"
+              ? {
+                  ...prev.parentTask,
+                  status:
+                    resolveTaskStatusUpdateFromEvent(
+                      prev.parentTask,
+                      parentStatus as Task["status"],
+                    ) ?? prev.parentTask.status,
+                  updatedAt: event.timestamp || Date.now(),
+                }
+              : {
+                  ...prev.parentTask,
+                  updatedAt: event.timestamp || prev.parentTask.updatedAt,
+                };
+          return { ...prev, parentTask: nextParentTask };
+        });
+      }
+      if (isSideChatTaskEvent) {
+        setSideChat((prev) => {
+          if (!prev?.task || prev.task.id !== event.taskId) return prev;
+          const sideStatus =
+            isLlmRequestCancelledEvent(event)
+              ? undefined
+              : event.type === "task_status"
+                ? event.payload?.status
+                : TASK_EVENT_STATUS_MAP[event.type];
+          const nextTask =
+            sideStatus && typeof sideStatus === "string"
+              ? {
+                  ...prev.task,
+                  status:
+                    resolveTaskStatusUpdateFromEvent(prev.task, sideStatus as Task["status"]) ??
+                    prev.task.status,
+                  updatedAt: event.timestamp || Date.now(),
+                }
+              : {
+                  ...prev.task,
+                  updatedAt: event.timestamp || prev.task.updatedAt,
+                };
+          return {
+            ...prev,
+            task: nextTask,
+            events: capTaskEvents(mergeUniqueTaskEvents(prev.events, [event])),
+            sending:
+              event.type === "assistant_message" || isTerminalTaskStatus(nextTask.status)
+                ? false
+                : prev.sending,
+            loading: false,
+          };
+        });
+        if (!tasksRef.current.some((task) => task.id === event.taskId)) {
+          return;
+        }
+      }
       const eventTimestamp =
         typeof rawEvent?.timestamp === "number" && Number.isFinite(rawEvent.timestamp)
           ? rawEvent.timestamp
@@ -3972,6 +4110,7 @@ export function App() {
   const TASK_PAGE_LOOKAHEAD = 1;
   const MAIN_SIDEBAR_EXCLUDED_TASK_SOURCES: Array<NonNullable<Task["source"]>> = [
     "managed_agent_panel",
+    "side_chat",
   ];
 
   // Refs let loadMoreTasks read current state without being in its dep array
@@ -4401,6 +4540,158 @@ export function App() {
     setInboxAgentAskRequest({ id: Date.now(), query: trimmed });
     setCurrentView("inboxAgent");
   }, []);
+
+  const handleCloseSideChat = useCallback(() => {
+    sideChatRequestSeqRef.current += 1;
+    setSideChat(null);
+    sideChatRef.current = null;
+  }, []);
+
+  const handleSendSideChatMessage = useCallback(async (message: string) => {
+    const trimmed = message.trim();
+    const sideTaskId = sideChatRef.current?.task?.id;
+    if (!trimmed || !sideTaskId) return;
+    setSideChat((prev) => (prev?.task?.id === sideTaskId ? { ...prev, sending: true } : prev));
+    try {
+      await window.electronAPI.sendMessage(sideTaskId, trimmed);
+      const [updatedTask, updatedEvents] = await Promise.all([
+        window.electronAPI.getTask(sideTaskId).catch(() => null),
+        window.electronAPI.getTaskEvents(sideTaskId).catch(() => []),
+      ]);
+      setSideChat((prev) =>
+        prev?.task?.id === sideTaskId
+          ? {
+              ...prev,
+              task: (updatedTask as Task | null) || prev.task,
+              events: capTaskEvents(mergeUniqueTaskEvents(prev.events, updatedEvents as TaskEvent[])),
+              sending: false,
+              loading: false,
+            }
+          : prev,
+      );
+    } catch (error) {
+      console.error("Failed to send sidechat message:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to send side message";
+      addToast({ type: "error", title: "Side Chat Error", message: errorMessage });
+      setSideChat((prev) => (prev?.task?.id === sideTaskId ? { ...prev, sending: false } : prev));
+      throw error;
+    }
+  }, []);
+
+  const handleOpenSideChatFullThread = useCallback(async (taskId: string) => {
+    sideChatRequestSeqRef.current += 1;
+    setSideChat(null);
+    sideChatRef.current = null;
+    setCurrentView("main");
+    setSelectedTaskId(taskId);
+    try {
+      const task = (await window.electronAPI.getTask(taskId)) as Task | null;
+      if (task) {
+        setTasks((prev) => upsertTaskPreservingIdentity(prev, task, { prependIfMissing: true }));
+      }
+    } catch (error) {
+      console.error("Failed to open sidechat as full thread:", error);
+    }
+  }, []);
+
+  const handleOpenSideChat = useCallback(
+    async (request: { taskId: string; fromEventId?: string; initialMessage?: string }) => {
+      if (!window.electronAPI?.forkTaskSession) return;
+      const requestSeq = sideChatRequestSeqRef.current + 1;
+      sideChatRequestSeqRef.current = requestSeq;
+      const parentTaskId = request.taskId;
+      const initialMessage = request.initialMessage?.trim();
+      const parentTask =
+        tasksRef.current.find((candidate) => candidate.id === parentTaskId) ||
+        ((await window.electronAPI.getTask(parentTaskId).catch(() => null)) as Task | null);
+      if (sideChatRequestSeqRef.current !== requestSeq) return;
+      const existing = sideChatRef.current;
+      if (
+        existing?.parentTaskId === parentTaskId &&
+        existing.task?.id &&
+        !request.fromEventId
+      ) {
+        setRightSidebarCollapsed(false);
+        if (parentTask) {
+          setSideChat((prev) =>
+            prev?.parentTaskId === parentTaskId ? { ...prev, parentTask } : prev,
+          );
+        }
+        if (initialMessage) {
+          try {
+            await handleSendSideChatMessage(initialMessage);
+          } catch {
+            // The send handler already reports the failure and restores panel state.
+          }
+        }
+        return;
+      }
+
+      setCurrentView("main");
+      setRightSidebarCollapsed(false);
+      setSideChat({
+        parentTaskId,
+        parentTask,
+        task: null,
+        events: [],
+        loading: true,
+        sending: Boolean(initialMessage),
+      });
+
+      try {
+        const forkedTask = (await window.electronAPI.forkTaskSession({
+          taskId: parentTaskId,
+          branchLabel: "side-chat",
+          sideChat: true,
+          ...(initialMessage ? { initialMessage } : {}),
+          ...(request.fromEventId ? { fromEventId: request.fromEventId } : {}),
+        })) as Task;
+        if (sideChatRequestSeqRef.current !== requestSeq) {
+          void window.electronAPI.deleteTask?.(forkedTask.id).catch((deleteError) => {
+            console.error("Failed to delete stale sidechat task:", deleteError);
+          });
+          return;
+        }
+        const forkedEvents = (await window.electronAPI
+          .getTaskEvents(forkedTask.id)
+          .catch(() => [])) as TaskEvent[];
+        if (sideChatRequestSeqRef.current !== requestSeq) {
+          void window.electronAPI.deleteTask?.(forkedTask.id).catch((deleteError) => {
+            console.error("Failed to delete stale sidechat task:", deleteError);
+          });
+          return;
+        }
+        const cappedForkedEvents = capTaskEvents(forkedEvents);
+        const initialMessageStillSending =
+          Boolean(initialMessage) &&
+          !isTerminalTaskStatus(forkedTask.status) &&
+          !cappedForkedEvents.some((event) => getEffectiveTaskEventType(event) === "assistant_message");
+        setSideChat({
+          parentTaskId,
+          parentTask,
+          task: forkedTask,
+          events: cappedForkedEvents,
+          loading: false,
+          sending: initialMessageStillSending,
+        });
+        sideChatRef.current = {
+          parentTaskId,
+          parentTask,
+          task: forkedTask,
+          events: cappedForkedEvents,
+          loading: false,
+          sending: initialMessageStillSending,
+        };
+      } catch (error) {
+        if (sideChatRequestSeqRef.current !== requestSeq) return;
+        console.error("Failed to open sidechat:", error);
+        const errorMessage = error instanceof Error ? error.message : "Failed to open side chat";
+        addToast({ type: "error", title: "Side Chat Error", message: errorMessage });
+        setSideChat(null);
+      }
+    },
+    [handleSendSideChatMessage],
+  );
 
   const replayControls = useReplayMode(events, selectedTask);
   const deferredEvents = useDeferredValue(events);
@@ -5725,10 +6016,15 @@ export function App() {
                 effectiveRightCollapsed={effectiveRightCollapsed}
                 terminalTabsOpen={terminalTabsOpen}
                 browserWorkbenchRequest={browserWorkbenchRequest}
+                sideChat={sideChat}
                 rightPanelInput={visibleRightPanelInput}
                 onSelectChildTask={handleSelectChildTaskFromMainContent}
                 onSelectTask={handleSelectTaskFromShell}
                 onSendMessage={handleSendMessage}
+                onOpenSideChat={handleOpenSideChat}
+                onSendSideChatMessage={handleSendSideChatMessage}
+                onCloseSideChat={handleCloseSideChat}
+                onOpenSideChatFullThread={handleOpenSideChatFullThread}
                 onStartOnboarding={handleShowOnboarding}
                 onStartFreshSession={handleClearTaskView}
                 onCreateTask={handleCreateTask}

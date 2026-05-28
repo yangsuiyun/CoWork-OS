@@ -59,12 +59,34 @@ export function shouldRequireExecutionEvidence(taskTitle: string, taskPrompt: st
 
 export function promptRequestsArtifactOutput(taskTitle: string, taskPrompt: string): boolean {
   const prompt = `${taskTitle}\n${normalizePromptForContracts(taskPrompt)}`.toLowerCase();
-  const createVerb = ARTIFACT_CREATION_VERB_REGEX.test(prompt);
+  if (promptRequestsPresentationArtifactOutput(taskTitle, taskPrompt)) return true;
+
   const artifactNoun =
-    /\b(file|document|report|pdf|docx|markdown|md|spreadsheet|csv|xlsx|json|txt|pptx|slide|slides|video|videos|clip|clips|movie|footage)\b/.test(
-      prompt,
-    );
-  return (createVerb && artifactNoun) || promptRequestsPresentationArtifactOutput(taskTitle, taskPrompt);
+    String.raw`(?:files?(?!\s*(?:paths?|names?|areas?|refs?|references?|changes?|diffs?|statuses?|state|tree|lists?|involved)\b)|document|report|pdf|docx|markdown|md|spreadsheet|csv|xlsx|json|txt|pptx|slide|slides|video|videos|clip|clips|movie|footage)`;
+  const createVerb = String.raw`(?:create|build|write|generate|produce|draft|prepare|save|export|compile|synthesize|combine|merge|join|stitch|concatenate|concat|transcode|remux)`;
+  const directObjectModifier = String.raw`(?:(?!(?:in|with|from|for|to|as|about|including|include|that|which)\b)[a-z0-9][a-z0-9-]*\s+)`;
+  const directArtifactCreation = new RegExp(
+    String.raw`\b${createVerb}\s+(?:a\s+|an\s+|the\s+)?(?:new\s+|final\s+|comprehensive\s+|concise\s+|polished\s+|requested\s+)?${directObjectModifier}{0,4}${artifactNoun}\b`,
+    "i",
+  ).test(prompt);
+  const transformIntoArtifact = new RegExp(
+    String.raw`\b(?:compile|synthesize|combine|merge|turn|convert|transform)\b[^.!?\n]{0,120}\binto\s+(?:a\s+|an\s+|the\s+)?(?:final\s+|comprehensive\s+|concise\s+)?${artifactNoun}\b`,
+    "i",
+  ).test(prompt);
+  const explicitOutputPath = /\b(?:save|export|write|output)\b[\s\S]{0,80}\b(?:to|as)\b[\s\S]{0,80}\.(?:pdf|docx|txt|md|csv|xlsx|pptx|json)\b/i.test(
+    prompt,
+  );
+  const explicitArtifactFormat = new RegExp(
+    String.raw`\b(?:save|export|write|output)\b[^.!?\n]{0,80}\b(?:to|as)\b[^.!?\n]{0,80}\b(?:a\s+|an\s+|the\s+)?(?:new\s+|final\s+)?${artifactNoun}\s+(?:file|document|report|spreadsheet|deck|slides?|video|clip)\b`,
+    "i",
+  ).test(prompt);
+
+  return (
+    directArtifactCreation ||
+    transformIntoArtifact ||
+    explicitOutputPath ||
+    explicitArtifactFormat
+  );
 }
 
 function promptRequestsVideoArtifactOutput(taskTitle: string, taskPrompt: string): boolean {
@@ -383,6 +405,60 @@ export function getBestFinalResponseCandidate(opts: {
   }
 
   return "";
+}
+
+export function shouldPreserveExistingDeliverableForRecovery(opts: {
+  existingDeliverable: string | null;
+  recoveryText: string;
+  minResultSummaryLength: number;
+  contract?: CompletionContract;
+}): boolean {
+  const existing = String(opts.existingDeliverable || "").trim();
+  const recovery = String(opts.recoveryText || "").trim();
+  if (!existing || !recovery) return false;
+  if (existing.length < opts.minResultSummaryLength) return false;
+  if (recovery.length > existing.length * 1.15) return false;
+
+  const existingPassesContract = opts.contract
+    ? responseDirectlyAddressesPrompt({
+        text: existing,
+        contract: opts.contract,
+        minResultSummaryLength: opts.minResultSummaryLength,
+      })
+    : true;
+  const recoveryPassesContract = opts.contract
+    ? responseDirectlyAddressesPrompt({
+        text: recovery,
+        contract: opts.contract,
+        minResultSummaryLength: opts.minResultSummaryLength,
+      })
+    : false;
+  const existingHasBriefSignals =
+    responseHasVerificationSignal(existing) ||
+    responseHasReasonedConclusionSignal(existing) ||
+    /\b(top\s+3|suggested work|watchlist|health signals|current repo state|priorit(?:y|ies)|overall status|findings|summary|recommendation|verification evidence|commands completed|exact command results|blocks release)\b/i.test(
+      existing,
+    );
+  const existingLooksLikeDeliverable =
+    existingPassesContract && (existingHasBriefSignals || !responseLooksOperationalOnly(existing));
+  if (!existingLooksLikeDeliverable) return false;
+
+  const recoveryHasDeliverableSignals =
+    responseHasVerificationSignal(recovery) || responseHasReasonedConclusionSignal(recovery);
+  if (
+    recoveryPassesContract &&
+    !responseLooksOperationalOnly(recovery) &&
+    (recoveryHasDeliverableSignals || recovery.length >= existing.length * 0.75)
+  ) {
+    return false;
+  }
+
+  const recoveryLooksLikeNarrowStatus =
+    responseLooksOperationalOnly(recovery) ||
+    /\b(alternative|recovery|fallback|retry|succeeded via|saved to scratchpad|captured the requested)\b/i.test(
+      recovery,
+    );
+  return recoveryLooksLikeNarrowStatus && !recoveryHasDeliverableSignals;
 }
 
 export function responseDirectlyAddressesPrompt(opts: {

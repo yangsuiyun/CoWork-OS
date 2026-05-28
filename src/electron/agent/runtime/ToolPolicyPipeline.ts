@@ -67,7 +67,12 @@ export async function evaluateToolPolicyPipeline(
     };
   }
 
-  if (opts.allowedTools && opts.allowedTools.size > 0 && !opts.allowedTools.has(opts.toolName)) {
+  // An allowlist Set that is present but does not contain the tool denies it.
+  // An empty Set therefore denies every tool — this is the intended "read-only"
+  // posture (e.g. side-chat tasks set `allowedTools: []`). Callers that mean
+  // "no restriction" must pass `undefined`, not an empty Set. This matches the
+  // availability filter in SessionRuntime.getAvailableTools.
+  if (opts.allowedTools && !opts.allowedTools.has(opts.toolName)) {
     trace.add("task_restrictions", "deny", "tool not present in task allowlist");
     return {
       decision: "deny",

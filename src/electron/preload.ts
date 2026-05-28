@@ -2407,6 +2407,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     prompt?: string;
     branchLabel?: string;
     fromEventId?: string;
+    sideChat?: boolean;
+    initialMessage?: string;
   }) => ipcRenderer.invoke(IPC_CHANNELS.TASK_FORK_SESSION, data),
   sendStdin: (taskId: string, input: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_SEND_STDIN, { taskId, input }),
@@ -3277,6 +3279,30 @@ contextBridge.exposeInMainWorld("electronAPI", {
   startMCPHost: (port?: number) => ipcRenderer.invoke(IPC_CHANNELS.MCP_HOST_START, port),
   stopMCPHost: () => ipcRenderer.invoke(IPC_CHANNELS.MCP_HOST_STOP),
   getMCPHostStatus: () => ipcRenderer.invoke(IPC_CHANNELS.MCP_HOST_GET_STATUS),
+
+  // Secure MCP Tunnel APIs
+  getSecureMcpTunnelSettings: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.SECURE_MCP_TUNNELS_GET_SETTINGS),
+  createSecureMcpTunnel: (input: Any) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SECURE_MCP_TUNNELS_CREATE, input),
+  updateSecureMcpTunnel: (id: string, updates: Any) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SECURE_MCP_TUNNELS_UPDATE, id, updates),
+  deleteSecureMcpTunnel: (id: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SECURE_MCP_TUNNELS_DELETE, id),
+  startSecureMcpTunnel: (id: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SECURE_MCP_TUNNELS_START, id),
+  stopSecureMcpTunnel: (id: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SECURE_MCP_TUNNELS_STOP, id),
+  getSecureMcpTunnelStatus: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.SECURE_MCP_TUNNELS_GET_STATUS),
+  getSecureMcpTunnelAudit: (id?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SECURE_MCP_TUNNELS_GET_AUDIT, id),
+  onSecureMcpTunnelStatusChange: (callback: (status: Any[]) => void) => {
+    const subscription = (_: Any, data: Any) => callback(data);
+    ipcRenderer.on(IPC_CHANNELS.SECURE_MCP_TUNNELS_STATUS_CHANGE, subscription);
+    return () =>
+      ipcRenderer.removeListener(IPC_CHANNELS.SECURE_MCP_TUNNELS_STATUS_CHANGE, subscription);
+  },
 
   // Infrastructure APIs
   infraGetStatus: () => ipcRenderer.invoke(IPC_CHANNELS.INFRA_GET_STATUS),
@@ -5167,6 +5193,8 @@ export interface ElectronAPI {
     prompt?: string;
     branchLabel?: string;
     fromEventId?: string;
+    sideChat?: boolean;
+    initialMessage?: string;
   }) => Promise<Any>;
   sendStdin: (taskId: string, input: string) => Promise<boolean>;
   killCommand: (taskId: string, force?: boolean) => Promise<boolean>;
@@ -6397,6 +6425,43 @@ export interface ElectronAPI {
   startMCPHost: (port?: number) => Promise<{ success: boolean; port?: number }>;
   stopMCPHost: () => Promise<void>;
   getMCPHostStatus: () => Promise<{ running: boolean; port?: number }>;
+  // Secure MCP Tunnels
+  getSecureMcpTunnelSettings: () => Promise<import("../shared/types").SecureMcpTunnelDisplaySettings>;
+  createSecureMcpTunnel: (input: {
+    name: string;
+    relayUrl: string;
+    targetType: import("../shared/types").SecureMcpTunnelTargetType;
+    targetUrl?: string;
+    coworkHostPort?: number;
+    clientToken?: string;
+    callerToken?: string;
+    policy?: Partial<import("../shared/types").SecureMcpTunnelPolicy>;
+    enabled?: boolean;
+  }) => Promise<import("../shared/types").SecureMcpTunnelDisplayConfig>;
+  updateSecureMcpTunnel: (
+    id: string,
+    updates: Partial<{
+      name: string;
+      relayUrl: string;
+      targetType: import("../shared/types").SecureMcpTunnelTargetType;
+      targetUrl?: string;
+      coworkHostPort?: number;
+      clientToken?: string;
+      callerToken?: string;
+      policy?: Partial<import("../shared/types").SecureMcpTunnelPolicy>;
+      enabled?: boolean;
+    }>,
+  ) => Promise<import("../shared/types").SecureMcpTunnelDisplayConfig>;
+  deleteSecureMcpTunnel: (id: string) => Promise<{ success: boolean }>;
+  startSecureMcpTunnel: (id: string) => Promise<import("../shared/types").SecureMcpTunnelStatus>;
+  stopSecureMcpTunnel: (id: string) => Promise<import("../shared/types").SecureMcpTunnelStatus | null>;
+  getSecureMcpTunnelStatus: () => Promise<import("../shared/types").SecureMcpTunnelStatus[]>;
+  getSecureMcpTunnelAudit: (
+    id?: string,
+  ) => Promise<import("../shared/types").SecureMcpTunnelAuditEvent[]>;
+  onSecureMcpTunnelStatusChange: (
+    callback: (status: import("../shared/types").SecureMcpTunnelStatus[]) => void,
+  ) => () => void;
   // Infrastructure
   infraGetStatus: () => Promise<InfraStatus>;
   infraGetSettings: () => Promise<InfraSettings>;

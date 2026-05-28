@@ -235,6 +235,7 @@ export interface CronServiceDeps {
     phase: "add" | "run";
   }) => Promise<CronWorkspaceContext | null | undefined>;
   createTask: (params: {
+    jobId?: string;
     title: string;
     prompt: string;
     workspaceId: string;
@@ -287,6 +288,13 @@ export interface CronServiceDeps {
     | null
   >;
   getTaskResultText?: (taskId: string) => Promise<string | undefined>;
+  findActiveTaskForJob?: (params: {
+    jobId: string;
+    taskTitle?: string;
+    workspaceId: string;
+    runMode: CronJobRunMode;
+    allowTitleFallback?: boolean;
+  }) => Promise<{ id: string; status: string } | null>;
   // Channel delivery handler for sending results to messaging platforms
   deliverToChannel?: (params: {
     channelType: ChannelType;
@@ -354,7 +362,7 @@ export interface CronRunHistoryResult {
  */
 export type CronRunResult =
   | { ok: true; ran: true; taskId: string }
-  | { ok: true; ran: false; reason: "not-due" | "disabled" | "not-found" }
+  | { ok: true; ran: false; reason: "not-due" | "disabled" | "not-found" | "already-running" }
   | { ok: false; error: string };
 
 export type CronRemoveResult =

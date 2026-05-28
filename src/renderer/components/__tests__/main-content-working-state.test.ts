@@ -487,6 +487,25 @@ describe("message-level session forking", () => {
   });
 });
 
+describe("sidechat session forking", () => {
+  it("keeps normal forks separate from sidechat sidebar forks", () => {
+    const mainContentSource = readFileSync(mainContentPath, "utf8");
+    const appSource = readFileSync(appPath, "utf8");
+
+    expect(mainContentSource).toContain("onOpenSideChat({ taskId: task.id })");
+    expect(mainContentSource).toContain("<span>Fork session</span>");
+    expect(mainContentSource).toContain("<span>Open side chat</span>");
+    expect(mainContentSource).toContain('branchLabel: "fork"');
+    expect(mainContentSource).toContain("initialMessage: sideQuestion");
+    expect(appSource).toContain("sideChat: true");
+    expect(appSource).toContain("initialMessage");
+    expect(appSource).toContain("sideChatRequestSeqRef");
+    expect(appSource).toContain("parentTask={sideChat.parentTask}");
+    expect(appSource).toContain("<SideChatPanel");
+    expect(appSource).not.toContain(".deleteTask(sideTaskId)");
+  });
+});
+
 describe("task header browser action", () => {
   it("wires the task menu Open browser action to the sidebar Browser Workbench", () => {
     const mainContentSource = readFileSync(mainContentPath, "utf8");
