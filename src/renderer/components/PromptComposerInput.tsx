@@ -8,6 +8,7 @@ import {
 } from "react";
 import type {
   ClipboardEvent as ReactClipboardEvent,
+  FormEvent as ReactFormEvent,
   KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import type { IntegrationMentionSelection } from "../../shared/types";
@@ -221,6 +222,11 @@ function setDomSelection(
   selection.addRange(range);
 }
 
+function isComposingKeyboardEvent(event: ReactKeyboardEvent<HTMLElement>): boolean {
+  const nativeEvent = event.nativeEvent as KeyboardEvent;
+  return nativeEvent.isComposing || nativeEvent.keyCode === 229;
+}
+
 function readEditable(
   root: HTMLElement,
   mentionsById: Map<string, IntegrationMentionSpan>,
@@ -313,7 +319,7 @@ export const PromptComposerInput = forwardRef<PromptComposerInputHandle, PromptC
   ) {
     const rootRef = useRef<HTMLDivElement>(null);
     const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null);
-    const skipNextBeforeInputRef = useRef(false);
+    const isComposingRef = useRef(false);
     const validMentions = useMemo(() => sortedValidMentions(value, mentions), [mentions, value]);
     const mentionsById = useMemo(
       () => new Map(validMentions.map((span) => [span.spanId, span])),
@@ -370,6 +376,7 @@ export const PromptComposerInput = forwardRef<PromptComposerInputHandle, PromptC
         const snapshot = readEditable(root, mentionsById);
         pendingSelectionRef.current = { start: snapshot.cursor, end: snapshot.cursor };
         onChange(snapshot.value, snapshot.cursor, snapshot.mentions, shrink);
+        return snapshot;
       },
       [mentionsById, onChange],
     );
@@ -436,23 +443,22 @@ export const PromptComposerInput = forwardRef<PromptComposerInputHandle, PromptC
       [applyTextReplacement, getSelectionRange, value.length],
     );
 
-    const markKeyboardEditHandled = useCallback(() => {
-      skipNextBeforeInputRef.current = true;
-      window.setTimeout(() => {
-        skipNextBeforeInputRef.current = false;
-      }, 0);
-    }, []);
-
     const handleNativeBeforeInput = useCallback(
       (nativeEvent: InputEvent) => {
-        if (nativeEvent.isComposing) return;
-        if (skipNextBeforeInputRef.current) {
-          nativeEvent.preventDefault();
-          skipNextBeforeInputRef.current = false;
-          return;
-        }
+        if (nativeEvent.isComposing || isComposingRef.current) return;
 
         const inputType = nativeEvent.inputType;
+
+        // IME commits arrive as composition input types (sometimes with
+        // isComposing already false). Let the native DOM write happen and
+        // reconcile via onInput; do not double-insert here.
+        if (
+          inputType === "insertCompositionText" ||
+          inputType === "deleteCompositionText" ||
+          inputType === "insertFromComposition"
+        ) {
+          return;
+        }
 
         if (inputType === "insertText") {
           const text = nativeEvent.data;
@@ -493,39 +499,8 @@ export const PromptComposerInput = forwardRef<PromptComposerInputHandle, PromptC
     }, [handleNativeBeforeInput]);
 
     const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (isComposingKeyboardEvent(event)) return;
       onKeyDown(event);
-      if (event.defaultPrevented) return;
-      if (event.nativeEvent.isComposing) return;
-      if (event.key === "Enter" && event.shiftKey) {
-        event.preventDefault();
-        markKeyboardEditHandled();
-        const range = getSelectionRange();
-        applyTextReplacement(range.start, range.end, "\n");
-        return;
-      }
-
-      if (event.key === "Backspace") {
-        event.preventDefault();
-        markKeyboardEditHandled();
-        deleteSelectionRange("backward");
-        return;
-      }
-
-      if (event.key === "Delete") {
-        event.preventDefault();
-        markKeyboardEditHandled();
-        deleteSelectionRange("forward");
-        return;
-      }
-
-      const isPlainTextKey =
-        event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey;
-      if (!isPlainTextKey) return;
-
-      event.preventDefault();
-      markKeyboardEditHandled();
-      const range = getSelectionRange();
-      applyTextReplacement(range.start, range.end, event.key);
     };
 
     const handlePaste = (event: ReactClipboardEvent<HTMLDivElement>) => {
@@ -553,6 +528,23 @@ export const PromptComposerInput = forwardRef<PromptComposerInputHandle, PromptC
       applyTextReplacement(range.start, range.end, "");
     };
 
+    const handleCompositionStart = () => {
+      isComposingRef.current = true;
+    };
+
+    const handleCompositionEnd = () => {
+      isComposingRef.current = false;
+      window.setTimeout(() => {
+        if (!isComposingRef.current) emitDomChange(false);
+      }, 0);
+    };
+
+    const handleInput = (event: ReactFormEvent<HTMLDivElement>) => {
+      const nativeEvent = event.nativeEvent as InputEvent;
+      if (nativeEvent.isComposing || isComposingRef.current) return;
+      emitDomChange(false);
+    };
+
     const handleCursorChange = () => {
       const root = rootRef.current;
       if (!root) return;
@@ -569,13 +561,15 @@ export const PromptComposerInput = forwardRef<PromptComposerInputHandle, PromptC
         aria-multiline="true"
         aria-label={ariaLabel}
         data-placeholder={placeholder || ""}
-        onInput={() => emitDomChange(false)}
+        onInput={handleInput}
         onKeyDown={handleKeyDown}
         onKeyUp={handleCursorChange}
         onMouseUp={handleCursorChange}
         onPaste={handlePaste}
         onCopy={handleCopy}
         onCut={handleCut}
+        onCompositionStart={handleCompositionStart}
+        onCompositionEnd={handleCompositionEnd}
         onFocus={onFocus}
         onBlur={onBlur}
         spellCheck
