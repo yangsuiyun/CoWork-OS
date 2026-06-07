@@ -135,8 +135,20 @@ import { classifyLiveTaskEvent } from "./utils/live-task-event-policy";
 const Settings = lazy(() =>
   import("./components/Settings").then((module) => ({ default: module.Settings })),
 );
+const mainContentModuleStartedAt = typeof performance !== "undefined" ? performance.now() : 0;
 const mainContentModulePromise = import("./components/MainContent");
-void mainContentModulePromise.catch(() => {});
+void mainContentModulePromise
+  .then(() => {
+    const now = typeof performance !== "undefined" ? performance.now() : 0;
+    void window.electronAPI?.logRendererPerf?.({
+      timestamp: new Date().toISOString(),
+      message: `[Startup] main_content_module_loaded at ${now.toFixed(1)}ms {"loadMs":${Math.max(
+        0,
+        now - mainContentModuleStartedAt,
+      ).toFixed(1)}}`,
+    });
+  })
+  .catch(() => {});
 const MainContent = lazy(() =>
   mainContentModulePromise.then((module) => ({ default: module.MainContent })),
 );

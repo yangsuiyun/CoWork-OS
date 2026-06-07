@@ -79,4 +79,51 @@ describeWithSqlite("DatabaseManager legacy_type migration", () => {
 
     manager.close();
   });
+
+  it("defers oversized task event payload cleanup until post-startup maintenance", async () => {
+    const dbPath = path.join(tmpDir, "cowork-os.db");
+    const oversizedPayload = JSON.stringify({
+      message: "x".repeat(300_000),
+      nested: { value: "y".repeat(300_000) },
+    });
+    const seedDb = new Database(dbPath);
+    seedDb
+      .prepare(
+        `
+          INSERT INTO task_events (id, task_id, timestamp, type, payload)
+          VALUES (?, ?, ?, ?, ?)
+        `,
+      )
+      .run("event-1", "task-1", Date.now(), "tool_result", oversizedPayload);
+    seedDb.close();
+
+    const { DatabaseManager } = await import("../schema");
+    const manager = new DatabaseManager();
+    const db = manager.getDatabase();
+
+    const beforeMaintenance = db
+      .prepare("SELECT LENGTH(payload) AS payload_bytes FROM task_events WHERE id = ?")
+      .get("event-1") as { payload_bytes: number };
+    expect(beforeMaintenance.payload_bytes).toBe(oversizedPayload.length);
+
+    await manager.runPostStartupMaintenance();
+
+    const afterMaintenance = db
+      .prepare(
+        `
+          SELECT LENGTH(payload) AS payload_bytes
+          FROM task_events
+          WHERE id = ?
+        `,
+      )
+      .get("event-1") as { payload_bytes: number };
+    const maintenanceState = db
+      .prepare("SELECT value FROM maintenance_state WHERE key = ?")
+      .get("task_event_payload_sanitizer_v1_completed") as { value?: string } | undefined;
+
+    expect(afterMaintenance.payload_bytes).toBeLessThanOrEqual(256 * 1024);
+    expect(maintenanceState?.value).toBe("1");
+
+    manager.close();
+  });
 });

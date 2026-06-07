@@ -1356,37 +1356,64 @@ if (!gotTheLock) {
     const deferredStartupTasks: Array<{
       name: string;
       task: () => Promise<void>;
+      delayMs?: number;
     }> = [];
     const startupQuietMode = isStartupQuietMode();
     if (startupQuietMode) {
       logger.info("Startup quiet mode enabled; background autostart is disabled.");
     }
-    const deferStartupTask = (name: string, task: () => Promise<void>): void => {
-      deferredStartupTasks.push({ name, task });
+    const deferStartupTask = (
+      name: string,
+      task: () => Promise<void>,
+      options: { delayMs?: number } = {},
+    ): void => {
+      deferredStartupTasks.push({ name, task, delayMs: options.delayMs });
     };
     const runDeferredStartupTasks = (): void => {
       logStartupLane("post_interactive_startup", {
         event: "deferred_tasks_scheduled",
         taskCount: deferredStartupTasks.length,
       });
-      deferredStartupTasks.forEach(({ name, task }, index) => {
-        const timer = setTimeout(() => {
-          if (index === 0) {
-            logStartupLane("idle_startup", { event: "first_deferred_task_start" });
-          }
-          const startedAt = Date.now();
-          void task()
-            .then(() => {
-              logger.info(
-                `Deferred startup task "${name}" completed in ${Date.now() - startedAt} ms`,
-              );
-            })
-            .catch((error) => {
-              logger.error(`Deferred startup task "${name}" failed:`, error);
-            });
-        }, 250 + index * 50);
-        timer.unref?.();
-      });
+      const maxConcurrentTasks = 2;
+      let nextTaskIndex = 0;
+      let activeTaskCount = 0;
+      let firstTaskStarted = false;
+
+      const scheduleNext = (): void => {
+        while (
+          activeTaskCount < maxConcurrentTasks &&
+          nextTaskIndex < deferredStartupTasks.length
+        ) {
+          const currentIndex = nextTaskIndex;
+          const { name, task, delayMs } = deferredStartupTasks[currentIndex];
+          nextTaskIndex += 1;
+          activeTaskCount += 1;
+          const effectiveDelayMs = delayMs ?? 2500 + currentIndex * 500;
+          const timer = setTimeout(() => {
+            if (!firstTaskStarted) {
+              firstTaskStarted = true;
+              logStartupLane("idle_startup", { event: "first_deferred_task_start" });
+            }
+            const startedAt = Date.now();
+            void task()
+              .then(() => {
+                logger.info(
+                  `Deferred startup task "${name}" completed in ${Date.now() - startedAt} ms`,
+                );
+              })
+              .catch((error) => {
+                logger.error(`Deferred startup task "${name}" failed:`, error);
+              })
+              .finally(() => {
+                activeTaskCount = Math.max(0, activeTaskCount - 1);
+                scheduleNext();
+              });
+          }, effectiveDelayMs);
+          timer.unref?.();
+        }
+      };
+
+      scheduleNext();
     };
 
     const resolvedUserDataDir = startupUserDataDir || applyStableUserDataPath();
@@ -1432,7 +1459,24 @@ if (!gotTheLock) {
     // Initialize database first - required for SecureSettingsRepository
     const coreInitStartedAt = Date.now();
     dbManager = new DatabaseManager();
-    UsageInsightsProjector.initialize(dbManager.getDatabase()).warm();
+    const usageInsightsProjector = UsageInsightsProjector.initialize(
+      dbManager.getDatabase(),
+    );
+    if (startupQuietMode) {
+      usageInsightsProjector.warm();
+      await dbManager.runPostStartupMaintenance();
+    } else {
+      deferStartupTask(
+        "usage-insights-warm",
+        async () => {
+          usageInsightsProjector.warm();
+        },
+        { delayMs: 5000 },
+      );
+      deferStartupTask("database-maintenance", () => dbManager.runPostStartupMaintenance(), {
+        delayMs: 8000,
+      });
+    }
     const tempWorkspaceRoot = path.join(
       os.tmpdir(),
       TEMP_WORKSPACE_ROOT_DIR_NAME,
@@ -3095,12 +3139,14 @@ if (!gotTheLock) {
         logger.info("Channels auto-connect skipped in quiet mode");
       } else {
         deferStartupTask("channel-auto-connect", async () => {
-          await channelGateway.connectEnabledChannels();
+          await channelGateway.connectEnabledChannels({ timeoutMs: 10000 });
           const connectedStats = channelGateway.getStartupStats();
           logger.info(
             `Channels auto-connect complete: loaded=${connectedStats.loaded}, enabled=${connectedStats.enabled}, connected=${connectedStats.connected}`,
           );
           startXMentionBridge();
+        }, {
+          delayMs: 12000,
         });
       }
       // Initialize update manager with main window reference
