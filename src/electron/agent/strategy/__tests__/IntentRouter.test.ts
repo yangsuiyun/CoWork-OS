@@ -20,6 +20,14 @@ execution_contract:
     expect(decorated.domain).toBe(raw.domain);
   });
 
+  it("routes Chinese greetings to chat intent", () => {
+    const routed = IntentRouter.route("你好", "你好");
+
+    expect(routed.intent).toBe("chat");
+    expect(routed.conversationMode).toBe("chat");
+    expect(routed.signals).toContain("casual-greeting");
+  });
+
   it("keeps execution intent stable after prompt decoration", () => {
     const rawPrompt = "Search for today's Formula 1 news and summarize key driver and team updates";
     const decoratedPrompt = `${rawPrompt}

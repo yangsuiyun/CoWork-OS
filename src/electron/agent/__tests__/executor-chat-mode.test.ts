@@ -291,6 +291,14 @@ describe("TaskExecutor chat mode", () => {
     expect((TaskExecutor as Any).prototype.shouldShortCircuitSimpleNonExecuteAnswer.call(executor)).toBe(false);
   });
 
+  it("routes repeated Chinese greeting prompts through inferred companion mode", () => {
+    const executor = createInferredChatExecutor("你好\n你好");
+
+    expect(
+      (TaskExecutor as Any).prototype.shouldHandleInitialPromptAsCompanion.call(executor, "你好\n你好"),
+    ).toBe(true);
+  });
+
   it("does not route local walking errand prompts through companion mode", () => {
     const prompt =
       "My kid just fell into the duck pond and the wedding starts in 30 minutes. Where can I walk and buy her a new dress?";

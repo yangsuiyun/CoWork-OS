@@ -222,10 +222,46 @@ export class BrowserService {
     return context;
   }
 
+  private async firstExistingExecutable(candidates: Array<string | undefined>): Promise<string | undefined> {
+    for (const candidate of candidates.filter((value): value is string => Boolean(value))) {
+      try {
+        await fs.access(candidate);
+        return candidate;
+      } catch {
+        // Keep scanning candidates.
+      }
+    }
+
+    return undefined;
+  }
+
+  private async resolveChromeExecutablePath(): Promise<string | undefined> {
+    return this.firstExistingExecutable([
+      process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim(),
+      process.env.CHROME_PATH?.trim(),
+      process.platform === "darwin"
+        ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        : undefined,
+      process.platform === "linux" ? "/usr/bin/google-chrome" : undefined,
+      process.platform === "linux" ? "/usr/bin/google-chrome-stable" : undefined,
+      process.platform === "linux" ? "/usr/bin/chromium" : undefined,
+      process.platform === "linux" ? "/usr/bin/chromium-browser" : undefined,
+      process.platform === "linux" ? "/snap/bin/chromium" : undefined,
+      process.platform === "win32" && process.env.LOCALAPPDATA
+        ? path.join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe")
+        : undefined,
+      process.platform === "win32"
+        ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        : undefined,
+      process.platform === "win32"
+        ? "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
+        : undefined,
+    ]);
+  }
+
   private async resolveBraveExecutablePath(): Promise<string | undefined> {
-    const envPath = process.env.BRAVE_PATH?.trim();
-    const candidates = [
-      envPath,
+    return this.firstExistingExecutable([
+      process.env.BRAVE_PATH?.trim(),
       process.platform === "darwin"
         ? "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
         : undefined,
@@ -247,18 +283,7 @@ export class BrowserService {
       process.platform === "win32"
         ? "C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
         : undefined,
-    ].filter((value): value is string => Boolean(value));
-
-    for (const candidate of candidates) {
-      try {
-        await fs.access(candidate);
-        return candidate;
-      } catch {
-        // Keep scanning candidates.
-      }
-    }
-
-    return undefined;
+    ]);
   }
 
   /**
@@ -295,7 +320,11 @@ export class BrowserService {
 
       const channel = this.options.channel === "chrome" ? "chrome" : undefined;
       const executablePath =
-        this.options.channel === "brave" ? await this.resolveBraveExecutablePath() : undefined;
+        this.options.channel === "brave"
+          ? await this.resolveBraveExecutablePath()
+          : this.options.channel === "chromium" || !this.options.channel
+            ? await this.resolveChromeExecutablePath()
+            : undefined;
 
       if (this.options.channel === "brave" && !executablePath) {
         throw new Error(
@@ -309,7 +338,7 @@ export class BrowserService {
 
         context = await chromium.launchPersistentContext(this.options.userDataDir, {
           headless: this.options.headless,
-          ...(channel ? { channel } : {}),
+          ...(channel && !executablePath ? { channel } : {}),
           ...(executablePath ? { executablePath } : {}),
           viewport: this.options.viewport,
         });
@@ -317,7 +346,7 @@ export class BrowserService {
       } else {
         browser = await chromium.launch({
           headless: this.options.headless,
-          ...(channel ? { channel } : {}),
+          ...(channel && !executablePath ? { channel } : {}),
           ...(executablePath ? { executablePath } : {}),
         });
 

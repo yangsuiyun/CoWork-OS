@@ -4383,16 +4383,25 @@ export class TaskExecutor {
   }
 
   private isClearlyTrivialCompanionPrompt(prompt: string): boolean {
-    const normalized = String(prompt || "")
-      .trim()
-      .toLowerCase()
-      .replace(/[.!?\s]+$/g, "");
+    const normalizedLines = String(prompt || "")
+      .split(/\r?\n+/)
+      .map((line) =>
+        line
+          .trim()
+          .toLowerCase()
+          .replace(/[.!?。！？\s]+$/g, ""),
+      )
+      .filter(Boolean);
+    const uniqueLines = [...new Set(normalizedLines)];
+    const normalized = uniqueLines.length === 1 ? uniqueLines[0] : normalizedLines.join("\n");
     if (!normalized) return false;
 
     if (/^(?:hi|hello|hey|yo)(?:\s+there)?$/.test(normalized)) return true;
+    if (/^(?:你好|您好|嗨|哈喽|早上好|上午好|下午好|晚上好)$/.test(normalized)) return true;
     if (/^(?:thanks|thank\s+you|thx|ok|okay|cool|nice|great|awesome|yes|no|yep|nope|sure)$/.test(normalized)) {
       return true;
     }
+    if (/^(?:谢谢|多谢|好的|好|可以|行|嗯|是|不是)$/.test(normalized)) return true;
     return /^(?:who\s+are\s+you|what\s+are\s+you|what\s+can\s+you\s+do|how\s+are\s+you|what'?s\s+up|are\s+you\s+there)$/.test(
       normalized,
     );

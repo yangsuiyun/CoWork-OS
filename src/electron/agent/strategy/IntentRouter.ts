@@ -196,6 +196,9 @@ export class IntentRouter {
     const sanitizedPrompt = this.stripStrategyContext(String(prompt || ""));
     const text = `${title || ""}\n${sanitizedPrompt}`.trim();
     const lower = text.toLowerCase();
+    const normalizedUniqueText = [...new Set(lower.split(/\r?\n+/).map((line) => line.trim()).filter(Boolean))]
+      .join("\n")
+      .trim();
     const scores: IntentScores = { chat: 0, advice: 0, planning: 0, execution: 0, thinking: 0, redirect: 0 };
     const signals: string[] = [];
 
@@ -215,8 +218,8 @@ export class IntentRouter {
       3,
       "casual-greeting",
       /^(hi|hey|hello|yo|good morning|good afternoon|good evening|how are you|thanks|thank you)\b/.test(
-        lower.trim(),
-      ),
+        normalizedUniqueText,
+      ) || /^(你好|您好|嗨|哈喽|早上好|上午好|下午好|晚上好|谢谢|多谢)[。！？!?\s]*$/.test(normalizedUniqueText),
     );
     add(
       "chat",

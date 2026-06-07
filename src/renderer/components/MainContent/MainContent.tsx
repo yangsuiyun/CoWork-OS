@@ -412,7 +412,7 @@ interface MainContentProps {
       shellAccess?: boolean;
       integrationMentions?: IntegrationMentionSelection[];
     },
-  ) => void;
+  ) => void | Promise<void>;
   onOpenSideChat?: (request: {
     taskId: string;
     fromEventId?: string;
@@ -425,7 +425,7 @@ interface MainContentProps {
     prompt: string,
     options?: CreateTaskOptions,
     images?: ImageAttachment[],
-  ) => void;
+  ) => void | Promise<void>;
   onAskInbox?: (query: string) => void;
   onChangeWorkspace?: () => void;
   onSelectWorkspace?: (workspace: Workspace) => void;
@@ -6289,7 +6289,7 @@ function MainContentComponent({
         );
         const prompt = buildPersistentGoalPrompt(objective, hasAttachments ? message : undefined);
         const title = buildTaskTitle(`/goal ${objective}`);
-        onCreateTask(
+        await onCreateTask(
           title,
           prompt,
           {
@@ -6375,7 +6375,7 @@ function MainContentComponent({
             : shortcut.action === "cost" || shortcut.action === "diagnostic"
               ? { executionMode: "analyze", taskDomain, ...createIntegrationMentionOptions }
               : { executionMode: "plan", taskDomain, ...createIntegrationMentionOptions };
-        onCreateTask(title, prompt, options, imagePayload);
+        await onCreateTask(title, prompt, options, imagePayload);
 
         pendingProgrammaticResizeRef.current = true;
         setInputValue("");
@@ -6434,7 +6434,7 @@ function MainContentComponent({
         const options: CreateTaskOptions = verificationAgentEnabled
           ? { ...baseOptions, verificationAgent: true }
           : baseOptions;
-        onCreateTask(title, message, options, imagePayload);
+        await onCreateTask(title, message, options, imagePayload);
         // Reset task mode state
         setAutonomousModeEnabled(false);
         setCollaborativeModeEnabled(false);
@@ -6445,7 +6445,7 @@ function MainContentComponent({
         setVerificationAgentEnabled(false);
       } else {
         // Task is selected (even if not in current list) - send follow-up message
-        onSendMessage(
+        await onSendMessage(
           message,
           imagePayload,
           quotedAssistantMessage ?? undefined,

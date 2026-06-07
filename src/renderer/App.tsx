@@ -2633,21 +2633,43 @@ export function App() {
     }
   }, []);
 
-  // Auto-load temp workspace on mount if no workspace is selected
+  // Restore the last persistent workspace on startup; use temp only for a first run.
   useEffect(() => {
     if (!window.electronAPI?.getTempWorkspace) return;
 
     const initWorkspace = async () => {
-      if (!currentWorkspace) {
+      if (currentWorkspace) return;
+
+      try {
+        const workspaces = window.electronAPI.listWorkspaces
+          ? await window.electronAPI.listWorkspaces()
+          : [];
+        const lastPersistentWorkspace = Array.isArray(workspaces)
+          ? workspaces.find((workspace) => !workspace.isTemp && !isTempWorkspaceId(workspace.id))
+          : null;
+
+        if (lastPersistentWorkspace) {
+          const selectedWorkspace = await window.electronAPI.selectWorkspace(lastPersistentWorkspace.id);
+          if (selectedWorkspace) {
+            setCurrentWorkspace(selectedWorkspace);
+            return;
+          }
+        }
+
+        const tempWorkspace = await window.electronAPI.getTempWorkspace();
+        setCurrentWorkspace(tempWorkspace);
+      } catch (error) {
+        console.error("Failed to initialize workspace:", error);
         try {
           const tempWorkspace = await window.electronAPI.getTempWorkspace();
           setCurrentWorkspace(tempWorkspace);
-        } catch (error) {
-          console.error("Failed to initialize temp workspace:", error);
+        } catch (fallbackError) {
+          console.error("Failed to initialize temp workspace:", fallbackError);
         }
       }
     };
-    initWorkspace();
+
+    void initWorkspace();
   }, []);
 
   // Load tasks when workspace is set
@@ -4339,7 +4361,9 @@ export function App() {
     workspaceOverride?: Workspace,
   ) => {
     const effectiveWorkspace = workspaceOverride ?? currentWorkspace;
-    if (!effectiveWorkspace) return;
+    if (!effectiveWorkspace) {
+      throw new Error("No workspace is selected.");
+    }
 
     const multitaskCommand = findMultitaskCommand(prompt, title);
     if (multitaskCommand?.isMultitask && !multitaskCommand.valid) {
@@ -4348,7 +4372,7 @@ export function App() {
         title: "Multitask request needed",
         message: multitaskCommand.error || "Add a request after /multitask.",
       });
-      return;
+      throw new Error(multitaskCommand.error || "Add a request after /multitask.");
     }
     const isMultitaskCommand = Boolean(multitaskCommand?.valid);
     const effectivePrompt = isMultitaskCommand ? multitaskCommand!.prompt : prompt;
@@ -4390,7 +4414,9 @@ export function App() {
       const shouldContinue = window.confirm(
         "Autonomous mode allows the agent to proceed without manual confirmation on gated actions. Continue?",
       );
-      if (!shouldContinue) return;
+      if (!shouldContinue) {
+        throw new Error("Task creation was cancelled.");
+      }
     }
 
     const verificationAgent = options?.verificationAgent === true;
@@ -4483,7 +4509,7 @@ export function App() {
               },
             },
           });
-          return;
+          throw new Error(readiness.blockingReason || "Set up AI before running AI tasks.");
         }
       }
 
@@ -4518,6 +4544,7 @@ export function App() {
       } else {
         addToast({ type: "error", title: "Task Error", message: errorMessage });
       }
+      throw error instanceof Error ? error : new Error(errorMessage);
     }
   };
 
@@ -4872,7 +4899,9 @@ export function App() {
       integrationMentions?: IntegrationMentionSelection[];
     },
   ) => {
-    if (!selectedTaskId) return;
+    if (!selectedTaskId) {
+      throw new Error("No task is selected.");
+    }
 
     try {
       const sentAt = Date.now();
@@ -4934,7 +4963,7 @@ export function App() {
             message: nextMessage,
             images,
             quotedAssistantMessage,
-            ...(options || {}),
+            ...options,
           },
         });
       } else {
@@ -4950,6 +4979,7 @@ export function App() {
       console.error("Failed to send message:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to send message";
       addToast({ type: "error", title: "Error", message: errorMessage });
+      throw error instanceof Error ? error : new Error(errorMessage);
     }
   };
 
