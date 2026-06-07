@@ -8,6 +8,9 @@ node_modules/
 dist/
 out/
 release/
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/android/local.properties
 build/healthkit-bridge/
 native/healthkit-bridge/.build/
 build/location-helper-macos/

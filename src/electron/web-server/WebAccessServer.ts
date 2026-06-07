@@ -202,10 +202,6 @@ export class WebAccessServer {
       // Map REST routes to IPC channels
       let channel: string;
       let args: Any[];
-      const includeSecrets =
-        url.searchParams.get("includeSecrets") === "1" ||
-        url.searchParams.get("includeSecrets")?.toLowerCase() === "true";
-
       if (url.pathname === "/api/tasks" && req.method === "GET") {
         channel = "task:list";
         args = [];
@@ -233,24 +229,25 @@ export class WebAccessServer {
           {
             provider: url.searchParams.get("provider") || undefined,
             status: url.searchParams.get("status") || undefined,
-            includeSecrets,
+            includeSecrets: false,
           },
         ];
       } else if (url.pathname === "/api/accounts" && req.method === "POST") {
-        channel = "account:upsert";
-        args = [params];
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Account writes are not available through WebAccess" }));
+        return;
       } else if (url.pathname.match(/^\/api\/accounts\/[^/]+$/) && req.method === "GET") {
         const accountId = url.pathname.split("/").pop()!;
         channel = "account:get";
-        args = [{ accountId, includeSecrets }];
+        args = [{ accountId, includeSecrets: false }];
       } else if (url.pathname.match(/^\/api\/accounts\/[^/]+$/) && req.method === "PUT") {
-        const accountId = url.pathname.split("/").pop()!;
-        channel = "account:upsert";
-        args = [{ ...params, id: accountId }];
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Account writes are not available through WebAccess" }));
+        return;
       } else if (url.pathname.match(/^\/api\/accounts\/[^/]+$/) && req.method === "DELETE") {
-        const accountId = url.pathname.split("/").pop()!;
-        channel = "account:remove";
-        args = [{ accountId }];
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Account writes are not available through WebAccess" }));
+        return;
       } else if (url.pathname === "/api/briefing" && req.method === "POST") {
         channel = "briefing:generate";
         args = [params.workspaceId];
@@ -326,8 +323,14 @@ export class WebAccessServer {
     try {
       const url = new URL(req.url || "/", `http://${req.headers.host}`);
       const token = url.searchParams.get("token");
+      const tokenBuf = Buffer.from(token || "");
+      const expectedBuf = Buffer.from(this.config.token);
 
-      if (!token || !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(this.config.token))) {
+      if (
+        !token ||
+        tokenBuf.length !== expectedBuf.length ||
+        !crypto.timingSafeEqual(tokenBuf, expectedBuf)
+      ) {
         socket.destroy();
         return;
       }

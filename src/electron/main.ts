@@ -175,7 +175,7 @@ import {
 } from "./ipc/canvas-handlers";
 import { setupQAHandlers } from "./ipc/qa-handlers";
 import { getBrowserWorkbenchService } from "./browser/browser-workbench-service";
-import { isAllowedWebviewUrl } from "./browser/webview-url-policy";
+import { isAllowedExternalUrl, isAllowedWebviewUrl } from "./browser/webview-url-policy";
 import { pruneTempWorkspaces } from "./utils/temp-workspace";
 import { getActiveTempWorkspaceLeases } from "./utils/temp-workspace-lease";
 import { getPluginRegistry } from "./extensions/registry";
@@ -1324,8 +1324,11 @@ if (!gotTheLock) {
 
     // Open external links in the system browser instead of inside the app
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-      // Open all new window requests in external browser
-      shell.openExternal(url);
+      if (isAllowedExternalUrl(url)) {
+        shell.openExternal(url);
+      } else {
+        logger.warn(`Blocked unsupported external URL scheme: ${url}`);
+      }
       return { action: "deny" };
     });
 
@@ -1338,7 +1341,11 @@ if (!gotTheLock) {
 
       if (!url.startsWith(appUrl)) {
         event.preventDefault();
-        shell.openExternal(url);
+        if (isAllowedExternalUrl(url)) {
+          shell.openExternal(url);
+        } else {
+          logger.warn(`Blocked unsupported navigation URL scheme: ${url}`);
+        }
       }
     });
   }

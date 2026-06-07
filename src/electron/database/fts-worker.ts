@@ -1,6 +1,6 @@
 import { parentPort, workerData } from "worker_threads";
 import Database from "better-sqlite3";
-import { sanitizeFtsToken, isSafeFtsToken, buildMarkerFtsQuery, buildRelaxedTokenFtsQuery } from "./fts-utils";
+import { buildMarkerFtsQuery, buildRelaxedTokenFtsQuery } from "./fts-utils";
 
 interface FtsRequest {
   id: string;

@@ -44,3 +44,9 @@ export function isAllowedWebviewUrl(value: string): boolean {
     return false;
   }
 }
+
+export function isAllowedExternalUrl(value: string): boolean {
+  const parsed = parseUrl(value);
+  if (!parsed) return false;
+  return parsed.protocol === "https:" || parsed.protocol === "http:";
+}

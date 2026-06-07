@@ -204,7 +204,7 @@ describe("WebAccessServer", () => {
     expect(deps.handleIpcInvoke).toHaveBeenCalledWith("workspace:list");
   });
 
-  it("GET /api/accounts routes to account:list with query filters", async () => {
+  it("GET /api/accounts routes to account:list with query filters and no secrets", async () => {
     deps.handleIpcInvoke.mockResolvedValue({ accounts: [] });
 
     const res = await request(testPort, {
@@ -216,13 +216,11 @@ describe("WebAccessServer", () => {
     expect(deps.handleIpcInvoke).toHaveBeenCalledWith("account:list", {
       provider: "openrouter",
       status: "active",
-      includeSecrets: true,
+      includeSecrets: false,
     });
   });
 
-  it("POST /api/accounts routes to account:upsert", async () => {
-    deps.handleIpcInvoke.mockResolvedValue({ account: { id: "acct-1" } });
-
+  it("POST /api/accounts rejects account writes", async () => {
     const res = await request(testPort, {
       path: "/api/accounts",
       method: "POST",
@@ -233,14 +231,12 @@ describe("WebAccessServer", () => {
       body: JSON.stringify({ provider: "openai", status: "pending_signup" }),
     });
 
-    expect(res.status).toBe(200);
-    expect(deps.handleIpcInvoke).toHaveBeenCalledWith(
-      "account:upsert",
-      expect.objectContaining({ provider: "openai", status: "pending_signup" }),
-    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toContain("Account writes");
+    expect(deps.handleIpcInvoke).not.toHaveBeenCalled();
   });
 
-  it("GET /api/accounts/:id routes to account:get", async () => {
+  it("GET /api/accounts/:id routes to account:get without secrets", async () => {
     deps.handleIpcInvoke.mockResolvedValue({ account: { id: "acct-1" } });
 
     const res = await request(testPort, {
@@ -251,13 +247,11 @@ describe("WebAccessServer", () => {
     expect(res.status).toBe(200);
     expect(deps.handleIpcInvoke).toHaveBeenCalledWith("account:get", {
       accountId: "acct-1",
-      includeSecrets: true,
+      includeSecrets: false,
     });
   });
 
-  it("PUT /api/accounts/:id routes to account:upsert with path id", async () => {
-    deps.handleIpcInvoke.mockResolvedValue({ account: { id: "acct-1" } });
-
+  it("PUT /api/accounts/:id rejects account writes", async () => {
     const res = await request(testPort, {
       path: "/api/accounts/acct-1",
       method: "PUT",
@@ -268,26 +262,21 @@ describe("WebAccessServer", () => {
       body: JSON.stringify({ status: "active" }),
     });
 
-    expect(res.status).toBe(200);
-    expect(deps.handleIpcInvoke).toHaveBeenCalledWith(
-      "account:upsert",
-      expect.objectContaining({ id: "acct-1", status: "active" }),
-    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toContain("Account writes");
+    expect(deps.handleIpcInvoke).not.toHaveBeenCalled();
   });
 
-  it("DELETE /api/accounts/:id routes to account:remove", async () => {
-    deps.handleIpcInvoke.mockResolvedValue({ removed: true });
-
+  it("DELETE /api/accounts/:id rejects account writes", async () => {
     const res = await request(testPort, {
       path: "/api/accounts/acct-1",
       method: "DELETE",
       headers: { Authorization: `Bearer ${TEST_TOKEN}` },
     });
 
-    expect(res.status).toBe(200);
-    expect(deps.handleIpcInvoke).toHaveBeenCalledWith("account:remove", {
-      accountId: "acct-1",
-    });
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toContain("Account writes");
+    expect(deps.handleIpcInvoke).not.toHaveBeenCalled();
   });
 
   it("returns 404 for unknown API routes", async () => {

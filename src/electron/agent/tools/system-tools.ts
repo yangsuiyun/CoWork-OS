@@ -24,6 +24,7 @@ import {
   getDesktopLocationService,
   type DesktopLocationSnapshot,
 } from "../../location/DesktopLocationService";
+import { isAllowedExternalUrl } from "../../browser/webview-url-policy";
 
 const execFileAsync = promisify(execFile);
 
@@ -683,11 +684,8 @@ export class SystemTools {
       throw new Error("Invalid URL: must be a non-empty string");
     }
 
-    // Basic URL validation
-    try {
-      new URL(url);
-    } catch {
-      throw new Error("Invalid URL format");
+    if (!isAllowedExternalUrl(url)) {
+      throw new Error("Invalid URL: only http and https URLs are allowed");
     }
 
     this.daemon.logEvent(this.taskId, "tool_call", {
