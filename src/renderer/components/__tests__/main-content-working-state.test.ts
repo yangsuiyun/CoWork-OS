@@ -1398,6 +1398,61 @@ describe("isTaskActivelyWorking", () => {
     expect(result.hiddenLiveFeedRowCount).toBe(1);
   });
 
+  it("keeps follow-up user questions visible in completed delivery mode", () => {
+    const rows = [
+      {
+        kind: "timeline",
+        key: "user-1",
+        estimatedHeight: 100,
+        timelineIndex: 0,
+        visiblePerfEventId: "user-1",
+        revision: "user-1",
+        item: { kind: "event", event: makeEvent("user-1", 100, "user_message", { message: "hi" }) },
+      },
+      {
+        kind: "timeline",
+        key: "assistant-1",
+        estimatedHeight: 100,
+        timelineIndex: 1,
+        visiblePerfEventId: "assistant-1",
+        revision: "assistant-1",
+        item: {
+          kind: "event",
+          event: makeEvent("assistant-1", 200, "assistant_message", { message: "Hello!" }),
+        },
+      },
+      {
+        kind: "timeline",
+        key: "user-2",
+        estimatedHeight: 100,
+        timelineIndex: 2,
+        visiblePerfEventId: "user-2",
+        revision: "user-2",
+        item: {
+          kind: "event",
+          event: makeEvent("user-2", 300, "user_message", { message: "你能干什么？有什么功能？" }),
+        },
+      },
+      {
+        kind: "timeline",
+        key: "assistant-2",
+        estimatedHeight: 100,
+        timelineIndex: 3,
+        visiblePerfEventId: "assistant-2",
+        revision: "assistant-2",
+        item: {
+          kind: "event",
+          event: makeEvent("assistant-2", 400, "assistant_message", { message: "我可以帮你处理任务。" }),
+        },
+      },
+    ] as Any[];
+
+    const result = selectVisibleTaskFeedRows(rows, "delivery");
+
+    expect(result.visibleFeedRows.map((row) => row.key)).toEqual(["user-2", "assistant-2"]);
+    expect(result.hiddenLiveFeedRowCount).toBe(2);
+  });
+
   it("keeps action-required and critical terminal rows in delivery mode", () => {
     const rows = [
       {

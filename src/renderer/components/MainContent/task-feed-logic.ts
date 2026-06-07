@@ -362,6 +362,7 @@ export function selectVisibleTaskFeedRows(
     const eventStream = collectTaskFeedRowEventStream(feedRows);
     const candidates: Array<{ order: number; row: TaskFeedRow }> = [];
     let finalAssistant: { order: number; row: TaskFeedRow } | null = null;
+    let hasSeenAssistantMessage = false;
     const pushCandidate = (order: number, row: TaskFeedRow) => {
       candidates.push({ order, row });
     };
@@ -375,10 +376,15 @@ export function selectVisibleTaskFeedRows(
       for (const { event, eventIndex, eventOrder } of rowEvents) {
         const order = rowIndex + eventOrder / 1000;
         if (getEffectiveTaskEventType(event) === "assistant_message" && event.payload?.internal !== true) {
+          hasSeenAssistantMessage = true;
           finalAssistant = {
             order,
             row: createDeliveryEventRow(row, event, eventIndex, eventOrder),
           };
+          continue;
+        }
+        if (getEffectiveTaskEventType(event) === "user_message" && hasSeenAssistantMessage) {
+          pushCandidate(order, createDeliveryEventRow(row, event, eventIndex, eventOrder));
           continue;
         }
         if (isDeliveryEvent(event, eventStream)) {

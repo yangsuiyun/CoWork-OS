@@ -106,7 +106,7 @@
 
 | 编号 | 优化点 | 现象 / 用户反馈 | 影响 | 优先级 | 下一步 |
 | --- | --- | --- | --- | --- | --- |
-| OPT-001 | 聊天输入可靠性 | 聊天过程中偶发感觉用户输入被吞掉，输入后没有形成可见消息或没有触发预期执行 | 会破坏连续对话信任感，尤其影响长会话和高频 follow-up | High | Fixed：composer 现在会等待 `onCreateTask` / `onSendMessage` 成功后再清空输入；`App` 层发送/建任务失败会在 toast 后继续向上抛错，避免失败被当成成功 |
+| OPT-001 | 聊天输入可靠性 | 聊天过程中偶发感觉用户输入被吞掉，输入后没有形成可见消息或没有触发预期执行 | 会破坏连续对话信任感，尤其影响长会话和高频 follow-up | High | Fixed：composer 现在会等待 `onCreateTask` / `onSendMessage` 成功后再清空输入；`App` 层发送/建任务失败会在 toast 后继续向上抛错；完成态 delivery 视图会保留助手回答后的用户追问，避免已持久化的 follow-up 在 UI 中不可见 |
 | OPT-002 | Session 列表层级化与检索 | 当前 session 以平铺列表为主，后续历史增多后不方便查找 | 影响复盘、恢复上下文和按项目继续工作 | Medium | Scoped：现有侧栏已有搜索、模式筛选、日期分组、自动任务折叠、父子任务树；下一步先定义 workspace / worker directory 的聚合口径，再做分组 UI |
 
 ## 自动化验证记录
@@ -127,6 +127,7 @@
 - OPT-001 / OPT-002 跟踪验证：`npm run type-check` 通过；`npx vitest run src/renderer/components/__tests__/main-content-working-state.test.ts src/renderer/components/__tests__/main-content-markdown-normalization.test.ts src/renderer/__tests__/sidebar-helpers.test.ts`：3 个测试文件通过，123 个测试通过；`oxlint` 无 error，剩余为既有 warning。
 - dev 部署验证：重启 `npm run dev:log` 成功，Vite `ready in 162 ms`；Electron 使用 dev profile 启动，`Startup complete in 373 ms`；最新 workspace 为 `/Users/cloud/Projects/00Private/CoWork-OS`；dev smoke artifact / agent / trigger 数据仍有效。
 
+- OPT-001 追问显示回归（21:10）：用户反馈 `test` session 第二个问句不可见；数据库确认 task `9c39e479-53ee-4d1a-88a5-ad8c19d57ecd` 已持久化 follow-up `user_message`，内容为 `你能干什么？有什么功能？`。根因是非 chat 判定的 completed task 默认进入 `delivery` 视图，只展示最终回答/交付物，过滤了助手回答后的用户追问。已修复 `selectVisibleTaskFeedRows`：delivery 模式保留助手回答之后出现的用户 follow-up；新增回归测试 `keeps follow-up user questions visible in completed delivery mode`。验证：`npm run type-check` 通过；`npx vitest run src/renderer/components/__tests__/main-content-working-state.test.ts` 65 个测试通过；触达文件 IDE lint 无错误。
 ## 研究方向池
 
 | 编号 | 方向 | 来源 | 优先级 | 下一步 |
@@ -141,7 +142,7 @@
 
 | 编号 | 任务 | 来源 | 优先级 | 状态 | 下一步 |
 | --- | --- | --- | --- | --- | --- |
-| TASK-001 | 输入提交链路可靠性回归 | OPT-001 | High | Ready for dogfood | 明天高频 follow-up 时观察是否仍出现输入消失但无消息；若复现，补 renderer submit id 与 IPC ack 日志 |
+| TASK-001 | 输入提交链路可靠性回归 | OPT-001 | High | Done for today | 已覆盖两类问题：提交失败不清空输入；完成态 delivery 视图不隐藏 follow-up 用户问句。明天高频 follow-up 继续观察，若仍复现再补 renderer submit id 与 IPC ack 日志 |
 | TASK-002 | Session 分组数据口径 | OPT-002 / RESEARCH-005 | Medium | Ready to design | 确认每个 task 是否已有稳定 workspace path / worker directory / source 字段；决定根分组优先级 |
 | TASK-003 | Session 侧栏低保真方案 | OPT-002 / RESEARCH-005 | Medium | Pending | 在不破坏现有搜索和虚拟列表的前提下设计 workspace/worker 分组、折叠、计数和最近活跃排序 |
 
