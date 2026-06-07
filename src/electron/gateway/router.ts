@@ -158,6 +158,28 @@ type MessageSecurityContext = {
   };
 };
 
+export interface ConnectAllOptions {
+  timeoutMs?: number;
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number | undefined,
+  message: string,
+): Promise<T> {
+  if (!timeoutMs || timeoutMs <= 0) return promise;
+  let timer: NodeJS.Timeout | undefined;
+  return new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+    timer.unref?.();
+    promise.then(resolve, reject).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  });
+}
+
 export class MessageRouter {
   private adapters: Map<ChannelType, ChannelAdapter> = new Map();
   private adaptersByChannelId: Map<string, ChannelAdapter> = new Map();
@@ -1224,35 +1246,41 @@ export class MessageRouter {
   /**
    * Connect all enabled adapters
    */
-  async connectAll(): Promise<void> {
+  async connectAll(options: ConnectAllOptions = {}): Promise<void> {
     const enabledChannels = this.channelRepo.findEnabled();
 
-    for (const channel of enabledChannels) {
-      const adapter =
-        this.getAdapterByChannelId(channel.id) ||
-        this.adapters.get(channel.type as ChannelType);
-      if (!adapter) continue;
+    await Promise.all(
+      enabledChannels.map(async (channel) => {
+        const adapter =
+          this.getAdapterByChannelId(channel.id) ||
+          this.adapters.get(channel.type as ChannelType);
+        if (!adapter) return;
 
-      if (adapter.status !== "connected") {
-        try {
-          await adapter.connect();
-        } catch (error) {
-          console.error(`Failed to connect ${channel.type}:`, error);
-          continue;
+        if (adapter.status !== "connected") {
+          try {
+            await withTimeout(
+              adapter.connect(),
+              options.timeoutMs,
+              `Timed out connecting ${channel.type} channel ${channel.id}`,
+            );
+          } catch (error) {
+            console.error(`Failed to connect ${channel.type}:`, error);
+            return;
+          }
         }
-      }
 
-      if (adapter.status === "connected") {
-        try {
-          await this.restorePendingTaskRoutes(adapter);
-        } catch (error) {
-          console.error(
-            `[Router] Failed to restore pending tasks for ${adapter.type}:`,
-            error,
-          );
+        if (adapter.status === "connected") {
+          try {
+            await this.restorePendingTaskRoutes(adapter);
+          } catch (error) {
+            console.error(
+              `[Router] Failed to restore pending tasks for ${adapter.type}:`,
+              error,
+            );
+          }
         }
-      }
-    }
+      }),
+    );
   }
 
   private async restorePendingTaskRoutes(

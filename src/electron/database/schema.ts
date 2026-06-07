@@ -10,30 +10,120 @@ import {
 } from "../agent/timeline-payload-sanitizer";
 
 const schemaLogger = createLogger("DatabaseManager");
+const STARTUP_PHASE_WARN_MS = 250;
+const TASK_EVENT_PAYLOAD_SANITIZER_STATE_KEY =
+  "task_event_payload_sanitizer_v1_completed";
 
 export class DatabaseManager {
   private static instance: DatabaseManager | null = null;
   private db: Database.Database;
 
   constructor() {
+    const constructorStartedAt = Date.now();
+    const logStartupPhase = (name: string, startedAt: number): void => {
+      const durationMs = Date.now() - startedAt;
+      const message = `[DatabaseManager] Startup phase "${name}" completed in ${durationMs} ms`;
+      if (durationMs >= STARTUP_PHASE_WARN_MS) {
+        schemaLogger.warn(message);
+      } else {
+        schemaLogger.debug(message);
+      }
+    };
+
+    let phaseStartedAt = Date.now();
     const userDataPath = getUserDataDir();
     this.ensureRestrictedDirectory(userDataPath);
+    logStartupPhase("restrict-user-data-directory", phaseStartedAt);
 
     // Run migration from old cowork-oss directory before opening database
+    phaseStartedAt = Date.now();
     this.migrateFromLegacyDirectory(userDataPath);
+    logStartupPhase("legacy-directory-migration-check", phaseStartedAt);
 
+    phaseStartedAt = Date.now();
     const dbPath = path.join(userDataPath, "cowork-os.db");
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("busy_timeout = 5000");
     this.ensureRestrictedFile(dbPath);
+    logStartupPhase("open-database", phaseStartedAt);
+
+    phaseStartedAt = Date.now();
+    this.ensureMaintenanceStateTable();
+    logStartupPhase("maintenance-state-schema", phaseStartedAt);
+
+    phaseStartedAt = Date.now();
     this.initializeSchema();
+    logStartupPhase("initialize-schema", phaseStartedAt);
+
+    phaseStartedAt = Date.now();
     this.repairLegacyHeartbeatRunReferences();
-    this.repairControlPlaneForeignKeyOrphans();
+    logStartupPhase("repair-legacy-heartbeat-references", phaseStartedAt);
+
+    phaseStartedAt = Date.now();
     this.db.pragma("foreign_keys = ON");
+    logStartupPhase("enable-foreign-keys", phaseStartedAt);
 
     // Store as singleton instance
     DatabaseManager.instance = this;
+    logStartupPhase("constructor-total", constructorStartedAt);
+  }
+
+  async runPostStartupMaintenance(): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    const runMaintenanceStep = (name: string, step: () => void): void => {
+      const startedAt = Date.now();
+      try {
+        step();
+        schemaLogger.info(
+          `[DatabaseManager] Maintenance step "${name}" completed in ${Date.now() - startedAt} ms`,
+        );
+      } catch (error) {
+        schemaLogger.warn(`${name} failed:`, error);
+      }
+    };
+
+    runMaintenanceStep("backfillTaskLastRunDurations", () =>
+      this.backfillTaskLastRunDurations(),
+    );
+    runMaintenanceStep("sanitizeLargeTaskEventPayloads", () =>
+      this.sanitizeLargeTaskEventPayloads(),
+    );
+    runMaintenanceStep("repairControlPlaneForeignKeyOrphans", () =>
+      this.repairControlPlaneForeignKeyOrphans(),
+    );
+  }
+
+  private ensureMaintenanceStateTable(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS maintenance_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+  }
+
+  private getMaintenanceState(key: string): string | null {
+    const row = this.db
+      .prepare("SELECT value FROM maintenance_state WHERE key = ?")
+      .get(key) as { value?: string } | undefined;
+    return typeof row?.value === "string" ? row.value : null;
+  }
+
+  private setMaintenanceState(key: string, value: string): void {
+    this.db
+      .prepare(
+        `
+          INSERT INTO maintenance_state (key, value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        `,
+      )
+      .run(key, value, Date.now());
   }
 
   private repairLegacyHeartbeatRunReferences(): void {
@@ -554,6 +644,10 @@ export class DatabaseManager {
   }
 
   private sanitizeLargeTaskEventPayloads(): void {
+    if (this.getMaintenanceState(TASK_EVENT_PAYLOAD_SANITIZER_STATE_KEY) === "1") {
+      return;
+    }
+
     const rows = this.db
       .prepare(
         `
@@ -566,7 +660,10 @@ export class DatabaseManager {
         `,
       )
       .all(TIMELINE_PAYLOAD_STORAGE_BYTE_LIMIT) as Array<{ id: string; payload: string }>;
-    if (rows.length === 0) return;
+    if (rows.length === 0) {
+      this.setMaintenanceState(TASK_EVENT_PAYLOAD_SANITIZER_STATE_KEY, "1");
+      return;
+    }
 
     const updateStmt = this.db.prepare("UPDATE task_events SET payload = ? WHERE id = ?");
     let updated = 0;
@@ -594,9 +691,10 @@ export class DatabaseManager {
 
     if (updated > 0) {
       schemaLogger.info(
-        `[DatabaseManager] Sanitized ${updated} oversized task_event payload(s) during startup hygiene`,
+        `[DatabaseManager] Sanitized ${updated} oversized task_event payload(s) during maintenance`,
       );
     }
+    this.setMaintenanceState(TASK_EVENT_PAYLOAD_SANITIZER_STATE_KEY, "1");
   }
 
   // Migration version - increment this to force re-migration for users with partial migrations
@@ -2681,18 +2779,6 @@ export class DatabaseManager {
       } catch {
         // Column already exists, ignore
       }
-    }
-
-    try {
-      this.backfillTaskLastRunDurations();
-    } catch (err) {
-      schemaLogger.warn("backfillTaskLastRunDurations failed:", err);
-    }
-
-    try {
-      this.sanitizeLargeTaskEventPayloads();
-    } catch (err) {
-      schemaLogger.warn("sanitizeLargeTaskEventPayloads failed:", err);
     }
 
     try {

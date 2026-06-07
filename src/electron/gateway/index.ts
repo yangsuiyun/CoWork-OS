@@ -99,6 +99,28 @@ const DEFAULT_CONFIG: GatewayConfig = {
 const IDLE_SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const logger = createLogger("ChannelGateway");
 
+export interface ChannelConnectOptions {
+  timeoutMs?: number;
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number | undefined,
+  message: string,
+): Promise<T> {
+  if (!timeoutMs || timeoutMs <= 0) return promise;
+  let timer: NodeJS.Timeout | undefined;
+  return new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+    timer.unref?.();
+    promise.then(resolve, reject).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  });
+}
+
 /**
  * Channel Gateway - Main class for managing multi-channel messaging
  */
@@ -610,8 +632,15 @@ export class ChannelGateway {
 
     // Auto-connect if configured
     if (this.config.autoConnect) {
-      await this.connectMicrosoftEmailGraphChannels();
-      await this.router.connectAll();
+      const results = await Promise.allSettled([
+        this.connectMicrosoftEmailGraphChannels(),
+        this.router.connectAll(),
+      ]);
+      for (const result of results) {
+        if (result.status === "rejected") {
+          logger.warn("Enabled channel connect group failed:", result.reason);
+        }
+      }
     }
 
     this.startPendingCleanup();
@@ -626,12 +655,19 @@ export class ChannelGateway {
    * Connect enabled channel adapters after the gateway has loaded them.
    * Used by desktop startup to keep network handshakes off the first-window path.
    */
-  async connectEnabledChannels(): Promise<void> {
+  async connectEnabledChannels(options: ChannelConnectOptions = {}): Promise<void> {
     if (!this.initialized) {
       await this.initialize();
     }
-    await this.connectMicrosoftEmailGraphChannels();
-    await this.router.connectAll();
+    const results = await Promise.allSettled([
+      this.connectMicrosoftEmailGraphChannels(options),
+      this.router.connectAll(options),
+    ]);
+    for (const result of results) {
+      if (result.status === "rejected") {
+        logger.warn("Enabled channel connect group failed:", result.reason);
+      }
+    }
   }
 
   /**
@@ -1966,26 +2002,37 @@ export class ChannelGateway {
     return email?.trim() || undefined;
   }
 
-  private async connectMicrosoftEmailGraphChannels(): Promise<void> {
+  private async connectMicrosoftEmailGraphChannels(
+    options: ChannelConnectOptions = {},
+  ): Promise<void> {
     const channels = this.channelRepo
       .findEnabled()
       .filter((channel) => this.isMicrosoftEmailOAuthChannel(channel));
 
-    for (const channel of channels) {
-      try {
-        await this.connectMicrosoftEmailGraphChannel(channel);
-      } catch (error) {
-        console.error("Failed to connect Microsoft Outlook email channel:", error);
-      }
-    }
+    await Promise.all(
+      channels.map(async (channel) => {
+        try {
+          await withTimeout(
+            this.connectMicrosoftEmailGraphChannel(channel, options),
+            options.timeoutMs,
+            `Timed out connecting Microsoft Outlook email channel ${channel.id}`,
+          );
+        } catch (error) {
+          console.error("Failed to connect Microsoft Outlook email channel:", error);
+        }
+      }),
+    );
   }
 
-  private async connectMicrosoftEmailGraphChannel(channel: Channel): Promise<void> {
+  private async connectMicrosoftEmailGraphChannel(
+    channel: Channel,
+    options: ChannelConnectOptions = {},
+  ): Promise<void> {
     this.router.unregisterAdapter(channel.id);
     this.channelRepo.update(channel.id, { enabled: true, status: "connecting" });
 
     try {
-      await this.validateMicrosoftEmailGraphReadAccess(channel);
+      await this.validateMicrosoftEmailGraphReadAccess(channel, options);
       this.channelRepo.update(channel.id, {
         enabled: true,
         status: "connected",
@@ -1997,7 +2044,10 @@ export class ChannelGateway {
     }
   }
 
-  private async validateMicrosoftEmailGraphReadAccess(channel: Channel): Promise<void> {
+  private async validateMicrosoftEmailGraphReadAccess(
+    channel: Channel,
+    options: ChannelConnectOptions = {},
+  ): Promise<void> {
     const oauthClientId = channel.config.oauthClientId as string | undefined;
     const refreshToken = channel.config.refreshToken as string | undefined;
     const accessToken =
@@ -2016,7 +2066,7 @@ export class ChannelGateway {
       (!tokenExpiresAt || Date.now() < tokenExpiresAt - 2 * 60 * 1000) &&
       tokenScopes?.includes("https://graph.microsoft.com/Mail.ReadWrite")
     ) {
-      await this.probeMicrosoftGraphReadAccess(accessToken);
+      await this.probeMicrosoftGraphReadAccess(accessToken, options);
       return;
     }
 
@@ -2025,7 +2075,7 @@ export class ChannelGateway {
         accessToken &&
         (!tokenExpiresAt || Date.now() < tokenExpiresAt - 2 * 60 * 1000)
       ) {
-        await this.probeMicrosoftGraphReadAccess(accessToken);
+        await this.probeMicrosoftGraphReadAccess(accessToken, options);
         return;
       }
       throw new Error(
@@ -2040,7 +2090,7 @@ export class ChannelGateway {
       tenant: (channel.config.oauthTenant as string | undefined) || MICROSOFT_EMAIL_DEFAULT_TENANT,
       scopes: [...MICROSOFT_EMAIL_GRAPH_READWRITE_SCOPES],
     });
-    await this.probeMicrosoftGraphReadAccess(refreshed.accessToken);
+    await this.probeMicrosoftGraphReadAccess(refreshed.accessToken, options);
 
     this.channelRepo.update(channel.id, {
       config: {
@@ -2060,13 +2110,28 @@ export class ChannelGateway {
     });
   }
 
-  private async probeMicrosoftGraphReadAccess(accessToken: string): Promise<void> {
+  private async probeMicrosoftGraphReadAccess(
+    accessToken: string,
+    options: ChannelConnectOptions = {},
+  ): Promise<void> {
     const url = new URL("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages");
     url.searchParams.set("$top", "1");
     url.searchParams.set("$select", "id");
-    const response = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const controller = new AbortController();
+    const timeout =
+      options.timeoutMs && options.timeoutMs > 0
+        ? setTimeout(() => controller.abort(), options.timeoutMs)
+        : undefined;
+    timeout?.unref?.();
+    let response: Response;
+    try {
+      response = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: controller.signal,
+      });
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
     if (response.ok) return;
 
     const rawText = typeof response.text === "function" ? await response.text() : "";
