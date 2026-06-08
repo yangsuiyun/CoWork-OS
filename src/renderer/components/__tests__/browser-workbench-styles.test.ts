@@ -55,4 +55,14 @@ describe("Browser workbench styles", () => {
       /\.browser-workbench-tab-close svg\s*\{[^}]*stroke:\s*currentColor;[^}]*opacity:\s*1;/s,
     );
   });
+
+  it("styles live browser annotations as an overlay with pins and composer", () => {
+    const source = readFileSync(stylesPath, "utf8");
+
+    expect(source).toMatch(/\.browser-workbench-webview-frame\s*\{[^}]*position:\s*relative;/s);
+    expect(source).toMatch(/\.browser-live-annotation-layer\s*\{[^}]*cursor:\s*crosshair;/s);
+    expect(source).toMatch(/\.browser-live-annotation-box\s*\{[^}]*border:\s*2px solid #0ea5e9;/s);
+    expect(source).toContain(".browser-live-annotation-pin");
+    expect(source).toContain(".browser-live-annotation-composer");
+  });
 });

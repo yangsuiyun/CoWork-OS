@@ -1186,6 +1186,28 @@ export class DatabaseManager {
         FOREIGN KEY (task_id) REFERENCES tasks(id)
       );
 
+      CREATE TABLE IF NOT EXISTS annotations (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        workspace_id TEXT,
+        surface_type TEXT NOT NULL,
+        surface_id TEXT,
+        body TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        target_ref_json TEXT NOT NULL,
+        style_patch_json TEXT,
+        artifact_id TEXT,
+        screenshot_path TEXT,
+        created_by TEXT NOT NULL DEFAULT 'user',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        resolved_at INTEGER,
+        resolved_by_event_id TEXT,
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
+        FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE SET NULL
+      );
+
       CREATE TABLE IF NOT EXISTS approvals (
         id TEXT PRIMARY KEY,
         task_id TEXT NOT NULL,
@@ -1528,6 +1550,14 @@ export class DatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_task_events_task_type_timestamp
         ON task_events(task_id, type, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id);
+      CREATE INDEX IF NOT EXISTS idx_annotations_task_status_created
+        ON annotations(task_id, status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_annotations_workspace_surface_updated
+        ON annotations(workspace_id, surface_type, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_annotations_surface
+        ON annotations(surface_type, surface_id);
+      CREATE INDEX IF NOT EXISTS idx_annotations_artifact
+        ON annotations(artifact_id);
       CREATE INDEX IF NOT EXISTS idx_approvals_task ON approvals(task_id);
       CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
       CREATE INDEX IF NOT EXISTS idx_workspace_permission_rules_workspace

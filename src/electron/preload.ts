@@ -42,6 +42,12 @@ import type {
   AppProfileSummary,
   AudioSummaryConfig,
   AudioSummaryResult,
+  Annotation,
+  AnnotationCreateInput,
+  AnnotationListQuery,
+  AnnotationUpdateInput,
+  BrowserAnnotationTargetRef,
+  BrowserAnnotationTargetResolveResult,
   ProfileExportResult,
   EvalBaselineMetrics,
   EvalCase,
@@ -2121,6 +2127,35 @@ contextBridge.exposeInMainWorld("electronAPI", {
       dataUrl?: string;
       error?: string;
     }>,
+  inspectBrowserWorkbenchPoint: (data: {
+    taskId: string;
+    sessionId?: string;
+    x: number;
+    y: number;
+  }) => ipcRenderer.invoke(IPC_CHANNELS.BROWSER_WORKBENCH_INSPECT_POINT, data) as Promise<{
+    success: boolean;
+    target?: BrowserWorkbenchInspectTarget;
+    error?: string;
+  }>,
+  resolveBrowserWorkbenchAnnotationTargets: (data: {
+    taskId: string;
+    sessionId?: string;
+    targets: BrowserAnnotationTargetRef[];
+  }) => ipcRenderer.invoke(IPC_CHANNELS.BROWSER_WORKBENCH_RESOLVE_ANNOTATION_TARGETS, data) as Promise<{
+    success: boolean;
+    targets?: BrowserAnnotationTargetResolveResult[];
+    error?: string;
+  }>,
+  createAnnotation: (data: AnnotationCreateInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.ANNOTATION_CREATE, data) as Promise<Annotation>,
+  listAnnotations: (query: AnnotationListQuery) =>
+    ipcRenderer.invoke(IPC_CHANNELS.ANNOTATION_LIST, query) as Promise<Annotation[]>,
+  updateAnnotation: (id: string, patch: AnnotationUpdateInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.ANNOTATION_UPDATE, { id, patch }) as Promise<Annotation | null>,
+  resolveAnnotation: (id: string, resolvedByEventId?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.ANNOTATION_RESOLVE, { id, resolvedByEventId }) as Promise<Annotation | null>,
+  dismissAnnotation: (id: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.ANNOTATION_DISMISS, { id }) as Promise<Annotation | null>,
   onBrowserWorkbenchOpenRequest: (callback: (request: BrowserWorkbenchOpenRequest) => void) => {
     const handler = (_: Any, request: BrowserWorkbenchOpenRequest) => callback(request);
     ipcRenderer.on(IPC_CHANNELS.BROWSER_WORKBENCH_OPEN_REQUEST, handler);
@@ -4861,6 +4896,18 @@ export interface BrowserWorkbenchViewportEvent {
   at: number;
 }
 
+export interface BrowserWorkbenchInspectTarget {
+  rect?: { x: number; y: number; width: number; height: number };
+  scroll?: { x: number; y: number };
+  selector?: string;
+  xpath?: string;
+  tagName?: string;
+  role?: string;
+  accessibleName?: string;
+  textQuote?: string;
+  computedStyle?: Record<string, string>;
+}
+
 // Export Mission Control types
 export type {
   HeartbeatStatus,
@@ -4949,6 +4996,30 @@ export interface ElectronAPI {
     dataUrl?: string;
     error?: string;
   }>;
+  inspectBrowserWorkbenchPoint: (data: {
+    taskId: string;
+    sessionId?: string;
+    x: number;
+    y: number;
+  }) => Promise<{
+    success: boolean;
+    target?: BrowserWorkbenchInspectTarget;
+    error?: string;
+  }>;
+  resolveBrowserWorkbenchAnnotationTargets: (data: {
+    taskId: string;
+    sessionId?: string;
+    targets: BrowserAnnotationTargetRef[];
+  }) => Promise<{
+    success: boolean;
+    targets?: BrowserAnnotationTargetResolveResult[];
+    error?: string;
+  }>;
+  createAnnotation: (data: AnnotationCreateInput) => Promise<Annotation>;
+  listAnnotations: (query: AnnotationListQuery) => Promise<Annotation[]>;
+  updateAnnotation: (id: string, patch: AnnotationUpdateInput) => Promise<Annotation | null>;
+  resolveAnnotation: (id: string, resolvedByEventId?: string) => Promise<Annotation | null>;
+  dismissAnnotation: (id: string) => Promise<Annotation | null>;
   onBrowserWorkbenchOpenRequest: (
     callback: (request: BrowserWorkbenchOpenRequest) => void,
   ) => () => void;

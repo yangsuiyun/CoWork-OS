@@ -814,6 +814,12 @@ export type EventType =
   | "workspace_permissions_updated"
   | "user_message"
   | "user_feedback"
+  | "annotation_created"
+  | "annotation_updated"
+  | "annotation_addressing_started"
+  | "annotation_addressed"
+  | "annotation_resolved"
+  | "annotation_dismissed"
   | "command_output"
   // LLM usage tracking (tokens/cost)
   | "llm_usage"
@@ -3768,6 +3774,162 @@ export interface Artifact {
   sha256: string;
   size: number;
   createdAt: number;
+}
+
+export type AnnotationSurfaceType =
+  | "browser"
+  | "diff"
+  | "file"
+  | "artifact"
+  | "message";
+
+export type AnnotationStatus =
+  | "open"
+  | "addressing"
+  | "addressed"
+  | "resolved"
+  | "dismissed";
+
+export interface AnnotationViewportRef {
+  width: number;
+  height: number;
+  deviceScaleFactor?: number;
+  mobile?: boolean;
+  label?: string;
+}
+
+export interface AnnotationRectRef {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BrowserAnnotationTargetRef {
+  surfaceType: "browser";
+  url: string;
+  title?: string;
+  viewport?: AnnotationViewportRef;
+  rect?: AnnotationRectRef;
+  scroll?: { x: number; y: number };
+  selector?: string;
+  xpath?: string;
+  tagName?: string;
+  role?: string;
+  accessibleName?: string;
+  textQuote?: string;
+  computedStyle?: Record<string, string>;
+}
+
+export interface BrowserAnnotationTargetResolveResult {
+  index: number;
+  resolved: boolean;
+  target?: Partial<BrowserAnnotationTargetRef>;
+  error?: string;
+}
+
+export interface DiffAnnotationTargetRef {
+  surfaceType: "diff";
+  filePath: string;
+  side?: "old" | "new" | "context";
+  oldLine?: number;
+  newLine?: number;
+  hunkHeader?: string;
+  hunkHash?: string;
+  baseRef?: string;
+  headRef?: string;
+}
+
+export interface FileAnnotationTargetRef {
+  surfaceType: "file" | "artifact";
+  filePath: string;
+  fileType?: string;
+  page?: number;
+  slideIndex?: number;
+  sheetName?: string;
+  cellRange?: string;
+  rect?: AnnotationRectRef;
+  textQuote?: string;
+  blockId?: string;
+}
+
+export interface MessageAnnotationTargetRef {
+  surfaceType: "message";
+  taskEventId: string;
+  textQuote?: string;
+  startOffset?: number;
+  endOffset?: number;
+}
+
+export type AnnotationTargetRef =
+  | BrowserAnnotationTargetRef
+  | DiffAnnotationTargetRef
+  | FileAnnotationTargetRef
+  | MessageAnnotationTargetRef;
+
+export interface AnnotationStylePatch {
+  text?: string;
+  color?: string;
+  backgroundColor?: string;
+  fontFamily?: string;
+  fontSize?: string;
+  fontWeight?: string;
+  lineHeight?: string;
+  spacing?: string;
+  alignment?: string;
+  borderRadius?: string;
+  notes?: string;
+}
+
+export interface Annotation {
+  id: string;
+  taskId: string;
+  workspaceId?: string;
+  surfaceType: AnnotationSurfaceType;
+  surfaceId?: string;
+  body: string;
+  status: AnnotationStatus;
+  targetRef: AnnotationTargetRef;
+  stylePatch?: AnnotationStylePatch;
+  artifactId?: string;
+  screenshotPath?: string;
+  createdBy: "user" | "agent" | "review";
+  createdAt: number;
+  updatedAt: number;
+  resolvedAt?: number;
+  resolvedByEventId?: string;
+}
+
+export interface AnnotationCreateInput {
+  taskId: string;
+  workspaceId?: string;
+  surfaceType: AnnotationSurfaceType;
+  surfaceId?: string;
+  body: string;
+  targetRef: AnnotationTargetRef;
+  stylePatch?: AnnotationStylePatch;
+  artifactId?: string;
+  screenshotPath?: string;
+  createdBy?: Annotation["createdBy"];
+}
+
+export interface AnnotationListQuery {
+  taskId?: string;
+  workspaceId?: string;
+  surfaceType?: AnnotationSurfaceType;
+  surfaceId?: string;
+  statuses?: AnnotationStatus[];
+  limit?: number;
+}
+
+export interface AnnotationUpdateInput {
+  body?: string;
+  status?: AnnotationStatus;
+  targetRef?: AnnotationTargetRef;
+  stylePatch?: AnnotationStylePatch | null;
+  artifactId?: string | null;
+  screenshotPath?: string | null;
+  resolvedByEventId?: string | null;
 }
 
 export interface DocumentVersionEntry {
@@ -7624,9 +7786,16 @@ export const IPC_CHANNELS = {
   BROWSER_WORKBENCH_UNREGISTER: "browserWorkbench:unregister",
   BROWSER_WORKBENCH_STATUS: "browserWorkbench:status",
   BROWSER_WORKBENCH_SCREENSHOT: "browserWorkbench:screenshot",
+  BROWSER_WORKBENCH_INSPECT_POINT: "browserWorkbench:inspectPoint",
+  BROWSER_WORKBENCH_RESOLVE_ANNOTATION_TARGETS: "browserWorkbench:resolveAnnotationTargets",
   BROWSER_WORKBENCH_OPEN_REQUEST: "browserWorkbench:openRequest",
   BROWSER_WORKBENCH_CURSOR: "browserWorkbench:cursor",
   BROWSER_WORKBENCH_VIEWPORT: "browserWorkbench:viewport",
+  ANNOTATION_CREATE: "annotation:create",
+  ANNOTATION_LIST: "annotation:list",
+  ANNOTATION_UPDATE: "annotation:update",
+  ANNOTATION_RESOLVE: "annotation:resolve",
+  ANNOTATION_DISMISS: "annotation:dismiss",
   YOUTUBE_INGEST_VIDEO: "youtube:ingestVideo",
   YOUTUBE_ASK_VIDEO: "youtube:askVideo",
   YOUTUBE_SEARCH_SEGMENTS: "youtube:searchSegments",

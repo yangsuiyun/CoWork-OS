@@ -45,4 +45,17 @@ describe("Browser workbench navigation controls", () => {
     expect(source).toContain('aria-label="Open current page in external browser"');
     expect(source).toContain("getExternalBrowserUrl");
   });
+
+  it("wires live page annotations through inspect, persistence, and follow-up send", () => {
+    const source = readFileSync(componentPath, "utf8");
+
+    expect(source).toContain("inspectBrowserWorkbenchPoint");
+    expect(source).toContain("resolveBrowserWorkbenchAnnotationTargets");
+    expect(source).toContain("createAnnotation");
+    expect(source).toContain("listAnnotations");
+    expect(source).toContain("getAnnotationUrlKey");
+    expect(source).toContain("liveAnnotationInspectRequestIdRef");
+    expect(source).toContain("browser-live-annotation-layer");
+    expect(source).toContain("Address annotation ${created.id}: ${body}");
+  });
 });

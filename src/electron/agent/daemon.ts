@@ -14,6 +14,7 @@ import {
   WorkspacePermissionRuleRepository,
   InputRequestRepository,
   ArtifactRepository,
+  AnnotationRepository,
   MemoryType,
 } from "../database/repositories";
 import { ActivityRepository } from "../activity/ActivityRepository";
@@ -61,6 +62,7 @@ import {
   TeamThoughtEvent,
   isTempWorkspaceId,
   ImageAttachment,
+  Annotation,
   QuotedAssistantMessage,
   TaskFollowUpInput,
   MULTI_LLM_PROVIDER_DISPLAY,
@@ -382,6 +384,7 @@ export class AgentDaemon extends EventEmitter {
   private workspacePermissionRuleRepo: WorkspacePermissionRuleRepository;
   private inputRequestRepo: InputRequestRepository;
   private artifactRepo: ArtifactRepository;
+  private annotationRepo: AnnotationRepository;
   private activityRepo: ActivityRepository;
   private agentRoleRepo: AgentRoleRepository;
   private mentionRepo: MentionRepository;
@@ -459,6 +462,7 @@ export class AgentDaemon extends EventEmitter {
     this.workspacePermissionRuleRepo = new WorkspacePermissionRuleRepository(db);
     this.inputRequestRepo = new InputRequestRepository(db);
     this.artifactRepo = new ArtifactRepository(db);
+    this.annotationRepo = new AnnotationRepository(db);
     this.activityRepo = new ActivityRepository(db);
     this.agentRoleRepo = new AgentRoleRepository(db);
     this.mentionRepo = new MentionRepository(db);
@@ -9122,6 +9126,58 @@ export class AgentDaemon extends EventEmitter {
     this.finishQueueSlot(taskId);
   }
 
+  private buildAnnotationFollowUpContext(taskId: string, message: string): {
+    message: string;
+    annotations: Annotation[];
+  } {
+    const annotations = this.annotationRepo.listOpenByTask(taskId);
+    if (annotations.length === 0) return { message, annotations: [] };
+
+    const lines = [
+      "## Pending User Annotations",
+      "",
+      "Use these annotations as precise user feedback. Address the target(s) explicitly and keep changes scoped to the annotated issues unless the user asks for broader work.",
+      "",
+      ...annotations.flatMap((annotation, index) => {
+        const target = annotation.targetRef as Any;
+        const rect = target?.rect
+          ? `rect x=${target.rect.x} y=${target.rect.y} w=${target.rect.width} h=${target.rect.height}`
+          : "";
+        const viewport = target?.viewport
+          ? `viewport ${target.viewport.width}x${target.viewport.height}${target.viewport.mobile ? " mobile" : ""}`
+          : "";
+        const targetParts = [
+          target?.url ? `url=${target.url}` : "",
+          target?.filePath ? `file=${target.filePath}` : "",
+          target?.selector ? `selector=${target.selector}` : "",
+          target?.xpath ? `xpath=${target.xpath}` : "",
+          target?.tagName ? `tag=${target.tagName}` : "",
+          target?.textQuote ? `text=${JSON.stringify(target.textQuote)}` : "",
+          rect,
+          viewport,
+        ].filter(Boolean);
+        const stylePatch = annotation.stylePatch
+          ? [`Style guidance: ${JSON.stringify(annotation.stylePatch)}`]
+          : [];
+        const screenshot = annotation.screenshotPath
+          ? [`Screenshot: ${annotation.screenshotPath}`]
+          : [];
+        return [
+          `Annotation ${index + 1} (${annotation.id}) [${annotation.surfaceType}, ${annotation.status}]`,
+          `User request: ${annotation.body}`,
+          targetParts.length > 0 ? `Target: ${targetParts.join("; ")}` : "Target: unavailable",
+          ...stylePatch,
+          ...screenshot,
+          "",
+        ];
+      }),
+      "## User Follow-up",
+      message,
+    ];
+
+    return { message: lines.join("\n"), annotations };
+  }
+
   /**
    * Send a follow-up message to a task.
    *
@@ -9184,6 +9240,18 @@ export class AgentDaemon extends EventEmitter {
     const effectiveWorkspace = this.applyTaskWorkspaceOverrides(effectiveTask, workspace);
 
     this.taskRepo.touch(taskId);
+    const annotationContext = this.buildAnnotationFollowUpContext(taskId, message);
+    const effectiveMessage = annotationContext.message;
+    if (annotationContext.annotations.length > 0) {
+      const changedCount = this.annotationRepo.markAddressing(
+        taskId,
+        annotationContext.annotations.map((annotation) => annotation.id),
+      );
+      this.logEvent(taskId, "annotation_addressing_started", {
+        annotationIds: annotationContext.annotations.map((annotation) => annotation.id),
+        changedCount,
+      });
+    }
 
     if (!cached) {
       // Task executor not in memory - need to recreate it
@@ -9215,7 +9283,7 @@ export class AgentDaemon extends EventEmitter {
     if (executor.isRunning) {
       const integrationMentions = effectiveTask.agentConfig?.integrationMentions;
       executor.queueFollowUp(
-        message,
+        effectiveMessage,
         images,
         quotedAssistantMessage,
         integrationMentions,
@@ -9226,6 +9294,7 @@ export class AgentDaemon extends EventEmitter {
       // injected directly into the conversation loop, not through sendMessage.
       this.logEvent(taskId, "user_message", {
         message,
+        ...(effectiveMessage !== message ? { annotationContextInjected: true } : {}),
         ...(integrationMentions && integrationMentions.length > 0 ? { integrationMentions } : {}),
         ...(quotedAssistantMessage ? { quotedAssistantMessage } : {}),
       });
@@ -9233,7 +9302,15 @@ export class AgentDaemon extends EventEmitter {
     }
 
     // Send the message (executor is idle, acquire mutex normally)
-    await executor.sendMessage(message, images, quotedAssistantMessage, {
+    if (effectiveMessage !== message) {
+      executor.suppressNextUserMessageEvent();
+      this.logEvent(taskId, "user_message", {
+        message,
+        annotationContextInjected: true,
+        ...(quotedAssistantMessage ? { quotedAssistantMessage } : {}),
+      });
+    }
+    await executor.sendMessage(effectiveMessage, images, quotedAssistantMessage, {
       agentConfigOverride: effectiveOptions?.agentConfigOverride,
     });
     return { queued: false };

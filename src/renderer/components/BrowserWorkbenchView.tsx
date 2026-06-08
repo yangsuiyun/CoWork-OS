@@ -28,6 +28,9 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type {
   ImageAttachment,
+  Annotation,
+  BrowserAnnotationTargetRef,
+  BrowserAnnotationTargetResolveResult,
   LLMModelInfo,
   LLMProviderInfo,
   LLMProviderType,
@@ -140,6 +143,35 @@ function getExternalBrowserUrl(rawUrl: string): string | null {
   } catch {
     return null;
   }
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (max < min) return min;
+  return Math.min(Math.max(value, min), max);
+}
+
+function getAnnotationUrlKey(rawUrl: string): string {
+  const value = rawUrl.trim();
+  if (!value) return "";
+  try {
+    const parsed = new URL(normalizeUrl(value));
+    parsed.hash = "";
+    parsed.pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+    return `${parsed.origin}${parsed.pathname}${parsed.search}`;
+  } catch {
+    return value.replace(/#.*$/, "").replace(/\/+$/, "");
+  }
+}
+
+function annotationViewportMatches(
+  target: BrowserAnnotationTargetRef,
+  size: { width: number; height: number } | null,
+): boolean {
+  if (!target.viewport || !size) return false;
+  return (
+    Math.abs(target.viewport.width - size.width) <= 2 &&
+    Math.abs(target.viewport.height - size.height) <= 2
+  );
 }
 
 function getYouTubeVideoId(rawUrl: string): string | null {
@@ -299,6 +331,8 @@ export function BrowserWorkbenchView({
   const annotationImageRef = useRef<HTMLImageElement | null>(null);
   const annotationCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const annotationDrawingRef = useRef(false);
+  const lastAnnotationInspectAtRef = useRef(0);
+  const liveAnnotationInspectRequestIdRef = useRef(0);
   const webviewDomReadyRef = useRef(false);
   const registeredWebContentsIdRef = useRef<number | null>(null);
   const activeUrlRef = useRef(initialUrl || "");
@@ -326,6 +360,13 @@ export function BrowserWorkbenchView({
   const [annotationMessage, setAnnotationMessage] = useState("");
   const [annotationSaving, setAnnotationSaving] = useState(false);
   const [annotationError, setAnnotationError] = useState("");
+  const [liveAnnotationMode, setLiveAnnotationMode] = useState(false);
+  const [liveAnnotationHover, setLiveAnnotationHover] = useState<BrowserAnnotationTargetRef | null>(null);
+  const [liveAnnotationTarget, setLiveAnnotationTarget] = useState<BrowserAnnotationTargetRef | null>(null);
+  const [liveAnnotationText, setLiveAnnotationText] = useState("");
+  const [liveAnnotationSaving, setLiveAnnotationSaving] = useState(false);
+  const [liveAnnotationError, setLiveAnnotationError] = useState("");
+  const [browserAnnotations, setBrowserAnnotations] = useState<Annotation[]>([]);
   const [turnContextExpanded, setTurnContextExpanded] = useState(false);
   const [browserCursor, setBrowserCursor] = useState<BrowserCursorState>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -354,6 +395,7 @@ export function BrowserWorkbenchView({
     activeUrl && viewportSize && viewportSize.width > 0 && viewportSize.height > 0
       ? viewportSize
       : null;
+  const liveAnnotationOverlayTarget = liveAnnotationTarget || liveAnnotationHover;
   const hasVisibleWebview = Boolean(visibleWebviewSize);
   const activeIsYouTube = Boolean(getYouTubeVideoId(activeUrl || urlText));
   const voiceInput = useVoiceInput({
@@ -853,6 +895,214 @@ export function BrowserWorkbenchView({
     }
   }, [sessionId, taskId, workspacePath]);
 
+  const loadBrowserAnnotations = useCallback(async () => {
+    if (!window.electronAPI.listAnnotations) return;
+    const currentUrl = activeUrlRef.current || activeUrl;
+    const currentUrlKey = getAnnotationUrlKey(currentUrl);
+    const annotations = await window.electronAPI.listAnnotations({
+      taskId,
+      surfaceType: "browser",
+      statuses: ["open", "addressing"],
+      limit: 100,
+    });
+    const matchingAnnotations = annotations.filter((annotation) => {
+        const target = annotation.targetRef as BrowserAnnotationTargetRef;
+        return (
+          target.surfaceType === "browser" &&
+          (!currentUrlKey || getAnnotationUrlKey(target.url) === currentUrlKey)
+        );
+      });
+    if (!window.electronAPI.resolveBrowserWorkbenchAnnotationTargets || matchingAnnotations.length === 0) {
+      setBrowserAnnotations(
+        matchingAnnotations.filter((annotation) =>
+          annotationViewportMatches(annotation.targetRef as BrowserAnnotationTargetRef, visibleWebviewSize),
+        ),
+      );
+      return;
+    }
+    const resolved = await window.electronAPI.resolveBrowserWorkbenchAnnotationTargets({
+      taskId,
+      sessionId,
+      targets: matchingAnnotations.map((annotation) => annotation.targetRef as BrowserAnnotationTargetRef),
+    });
+    const resolvedByIndex = new Map<number, BrowserAnnotationTargetResolveResult>(
+      (resolved.targets || []).map((result) => [result.index, result]),
+    );
+    setBrowserAnnotations(
+      matchingAnnotations.flatMap((annotation, index) => {
+        const target = annotation.targetRef as BrowserAnnotationTargetRef;
+        const resolvedTarget = resolvedByIndex.get(index);
+        if (resolvedTarget?.resolved && resolvedTarget.target?.rect) {
+          return [
+            {
+              ...annotation,
+              targetRef: {
+                ...target,
+                ...resolvedTarget.target,
+                surfaceType: "browser",
+                url: target.url,
+                title: target.title,
+                viewport: visibleWebviewSize
+                  ? {
+                      width: visibleWebviewSize.width,
+                      height: visibleWebviewSize.height,
+                      mobile: controlledViewport?.mobile,
+                      label: controlledViewport?.label,
+                    }
+                  : target.viewport,
+              } satisfies BrowserAnnotationTargetRef,
+            },
+          ];
+        }
+        return annotationViewportMatches(target, visibleWebviewSize) ? [annotation] : [];
+      }),
+    );
+  }, [activeUrl, controlledViewport, sessionId, taskId, visibleWebviewSize]);
+
+  useEffect(() => {
+    void loadBrowserAnnotations();
+  }, [loadBrowserAnnotations]);
+
+  useEffect(() => {
+    if (!activeUrl || browserAnnotations.length === 0) return;
+    const timer = window.setInterval(() => {
+      void loadBrowserAnnotations();
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [activeUrl, browserAnnotations.length, loadBrowserAnnotations]);
+
+  const buildBrowserAnnotationTarget = useCallback(
+    (target: Partial<BrowserAnnotationTargetRef>): BrowserAnnotationTargetRef => ({
+      surfaceType: "browser",
+      url: activeUrlRef.current || activeUrl || urlText,
+      title: titleRef.current || title || undefined,
+      viewport: visibleWebviewSize
+        ? {
+            width: visibleWebviewSize.width,
+            height: visibleWebviewSize.height,
+            mobile: controlledViewport?.mobile,
+            label: controlledViewport?.label,
+          }
+        : undefined,
+      ...target,
+    }),
+    [activeUrl, controlledViewport, title, urlText, visibleWebviewSize],
+  );
+
+  const inspectLiveAnnotationPoint = useCallback(async (
+    event: ReactPointerEvent<HTMLDivElement>,
+    force = false,
+  ): Promise<BrowserAnnotationTargetRef | null> => {
+    if (!liveAnnotationMode || liveAnnotationTarget) return null;
+    const now = Date.now();
+    if (!force && now - lastAnnotationInspectAtRef.current < 120) return liveAnnotationHover;
+    lastAnnotationInspectAtRef.current = now;
+    const requestId = liveAnnotationInspectRequestIdRef.current + 1;
+    liveAnnotationInspectRequestIdRef.current = requestId;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = clampNumber(event.clientX - rect.left, 0, rect.width);
+    const y = clampNumber(event.clientY - rect.top, 0, rect.height);
+    try {
+      const result = await window.electronAPI.inspectBrowserWorkbenchPoint?.({
+        taskId,
+        sessionId,
+        x,
+        y,
+      });
+      if (!result?.success || !result.target) return null;
+      const nextTarget = buildBrowserAnnotationTarget(result.target);
+      if (requestId !== liveAnnotationInspectRequestIdRef.current) return null;
+      setLiveAnnotationHover(nextTarget);
+      return nextTarget;
+    } catch (error) {
+      setLiveAnnotationError(error instanceof Error ? error.message : "Inspection failed.");
+      return null;
+    }
+  }, [
+    buildBrowserAnnotationTarget,
+    liveAnnotationHover,
+    liveAnnotationMode,
+    liveAnnotationTarget,
+    sessionId,
+    taskId,
+  ]);
+
+  const selectLiveAnnotationTarget = useCallback(async (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!liveAnnotationMode || liveAnnotationTarget) return;
+    event.preventDefault();
+    const target = liveAnnotationHover || await inspectLiveAnnotationPoint(event, true);
+    if (!target) return;
+    setLiveAnnotationTarget(target);
+    setLiveAnnotationHover(null);
+    setLiveAnnotationText("");
+    setLiveAnnotationError("");
+  }, [inspectLiveAnnotationPoint, liveAnnotationHover, liveAnnotationMode, liveAnnotationTarget]);
+
+  const cancelLiveAnnotationTarget = useCallback(() => {
+    setLiveAnnotationTarget(null);
+    setLiveAnnotationHover(null);
+    setLiveAnnotationText("");
+    setLiveAnnotationError("");
+  }, []);
+
+  const saveLiveBrowserAnnotation = useCallback(async (sendToAgent: boolean) => {
+    const body = liveAnnotationText.trim();
+    if (!liveAnnotationTarget || !body) {
+      setLiveAnnotationError("Add a note for this annotation.");
+      return;
+    }
+    if (!window.electronAPI.createAnnotation) {
+      setLiveAnnotationError("Annotations are not available in this build.");
+      return;
+    }
+    setLiveAnnotationSaving(true);
+    setLiveAnnotationError("");
+    try {
+      let screenshotPath: string | undefined;
+      if (workspacePath && window.electronAPI.captureBrowserWorkbenchScreenshot) {
+        const capture = await window.electronAPI.captureBrowserWorkbenchScreenshot({
+          taskId,
+          sessionId,
+          workspacePath,
+          filename: `browser-annotation-context-${Date.now()}.png`,
+          includeDataUrl: false,
+        });
+        if (capture?.success) {
+          screenshotPath = capture.fullPath || capture.path;
+        }
+      }
+      const created = await window.electronAPI.createAnnotation({
+        taskId,
+        workspaceId,
+        surfaceType: "browser",
+        surfaceId: liveAnnotationTarget.url,
+        body,
+        targetRef: liveAnnotationTarget,
+        screenshotPath,
+      });
+      await loadBrowserAnnotations();
+      cancelLiveAnnotationTarget();
+      setToolbarNotice(sendToAgent ? "Annotation sent" : "Annotation saved");
+      if (sendToAgent && onSendMessage) {
+        await onSendMessage(`Address annotation ${created.id}: ${body}`);
+      }
+    } catch (error) {
+      setLiveAnnotationError(error instanceof Error ? error.message : "Annotation failed.");
+    } finally {
+      setLiveAnnotationSaving(false);
+    }
+  }, [
+    cancelLiveAnnotationTarget,
+    liveAnnotationTarget,
+    liveAnnotationText,
+    loadBrowserAnnotations,
+    onSendMessage,
+    sessionId,
+    taskId,
+    workspaceId,
+    workspacePath,
+  ]);
+
   useEffect(() => {
     if (!toolbarNotice) return;
     const timer = window.setTimeout(() => setToolbarNotice(""), 2200);
@@ -1152,12 +1402,25 @@ export function BrowserWorkbenchView({
           </button>
           <button
             type="button"
+            className={`browser-workbench-nav-btn browser-workbench-action-btn ${liveAnnotationMode ? "is-active" : ""}`}
+            onClick={() => {
+              setLiveAnnotationMode((current) => !current);
+              cancelLiveAnnotationTarget();
+              setToolbarNotice(liveAnnotationMode ? "Annotation mode off" : "Annotating");
+            }}
+            title="Annotate page element"
+            aria-label="Annotate page element"
+          >
+            <PencilLine className="browser-workbench-lucide-icon" size={16} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
             className="browser-workbench-nav-btn browser-workbench-action-btn"
             onClick={() => void captureScreenshot("annotation")}
             title="Annotate screenshot"
             aria-label="Annotate screenshot"
           >
-            <PencilLine className="browser-workbench-lucide-icon" size={16} strokeWidth={2.2} aria-hidden="true" />
+            <Plus className="browser-workbench-lucide-icon" size={16} strokeWidth={2.2} aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -1247,26 +1510,162 @@ export function BrowserWorkbenchView({
         ref={surfaceRef}
       >
         {visibleWebviewSize ? (
-          <webview
-            key={webviewKey}
-            ref={webviewRef}
-            src={activeUrl}
-            className="browser-workbench-webview"
+          <div
+            className="browser-workbench-webview-frame"
             style={{
               width: `${visibleWebviewSize.width}px`,
               height: `${visibleWebviewSize.height}px`,
             }}
-            width={visibleWebviewSize.width}
-            height={visibleWebviewSize.height}
-            autosize="true"
-            minwidth={visibleWebviewSize.width}
-            maxwidth={visibleWebviewSize.width}
-            minheight={visibleWebviewSize.height}
-            maxheight={visibleWebviewSize.height}
-            partition={partition}
-            {...webviewPopupProps}
-            webpreferences="contextIsolation=yes, nodeIntegration=no"
-          />
+          >
+            <webview
+              key={webviewKey}
+              ref={webviewRef}
+              src={activeUrl}
+              className="browser-workbench-webview"
+              style={{
+                width: "100%",
+                height: "100%",
+              }}
+              width={visibleWebviewSize.width}
+              height={visibleWebviewSize.height}
+              autosize="true"
+              minwidth={visibleWebviewSize.width}
+              maxwidth={visibleWebviewSize.width}
+              minheight={visibleWebviewSize.height}
+              maxheight={visibleWebviewSize.height}
+              partition={partition}
+              {...webviewPopupProps}
+              webpreferences="contextIsolation=yes, nodeIntegration=no"
+            />
+            {browserAnnotations.map((annotation, index) => {
+              const target = annotation.targetRef as BrowserAnnotationTargetRef;
+              if (target.surfaceType !== "browser" || !target.rect) return null;
+              return (
+                <button
+                  key={annotation.id}
+                  type="button"
+                  className={`browser-live-annotation-pin status-${annotation.status}`}
+                  style={{
+                    left: `${clampNumber(target.rect.x + target.rect.width - 12, 2, visibleWebviewSize.width - 24)}px`,
+                    top: `${clampNumber(target.rect.y - 12, 2, visibleWebviewSize.height - 24)}px`,
+                  }}
+                  title={annotation.body}
+                  aria-label={`Annotation ${index + 1}: ${annotation.body}`}
+                >
+                  {index + 1}
+                </button>
+              );
+            })}
+            {liveAnnotationMode && (
+              <div
+                className="browser-live-annotation-layer"
+                onPointerMove={(event) => {
+                  void inspectLiveAnnotationPoint(event);
+                }}
+                onPointerDown={(event) => {
+                  void selectLiveAnnotationTarget(event);
+                }}
+              >
+                {liveAnnotationOverlayTarget?.rect && (
+                  <div
+                    className={`browser-live-annotation-box ${
+                      liveAnnotationTarget ? "is-selected" : ""
+                    }`}
+                    style={{
+                      left: `${liveAnnotationOverlayTarget.rect.x}px`,
+                      top: `${liveAnnotationOverlayTarget.rect.y}px`,
+                      width: `${liveAnnotationOverlayTarget.rect.width}px`,
+                      height: `${liveAnnotationOverlayTarget.rect.height}px`,
+                    }}
+                    aria-hidden="true"
+                  />
+                )}
+                {liveAnnotationHover && !liveAnnotationTarget && (
+                  <div
+                    className="browser-live-annotation-inspector"
+                    style={{
+                      left: `${clampNumber(
+                        (liveAnnotationHover.rect?.x || 0) + 8,
+                        8,
+                        visibleWebviewSize.width - 170,
+                      )}px`,
+                      top: `${clampNumber(
+                        (liveAnnotationHover.rect?.y || 0) - 38,
+                        8,
+                        visibleWebviewSize.height - 32,
+                      )}px`,
+                    }}
+                  >
+                    <span>{liveAnnotationHover.tagName || "element"}</span>
+                    {liveAnnotationHover.computedStyle?.fontSize && (
+                      <span>{liveAnnotationHover.computedStyle.fontSize}</span>
+                    )}
+                  </div>
+                )}
+                {liveAnnotationTarget?.rect && (
+                  <div
+                    className="browser-live-annotation-composer"
+                    style={{
+                      left: `${clampNumber(
+                        liveAnnotationTarget.rect.x + liveAnnotationTarget.rect.width + 14,
+                        12,
+                        visibleWebviewSize.width - 340,
+                      )}px`,
+                      top: `${clampNumber(
+                        liveAnnotationTarget.rect.y,
+                        12,
+                        visibleWebviewSize.height - 210,
+                      )}px`,
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                  >
+                    <div className="browser-live-annotation-meta">
+                      <span>{liveAnnotationTarget.tagName || "element"}</span>
+                      {liveAnnotationTarget.selector && <code>{liveAnnotationTarget.selector}</code>}
+                    </div>
+                    <textarea
+                      value={liveAnnotationText}
+                      onChange={(event) => setLiveAnnotationText(event.target.value)}
+                      placeholder="What should CoWork OS change here?"
+                      rows={3}
+                      autoFocus
+                    />
+                    {liveAnnotationError && (
+                      <div className="browser-live-annotation-error">{liveAnnotationError}</div>
+                    )}
+                    <div className="browser-live-annotation-actions">
+                      <button
+                        type="button"
+                        className="browser-annotation-secondary"
+                        onClick={cancelLiveAnnotationTarget}
+                        disabled={liveAnnotationSaving}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="browser-annotation-secondary"
+                        onClick={() => void saveLiveBrowserAnnotation(false)}
+                        disabled={liveAnnotationSaving || !liveAnnotationText.trim()}
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        className="browser-annotation-primary browser-live-annotation-send"
+                        onClick={() => void saveLiveBrowserAnnotation(true)}
+                        disabled={liveAnnotationSaving || !liveAnnotationText.trim() || !onSendMessage}
+                        title="Send annotation to CoWork OS"
+                        aria-label="Send annotation to CoWork OS"
+                      >
+                        <ArrowUp size={15} strokeWidth={2.4} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         ) : activeUrl ? (
           <div className="browser-workbench-empty">Preparing browser viewport...</div>
         ) : (
