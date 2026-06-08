@@ -1,0 +1,1830 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CoWork OS 领域驱动设计概念建模报告</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #172033;
+      --card: #ffffff;
+      --muted: #64748b;
+      --ink: #0f172a;
+      --line: #dbe3ef;
+      --brand: #2563eb;
+      --brand-2: #7c3aed;
+      --accent: #0f766e;
+      --warn: #b45309;
+      --danger: #b91c1c;
+      --soft: #f8fafc;
+      --soft-blue: #eff6ff;
+      --soft-purple: #f5f3ff;
+      --soft-green: #ecfdf5;
+      --soft-amber: #fffbeb;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #eef2f7;
+      font-family: var(--sans);
+      line-height: 1.58;
+    }
+
+    a {
+      color: var(--brand);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .hero {
+      color: #fff;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(37, 99, 235, 0.42), transparent 32rem),
+        radial-gradient(circle at 88% 12%, rgba(124, 58, 237, 0.36), transparent 28rem),
+        linear-gradient(135deg, #0f172a 0%, #111827 52%, #1e1b4b 100%);
+      padding: 64px 28px 46px;
+    }
+
+    .hero-inner,
+    main {
+      width: min(1180px, calc(100vw - 40px));
+      margin: 0 auto;
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: #bfdbfe;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 13px;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 960px;
+      font-size: clamp(34px, 6vw, 64px);
+      line-height: 1.04;
+      letter-spacing: -0.045em;
+    }
+
+    .subtitle {
+      max-width: 900px;
+      margin: 22px 0 0;
+      color: #dbeafe;
+      font-size: 18px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 32px;
+    }
+
+    .metric {
+      padding: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(12px);
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 28px;
+      line-height: 1;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 8px;
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    main {
+      padding: 34px 0 80px;
+    }
+
+    section {
+      margin: 26px 0;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: var(--card);
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.06);
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 28px;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+    }
+
+    h3 {
+      margin: 26px 0 10px;
+      font-size: 20px;
+      line-height: 1.25;
+    }
+
+    h4 {
+      margin: 18px 0 8px;
+      font-size: 16px;
+    }
+
+    p {
+      margin: 10px 0;
+    }
+
+    .lead {
+      font-size: 17px;
+      color: #334155;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .toc {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .toc a {
+      display: block;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--soft);
+      color: #1e293b;
+      font-weight: 700;
+    }
+
+    .context-grid,
+    .object-grid,
+    .relation-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--soft);
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 16px 18px;
+      background: linear-gradient(135deg, #f8fafc, #eef2ff);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .card-header h3 {
+      margin: 0;
+      font-size: 19px;
+    }
+
+    .card-header .tagline {
+      margin-top: 6px;
+      color: #475569;
+      font-size: 13px;
+    }
+
+    .card-body {
+      padding: 16px 18px 18px;
+      background: #fff;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 10px 0 0;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: #e0f2fe;
+      color: #075985;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .pill.purple {
+      background: var(--soft-purple);
+      color: #5b21b6;
+    }
+
+    .pill.green {
+      background: var(--soft-green);
+      color: #047857;
+    }
+
+    .pill.amber {
+      background: var(--soft-amber);
+      color: #92400e;
+    }
+
+    .pill.red {
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 22px;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      vertical-align: top;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      text-align: left;
+    }
+
+    th {
+      background: #f1f5f9;
+      color: #334155;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    td code,
+    p code,
+    li code {
+      padding: 2px 5px;
+      border-radius: 6px;
+      background: #e2e8f0;
+      color: #0f172a;
+      font-family: var(--mono);
+      font-size: 0.92em;
+    }
+
+    ul,
+    ol {
+      padding-left: 20px;
+      margin: 8px 0 14px;
+    }
+
+    li {
+      margin: 5px 0;
+    }
+
+    .bounded-context-map {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      align-items: center;
+      gap: 10px;
+      margin: 16px 0;
+    }
+
+    .flow-node {
+      min-height: 82px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--soft-blue);
+      text-align: center;
+      font-weight: 800;
+    }
+
+    .arrow {
+      color: var(--brand);
+      font-size: 26px;
+      font-weight: 900;
+    }
+
+    .note {
+      border-left: 4px solid var(--brand);
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: var(--soft-blue);
+      color: #1e3a8a;
+    }
+
+    .warning {
+      border-left-color: var(--warn);
+      background: var(--soft-amber);
+      color: #78350f;
+    }
+
+    .source-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 18px;
+      padding-left: 18px;
+    }
+
+    .source-list li {
+      word-break: break-word;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: #334155;
+    }
+
+    .badge {
+      display: inline-block;
+      margin-right: 6px;
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: #e2e8f0;
+      font-size: 12px;
+      font-weight: 800;
+      color: #334155;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 12px 0 0;
+    }
+
+    .small {
+      font-size: 13px;
+    }
+
+    footer {
+      width: min(1180px, calc(100vw - 40px));
+      margin: 0 auto 60px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 920px) {
+      .hero-grid,
+      .toc,
+      .context-grid,
+      .object-grid,
+      .relation-grid,
+      .source-list {
+        grid-template-columns: 1fr;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .arrow {
+        transform: rotate(90deg);
+        text-align: center;
+      }
+
+      section {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">Domain-Driven Design Report</p>
+      <h1>CoWork OS 概念建模与领域对象报告</h1>
+      <p class="subtitle">
+        本报告基于项目文档和核心 TypeScript 模块，对 CoWork OS 进行 DDD 风格的概念建模：
+        提取业务愿景、核心域/支撑域/通用域、限界上下文、聚合根、实体、值对象、领域服务、策略规则与领域事件。
+      </p>
+      <div class="hero-grid">
+        <div class="metric"><strong>15</strong><span>主要限界上下文</span></div>
+        <div class="metric"><strong>20+</strong><span>核心聚合/实体族</span></div>
+        <div class="metric"><strong>17</strong><span>消息通道集成方向</span></div>
+        <div class="metric"><strong>Local-first</strong><span>本地优先的代理操作系统</span></div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="summary">
+      <h2>1. 执行摘要</h2>
+      <p class="lead">
+        CoWork OS 的核心业务不是“聊天机器人”，而是一个本地优先、GUI-first 的个人/团队 AI 工作操作系统。
+        它把用户请求建模为可执行、可观察、可恢复、可治理的 <strong>Task</strong>，再通过 Agent Runtime、工具权限、记忆学习、
+        工作台工件、通道网关和自动化循环，把工作从“对话”推进到“真实产出”。
+      </p>
+      <div class="note">
+        <strong>核心域判断：</strong>项目最有业务差异化的核心域是“可治理的代理任务执行与多代理协作”。围绕它形成三个强支撑域：
+        Workflow Intelligence（记忆、Heartbeat、Dreaming、Suggestions）、Everything Workbench（工件工作台）和 Integration/Gateway（通道与连接器）。
+      </div>
+      <h3>领域分层</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>DDD 分类</th>
+            <th>领域</th>
+            <th>业务含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge">Core Domain</span></td>
+            <td>Task Execution Runtime、Agent Orchestration、Managed Agents、Permission & Safety</td>
+            <td>把用户目标转化为受控的代理执行过程，支持子代理、团队、多模型、权限审批、恢复、验证和可观察时间线。</td>
+          </tr>
+          <tr>
+            <td><span class="badge">Supporting Domain</span></td>
+            <td>Memory & Workflow Intelligence、Everything Workbench、Channel Gateway、Skills Runtime、MCP Connectors</td>
+            <td>让执行过程具备长期记忆、可复用技能、远程消息入口、生成工件和外部系统连接能力。</td>
+          </tr>
+          <tr>
+            <td><span class="badge">Generic Domain</span></td>
+            <td>Profiles、Settings、Update、Telemetry、Reports、Native Helpers、Security Storage</td>
+            <td>桌面应用运行所需的配置、持久化、系统能力、打包和通用工程支撑。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="toc">
+      <h2>2. 报告目录</h2>
+      <div class="toc">
+        <a href="#ubiquitous-language">统一语言</a>
+        <a href="#context-map">限界上下文地图</a>
+        <a href="#domain-objects">领域对象总览</a>
+        <a href="#contexts">上下文详细建模</a>
+        <a href="#relationships">跨上下文关系</a>
+        <a href="#events">领域事件与生命周期</a>
+        <a href="#rules">关键业务规则</a>
+        <a href="#recommendations">建模建议</a>
+      </div>
+    </section>
+
+    <section id="ubiquitous-language">
+      <h2>3. 统一语言</h2>
+      <p>以下术语建议作为项目内产品、设计、后端、前端、测试共同使用的统一语言。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>概念</th>
+            <th>定义</th>
+            <th>常见字段/状态</th>
+            <th>典型行为</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Workspace</td>
+            <td>用户工作的本地边界，绑定文件路径、权限、记忆、策略和任务。</td>
+            <td><code>id</code>, <code>name</code>, <code>path</code>, <code>permissions</code>, <code>lastUsedAt</code></td>
+            <td>创建、切换、更新权限、同步 `.cowork/` 工作区上下文。</td>
+          </tr>
+          <tr>
+            <td>Task</td>
+            <td>CoWork OS 最核心的执行单元，代表一次用户目标、自动化目标或代理派生目标。</td>
+            <td><code>status</code>, <code>workspaceId</code>, <code>agentConfig</code>, <code>parentTaskId</code>, <code>sessionId</code>, <code>terminalStatus</code></td>
+            <td>创建、计划、执行、暂停、继续、取消、完成、重试、派生子任务、记录结果。</td>
+          </tr>
+          <tr>
+            <td>SessionRuntime</td>
+            <td>任务会话运行时状态拥有者，管理权限状态、检查清单、快照、恢复和任务投影。</td>
+            <td><code>checklist</code>, <code>permissionState</code>, <code>snapshot</code>, <code>verificationState</code></td>
+            <td>准备 turn、协调工具调用、持久化快照、处理 follow-up、恢复执行。</td>
+          </tr>
+          <tr>
+            <td>Turn</td>
+            <td>一次模型-工具-结果循环中的执行步，由 TurnKernel 与 ToolScheduler 处理。</td>
+            <td><code>mode</code>, <code>stepId</code>, <code>tool calls</code>, <code>result envelope</code></td>
+            <td>构造 prompt、选择工具、批调度、产出事件、更新运行态。</td>
+          </tr>
+          <tr>
+            <td>Agent</td>
+            <td>具备角色、模型、工具限制、记忆策略和执行能力的工作执行者。</td>
+            <td><code>AgentConfig</code>, <code>AgentRole</code>, <code>WorkerRole</code>, <code>capability</code></td>
+            <td>执行任务、协作、验证、研究、综合、通过角色策略受限。</td>
+          </tr>
+          <tr>
+            <td>ManagedAgent</td>
+            <td>可复用、可版本化的代理定义，面向 Agents Hub 和控制平面。</td>
+            <td><code>ManagedAgentVersion</code>, <code>runtimeDefaults</code>, <code>approvalPolicy</code>, <code>memoryConfig</code></td>
+            <td>创建、更新、归档、发布、测试、预览、生成 ManagedSession。</td>
+          </tr>
+          <tr>
+            <td>ManagedSession</td>
+            <td>托管代理的一次持久运行资源，API 面向稳定 run identity，底层映射到 Task。</td>
+            <td><code>agentId</code>, <code>environmentId</code>, <code>status</code>, <code>backingTaskId</code>, <code>events</code></td>
+            <td>创建、取消、恢复、发送事件、镜像 TaskEvent。</td>
+          </tr>
+          <tr>
+            <td>Artifact</td>
+            <td>任务创建或更新的文件产物，例如 DOCX、XLSX、PPTX、HTML、PDF、代码或数据文件。</td>
+            <td><code>taskId</code>, <code>path</code>, <code>mimeType</code>, <code>sha256</code>, <code>size</code></td>
+            <td>登记、预览、打开、全屏工作、跟随 follow-up 刷新。</td>
+          </tr>
+          <tr>
+            <td>Approval / Permission</td>
+            <td>工具执行前的治理机制，决定 allow、deny 或 ask，并可持久化规则。</td>
+            <td><code>PermissionRule</code>, <code>PermissionMode</code>, <code>ApprovalRequest</code>, <code>securityContext</code></td>
+            <td>评估工具请求、生成审批、保存规则、阻断危险操作、处理 data export。</td>
+          </tr>
+          <tr>
+            <td>Memory</td>
+            <td>长期上下文和工作经验的持久来源，包括偏好、约束、观察、工作流模式和关系记忆。</td>
+            <td><code>workspaceId</code>, <code>type</code>, <code>content</code>, <code>embedding</code>, <code>privacyState</code></td>
+            <td>捕获、压缩、检索、注入 prompt、归档、策展、主题包化。</td>
+          </tr>
+          <tr>
+            <td>Heartbeat</td>
+            <td>后台自动化的信号就绪层，用 Pulse/Dispatch 决定何时提示、何时升级为任务。</td>
+            <td><code>HeartbeatSignal</code>, <code>PulseResult</code>, <code>Dispatch</code>, <code>RunRecord</code></td>
+            <td>合并信号、延迟压缩、触发建议、创建任务、触发 Dreaming。</td>
+          </tr>
+          <tr>
+            <td>Dreaming</td>
+            <td>后台记忆健康检查与候选提案机制，提出可审核的记忆维护变更。</td>
+            <td><code>DreamingRun</code>, <code>DreamingCandidate</code>, <code>evidenceRefs</code>, <code>status</code></td>
+            <td>收集证据、生成候选、审核、应用到 Curated Memory。</td>
+          </tr>
+          <tr>
+            <td>Channel</td>
+            <td>远程消息入口，例如 WhatsApp、Telegram、Slack、Discord、Email 等。</td>
+            <td><code>type</code>, <code>securityConfig</code>, <code>status</code>, <code>ChannelSession</code>, <code>ChannelMessage</code></td>
+            <td>配对、鉴权、会话管理、消息入站、命令路由、进度回传。</td>
+          </tr>
+          <tr>
+            <td>Skill</td>
+            <td>可附加到任务上的执行指导包，提供上下文和运行时指令，但不替换原始任务。</td>
+            <td><code>SkillApplication</code>, <code>trigger</code>, <code>contextDirectives</code>, <code>parameters</code></td>
+            <td>路由、应用、参数收集、限制工具、指定产物目录。</td>
+          </tr>
+          <tr>
+            <td>MCP Connector</td>
+            <td>外部系统连接器和工具服务，扩展 CoWork 对 SaaS/企业系统的操作能力。</td>
+            <td><code>server</code>, <code>tools</code>, <code>oauth</code>, <code>status</code>, <code>allowlist</code></td>
+            <td>连接、鉴权、暴露工具、隧道转发、权限过滤、错误通知。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="context-map">
+      <h2>4. 限界上下文地图</h2>
+      <p class="lead">CoWork OS 可以拆为 15 个主要限界上下文。核心上下文围绕 Task Runtime，其他上下文通过事件、策略、仓储和 UI 投影与它协作。</p>
+      <div class="flow">
+        <div class="flow-node">用户/通道/自动化<br />创建 Task</div>
+        <div class="arrow">→</div>
+        <div class="flow-node">Agent Runtime<br />计划、执行、审批</div>
+        <div class="arrow">→</div>
+        <div class="flow-node">Artifact / Memory / Timeline<br />沉淀产出与经验</div>
+      </div>
+      <div class="context-grid">
+        <div class="card">
+          <div class="card-header">
+            <h3>任务执行上下文</h3>
+            <div class="tagline">Task、SessionRuntime、Turn、Timeline、Trace</div>
+          </div>
+          <div class="card-body">
+            <p>负责把请求变成可执行任务，并保证执行过程可恢复、可观察、可验证。</p>
+            <div class="pill-row">
+              <span class="pill">Core</span><span class="pill green">Aggregate: Task</span><span class="pill purple">Runtime</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>代理编排上下文</h3>
+            <div class="tagline">AgentRole、TeamRun、DelegationGraph、WorkerRole</div>
+          </div>
+          <div class="card-body">
+            <p>负责子代理、并行代理、多角色团队、多模型评审和远程 Agent 调用。</p>
+            <div class="pill-row">
+              <span class="pill">Core</span><span class="pill green">Aggregate: AgentTeamRun</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>托管代理上下文</h3>
+            <div class="tagline">ManagedAgent、ManagedEnvironment、ManagedSession</div>
+          </div>
+          <div class="card-body">
+            <p>把底层任务执行包装成可复用、可版本化、GUI 可管理的代理资源。</p>
+            <div class="pill-row">
+              <span class="pill">Core</span><span class="pill green">Aggregate: ManagedSession</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>权限与安全上下文</h3>
+            <div class="tagline">PermissionRule、ApprovalRequest、SecurityContext、Guardrail</div>
+          </div>
+          <div class="card-body">
+            <p>统一治理文件、Shell、网络、MCP、位置、数据导出等工具能力。</p>
+            <div class="pill-row">
+              <span class="pill red">Safety</span><span class="pill green">Policy</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>工作区与 Profile 上下文</h3>
+            <div class="tagline">Workspace、Profile、WorkspaceKit、Policy Manifest</div>
+          </div>
+          <div class="card-body">
+            <p>提供本地工作根、权限边界、`.cowork/` 上下文、用户资料隔离和导入导出。</p>
+            <div class="pill-row">
+              <span class="pill amber">Supporting</span><span class="pill green">Boundary</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>记忆与学习上下文</h3>
+            <div class="tagline">Memory、Observation、CuratedMemory、KnowledgeGraph、Dreaming</div>
+          </div>
+          <div class="card-body">
+            <p>把执行经验、用户偏好、关系、承诺和项目事实变为可检索、可审核的长期上下文。</p>
+            <div class="pill-row">
+              <span class="pill amber">Supporting</span><span class="pill green">Knowledge</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>Heartbeat/自动化上下文</h3>
+            <div class="tagline">Signal、Pulse、Dispatch、Routine、Cron、Suggestion</div>
+          </div>
+          <div class="card-body">
+            <p>决定何时后台思考、何时提示用户、何时升级为真实任务。</p>
+            <div class="pill-row">
+              <span class="pill amber">Supporting</span><span class="pill purple">Automation</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>通道网关上下文</h3>
+            <div class="tagline">Channel、ChannelUser、ChannelSession、ChannelMessage、Specialization</div>
+          </div>
+          <div class="card-body">
+            <p>把 Slack/WhatsApp/Telegram/Email 等远程消息转化为命令、任务或 follow-up。</p>
+            <div class="pill-row">
+              <span class="pill amber">Supporting</span><span class="pill green">Gateway</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>Everything Workbench 上下文</h3>
+            <div class="tagline">Artifact、Preview、Document/Sheet/Deck/Web/PDF/Browser/Terminal Surface</div>
+          </div>
+          <div class="card-body">
+            <p>让任务输出不只是文件链接，而是可打开、可编辑、可追问的工作产物。</p>
+            <div class="pill-row">
+              <span class="pill amber">Supporting</span><span class="pill purple">UX Domain</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>技能运行时上下文</h3>
+            <div class="tagline">Skill、SkillApplication、Slash Command、ContextDirective</div>
+          </div>
+          <div class="card-body">
+            <p>为任务附加专项能力与执行指导，同时保持原始用户意图不被替换。</p>
+            <div class="pill-row">
+              <span class="pill amber">Supporting</span><span class="pill green">Extensibility</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>MCP/连接器上下文</h3>
+            <div class="tagline">Connector、MCPServer、OAuth、Tunnel、Tool Metadata</div>
+          </div>
+          <div class="card-body">
+            <p>通过本地/远程 MCP 服务接入 Jira、Linear、Google Workspace、Figma、Salesforce 等系统。</p>
+            <div class="pill-row">
+              <span class="pill amber">Supporting</span><span class="pill purple">Integration</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>Inbox/关系代理上下文</h3>
+            <div class="tagline">Mailbox、Thread、Commitment、ContactIdentity、RelationshipMemory</div>
+          </div>
+          <div class="card-body">
+            <p>围绕邮件、联系人、承诺、跟进和个人连续性构建“关系型个人代理”。</p>
+            <div class="pill-row">
+              <span class="pill amber">Supporting</span><span class="pill green">Personal Agent</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>浏览器/电脑使用上下文</h3>
+            <div class="tagline">BrowserSession、Snapshot、ComputerUseSession、Location</div>
+          </div>
+          <div class="card-body">
+            <p>治理可见浏览器自动化、桌面 GUI 操作、截图理解和位置访问。</p>
+            <div class="pill-row">
+              <span class="pill amber">Supporting</span><span class="pill red">High Risk Tools</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>控制平面与设备上下文</h3>
+            <div class="tagline">ControlPlane、Node、Fleet、MissionControl、RemoteAccess</div>
+          </div>
+          <div class="card-body">
+            <p>提供跨节点、跨设备、托管资源和任务监控的 API 与 UI 视图。</p>
+            <div class="pill-row">
+              <span class="pill amber">Supporting</span><span class="pill purple">Ops</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>报告/评估/可靠性上下文</h3>
+            <div class="tagline">EvalCase、RegressionGate、Trace、FailureCluster、UsageTelemetry</div>
+          </div>
+          <div class="card-body">
+            <p>用评估、追踪、失败聚类、成本和性能数据提高代理运行质量。</p>
+            <div class="pill-row">
+              <span class="pill">Generic/Supporting</span><span class="pill green">Quality</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="domain-objects">
+      <h2>5. 领域对象总览</h2>
+      <p>本节将对象按 DDD 类型归类。由于项目规模较大，“所有领域对象”按业务概念族合并呈现，而不是列出每个 DTO 或 UI-only 类型。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>DDD 类型</th>
+            <th>对象</th>
+            <th>所在上下文</th>
+            <th>关键属性</th>
+            <th>关键行为</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>聚合根</td>
+            <td>Workspace</td>
+            <td>工作区与 Profile</td>
+            <td>路径、权限、最后使用时间、是否临时工作区</td>
+            <td>创建、查找、权限变更、路径迁移、删除。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>Task</td>
+            <td>任务执行</td>
+            <td>prompt、status、workspaceId、agentConfig、sessionId、parentTaskId、预算、风险、结果</td>
+            <td>创建、状态迁移、派生、继续、取消、完成、记录结果与诊断。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>SessionRuntimeSnapshot / SessionChecklist</td>
+            <td>任务执行</td>
+            <td>检查项、权限状态、恢复状态、输出状态、验证状态</td>
+            <td>快照、恢复、投影、清单更新、审批状态合并。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>TaskEvent / TaskTimelineEventV2</td>
+            <td>任务执行</td>
+            <td>taskId、eventId、seq、actor、status、payload、timestamp</td>
+            <td>追加事件、分页查询、详情读取、语义时间线投影。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>TaskTraceRun / TaskTraceMetrics</td>
+            <td>任务执行与可靠性</td>
+            <td>sessionId、metrics、rawEvents、semanticTimeline、siblingRuns</td>
+            <td>展示运行详情、诊断性能、串联分支/继续执行。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>Artifact</td>
+            <td>Everything Workbench</td>
+            <td>taskId、path、mimeType、sha256、size、createdAt</td>
+            <td>登记、按任务查找、按路径查找最新版本、预览。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>ApprovalRequest</td>
+            <td>权限与安全</td>
+            <td>taskId、type、description、details、status、requestedAt、resolvedAt</td>
+            <td>创建审批、批准、拒绝、查询任务待审批项。</td>
+          </tr>
+          <tr>
+            <td>值对象/策略</td>
+            <td>PermissionRule</td>
+            <td>权限与安全</td>
+            <td>source、effect、scope、metadata、createdAt</td>
+            <td>匹配工具/域名/路径/命令/MCP 服务，产生 allow/deny/ask。</td>
+          </tr>
+          <tr>
+            <td>值对象</td>
+            <td>PermissionSecurityContext</td>
+            <td>权限与安全</td>
+            <td>exportTarget、directSource、recentSensitiveSources、recentUntrustedContentRead</td>
+            <td>为 data export 审批提供来源和目的地上下文。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>AgentRole</td>
+            <td>代理编排</td>
+            <td>角色说明、能力、工具策略、heartbeatPolicy、activeHours</td>
+            <td>作为任务执行人格/能力模板、参与团队、触发 Heartbeat。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>AgentTeamRun / OrchestrationGraph</td>
+            <td>代理编排</td>
+            <td>runId、nodes、events、workerRole、childTasks</td>
+            <td>拆分任务、调度子代理、汇总结果、可视化协作图。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>ManagedAgent</td>
+            <td>托管代理</td>
+            <td>名称、版本、状态、模板、发布态、审计信息</td>
+            <td>创建、更新、归档、版本化、从角色/自动化转换。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>ManagedAgentVersion</td>
+            <td>托管代理</td>
+            <td>systemPrompt、model、executionMode、runtimeDefaults、metadata</td>
+            <td>作为运行定义来源，驱动 backing Task 的配置。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>ManagedEnvironment</td>
+            <td>托管代理</td>
+            <td>workspaceId、tool policy、MCP scope、filePaths、credentialRefs</td>
+            <td>定义运行环境、工具边界、文件上下文和连接器范围。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>ManagedSession</td>
+            <td>托管代理</td>
+            <td>agentId、environmentId、status、surface、backingTaskId、events</td>
+            <td>创建运行、镜像任务事件、取消、恢复、发送 user.message。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>Memory</td>
+            <td>记忆与学习</td>
+            <td>workspaceId、type、content、summary、privacy、createdAt、updatedAt</td>
+            <td>捕获、压缩、搜索、注入、归档、清理。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>MemoryObservation</td>
+            <td>记忆与学习</td>
+            <td>facts、concepts、filesRead、tools、sourceEventIds、privacyState</td>
+            <td>把任务证据结构化，支持检索和 Dreaming 证据收集。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>CuratedMemoryEntry</td>
+            <td>记忆与学习</td>
+            <td>target、kind、content、source、confidence、evidenceRefs</td>
+            <td>添加、替换、移除，作为热记忆/项目事实注入。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>DreamingRun</td>
+            <td>记忆与学习</td>
+            <td>workspaceId、scopeKind、triggerSource、status、evidenceCount、candidateCount</td>
+            <td>启动、收集证据、完成/跳过/失败、生成候选。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>DreamingCandidate</td>
+            <td>记忆与学习</td>
+            <td>action、target、proposedValue、currentValue、rationale、evidenceRefs、status</td>
+            <td>审核、接受、应用、归档、驳回。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>HeartbeatSignal</td>
+            <td>Heartbeat/自动化</td>
+            <td>agentScope、workspaceScope、signalFamily、source、fingerprint、urgency、confidence、expiresAt</td>
+            <td>提交、合并、过期、驱动 Pulse。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>HeartbeatRun</td>
+            <td>Heartbeat/自动化</td>
+            <td>runId、agentRoleId、workspaceId、pulseResult、dispatchResult、dreamingResult</td>
+            <td>记录 Pulse/Dispatch 过程，链接创建出的 Task。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>AutomationProfile / Routine</td>
+            <td>Heartbeat/自动化</td>
+            <td>enabled、cadence、cooldown、budget、activeHours、trigger</td>
+            <td>控制后台代理行为、触发 recurring task 或 webhook。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>Channel</td>
+            <td>通道网关</td>
+            <td>type、name、enabled、encrypted config、securityConfig、status</td>
+            <td>创建、配置、启停、配对、加密配置、状态管理。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>ChannelUser</td>
+            <td>通道网关</td>
+            <td>channelUserId、displayName、allowed、pairingCode、attempts、lockoutUntil</td>
+            <td>配对、允许/拒绝、锁定、更新最后活跃。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>ChannelSession</td>
+            <td>通道网关</td>
+            <td>chatId、userId、taskId、workspaceId、state、context、debugMode</td>
+            <td>绑定远程对话与当前任务，处理等待审批和 follow-up。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>ChannelMessage</td>
+            <td>通道网关</td>
+            <td>direction、content、attachments、timestamp、chatId</td>
+            <td>记录入站/出站/用户自己的消息，作为上下文和审计。</td>
+          </tr>
+          <tr>
+            <td>策略对象</td>
+            <td>ChannelSpecialization</td>
+            <td>通道网关</td>
+            <td>channelId、chatId、threadId、workspace、agentRole、prompt guidance、tool restrictions</td>
+            <td>按 channel/chat/thread 分流到指定工作区和代理角色。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>Skill</td>
+            <td>技能运行时</td>
+            <td>id、name、description、content、parameters、routing metadata</td>
+            <td>注册、加载、启停、路由、验证、评估。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>SkillApplication</td>
+            <td>技能运行时</td>
+            <td>skillId、trigger、parameters、content、reason、contextDirectives</td>
+            <td>附加到任务、约束工具、提供模型提示或产物目录。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>MCPServer / Connector</td>
+            <td>MCP/连接器</td>
+            <td>server id、name、transport、tools、oauth config、enabled、status</td>
+            <td>连接、断开、列工具、刷新元数据、OAuth、权限过滤。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>SecureMcpTunnel</td>
+            <td>MCP/连接器</td>
+            <td>relay、clientToken、callerToken、policy、auditEvents</td>
+            <td>通过 outbound WebSocket 暴露本地 MCP，限制请求并审计。</td>
+          </tr>
+          <tr>
+            <td>实体/值对象</td>
+            <td>BrowserSession / BrowserSnapshot / ComputerUseSession</td>
+            <td>浏览器/电脑使用</td>
+            <td>webContentsId、taskId、sessionId、viewport、snapshot refs、lock state</td>
+            <td>导航、快照、点击、输入、截图、诊断、锁定单任务控制。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>MailboxThread / Commitment / ContactIdentity</td>
+            <td>Inbox/关系代理</td>
+            <td>thread、sender、commitment、due date、owner、relationship facts</td>
+            <td>邮件搜索、归类、草稿、承诺提取、关系记忆更新。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>Company</td>
+            <td>控制平面与 Company Ops</td>
+            <td>slug、budget、defaultWorkspaceId、operating context</td>
+            <td>组织运营边界、绑定默认工作区、承载目标/项目/议题。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>Goal / Project / Issue</td>
+            <td>控制平面与 Company Ops</td>
+            <td>status、priority、assigneeAgentRoleId、activeRunId、taskId、targetDate</td>
+            <td>目标分解、项目追踪、backlog 执行、映射到 Task。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>MissionControlItem</td>
+            <td>控制平面与 Company Ops</td>
+            <td>category、severity、decision、workspaceId、related task/run</td>
+            <td>汇总运行态势、呈现人工决策点、连接任务和运营状态。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>ContactIdentity</td>
+            <td>身份解析</td>
+            <td>displayName、primaryEmail、kgEntityId、handles、suggestions</td>
+            <td>跨邮箱、通道和知识图谱归并同一联系人。</td>
+          </tr>
+          <tr>
+            <td>实体</td>
+            <td>ContactIdentityHandle / ContactIdentitySuggestion</td>
+            <td>身份解析</td>
+            <td>handleType、normalizedValue、channelUserId、confidence、status</td>
+            <td>绑定/解绑 handle，提出、确认或拒绝身份合并建议。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="contexts">
+      <h2>6. 上下文详细建模</h2>
+
+      <h3>6.1 任务执行上下文</h3>
+      <p><strong>职责：</strong>维护从用户目标到执行结果的完整生命周期。它是全系统的核心上下文。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>不变量/规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Task</td>
+            <td>title、canonical prompt、status、workspaceId、agentConfig、budget、lineage、risk、outputs</td>
+            <td>create、update status、spawn child、continue、branch、complete、record outcome</td>
+            <td>任务必须属于 Workspace；新任务需保留 canonical prompt；终态任务不能被 late resume 重新打开。</td>
+          </tr>
+          <tr>
+            <td>TaskStrategySnapshot</td>
+            <td>intent、conversationMode、executionMode、taskDomain、workflowMode、confidence</td>
+            <td>描述路由策略，指导执行模式、预检和模型选择</td>
+            <td>策略可以指导执行，但不能覆盖用户原始意图。</td>
+          </tr>
+          <tr>
+            <td>SessionRuntime</td>
+            <td>taskProjection、checklist、permissionState、recoveryState、outputState</td>
+            <td>prepare turn、apply follow-up、persist snapshot、recover、project UI state</td>
+            <td>SessionRuntime 是任务会话状态单一拥有者；权限状态必须快照持久化。</td>
+          </tr>
+          <tr>
+            <td>TaskEvent</td>
+            <td>taskId、seq、actor、type、payload、status、timestamp</td>
+            <td>append、page、detail、semantic projection</td>
+            <td>事件按 taskId 和序号形成追加式时间线。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>6.2 代理编排上下文</h3>
+      <p><strong>职责：</strong>把复杂任务分配给多个角色、模型或远程代理，并收敛为可理解结果。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>AgentRole</td>
+            <td>displayName、description、capabilities、tool policy、heartbeatPolicy</td>
+            <td>作为任务角色、被 mention、参与团队、触发后台自动化</td>
+            <td>角色工具范围应小于或等于 Workspace/Task 权限。</td>
+          </tr>
+          <tr>
+            <td>WorkerRole</td>
+            <td>researcher、implementer、verifier、synthesizer</td>
+            <td>限制子代理职责和工具范围</td>
+            <td>验证者应使用独立判定合同输出 verdict/report。</td>
+          </tr>
+          <tr>
+            <td>AgentTeamRun</td>
+            <td>team、members、items、thoughts、childTasks、status</td>
+            <td>创建团队运行、分配工作、聚合输出</td>
+            <td>团队运行仍以 Task/TaskEvent 为执行事实源。</td>
+          </tr>
+          <tr>
+            <td>DelegationGraph</td>
+            <td>run、node、event、parent-child relation</td>
+            <td>统一 spawned agents、multitask lanes、workflow phases、ACP tasks</td>
+            <td>所有委派工作应进入同一图模型，方便追踪和恢复。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>6.3 托管代理上下文</h3>
+      <p><strong>职责：</strong>把底层执行能力产品化为可配置、可版本、可审计的 Agents Hub 资源。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>聚合/对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>ManagedAgent</td>
+            <td>name、status、currentVersion、template、audit</td>
+            <td>create、update、archive、convert from role/profile</td>
+            <td>自身不直接执行，必须通过 ManagedSession 映射到 Task。</td>
+          </tr>
+          <tr>
+            <td>ManagedAgentVersion</td>
+            <td>systemPrompt、model、executionMode、runtimeDefaults、studio metadata</td>
+            <td>定义一次运行使用的代理行为和默认预算</td>
+            <td>runtimeDefaults.maxTurns 是显式上限；未设置则继承主任务默认行为。</td>
+          </tr>
+          <tr>
+            <td>ManagedEnvironment</td>
+            <td>workspaceId、tool policy、MCP allowlist、file paths、credential refs</td>
+            <td>配置本地执行环境、工具范围和文件上下文</td>
+            <td>renderer-facing 读取必须隐藏 credentialRefs 和 managedAccountRefs。</td>
+          </tr>
+          <tr>
+            <td>ManagedSession</td>
+            <td>agentId、environmentId、surface、status、backingTaskId、event history</td>
+            <td>create、cancel、resume、sendEvent、mirror task events</td>
+            <td>API-facing durable run 是 ManagedSession，执行 worker 是 Task。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>6.4 权限与安全上下文</h3>
+      <p><strong>职责：</strong>在高能力代理和本地/外部资源之间提供清晰的审批、阻断和审计边界。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>PermissionRule</td>
+            <td>source、effect、scope、metadata</td>
+            <td>match tool/domain/path/command/mcp_server</td>
+            <td>更具体的规则优先；同等时 session > workspace > manifest > profile > legacy > mode。</td>
+          </tr>
+          <tr>
+            <td>PermissionEvaluationResult</td>
+            <td>decision、reason、matchedRule、suggestions、scopePreview</td>
+            <td>给工具执行返回 allow/deny/ask</td>
+            <td>硬阻断不能被后续规则覆盖。</td>
+          </tr>
+          <tr>
+            <td>ApprovalRequest</td>
+            <td>type、description、details、status、requestedAt</td>
+            <td>request、approve、deny、resolve</td>
+            <td>data_export、location_access 等高风险类型保持独立审批语义。</td>
+          </tr>
+          <tr>
+            <td>FileProvenanceRecord</td>
+            <td>path、sourceKind、trustLevel、sourceLabel、recordedAt</td>
+            <td>标记导入文件来源，驱动不可信内容与导出审批上下文</td>
+            <td>从 channel/clipboard/import 进入的文件默认需要 provenance-aware 处理。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>6.5 记忆与 Workflow Intelligence 上下文</h3>
+      <p><strong>职责：</strong>让系统在长期使用中保留偏好、事实、约束、关系、承诺和可复用工作流经验。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Memory</td>
+            <td>workspaceId、type、content、summary、embedding、privacy</td>
+            <td>capture、compress、search、inject、archive</td>
+            <td>敏感信息模式应过滤；压缩/检索应遵循预算和隐私状态。</td>
+          </tr>
+          <tr>
+            <td>MemoryObservation</td>
+            <td>facts、concepts、filesRead、tools、sourceEventIds</td>
+            <td>从任务证据生成结构化观察</td>
+            <td>观察应保留来源，便于后续 recall 和 Dreaming 审核。</td>
+          </tr>
+          <tr>
+            <td>RelationshipMemory</td>
+            <td>identity、preferences、context、history、commitments</td>
+            <td>存储个人连续性、承诺生命周期、偏好反馈</td>
+            <td>共享频道记忆隔离，除非明确可信/开启共享记忆。</td>
+          </tr>
+          <tr>
+            <td>KnowledgeGraph</td>
+            <td>nodes、edges、temporal validity、source evidence</td>
+            <td>链接人、公司、项目、文件、事件和事实</td>
+            <td>时间感知边需要保留有效期，防止历史事实覆盖当前状态。</td>
+          </tr>
+          <tr>
+            <td>DreamingRun/Candidate</td>
+            <td>trigger、scope、evidence、candidate action、target、status</td>
+            <td>收集证据、生成记忆维护候选、审核应用</td>
+            <td>Dreaming 只提案，不静默改写记忆。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>6.6 Heartbeat 与自动化上下文</h3>
+      <p><strong>职责：</strong>管理后台“何时应该思考/提醒/执行”的节奏，避免把所有环境变化都变成任务。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>HeartbeatSignal</td>
+            <td>agentScope、workspaceScope、signalFamily、fingerprint、urgency、confidence、expiresAt</td>
+            <td>emit、merge、expire、summarize</td>
+            <td>相同 fingerprint 合并，避免 wake queue 无界增长。</td>
+          </tr>
+          <tr>
+            <td>Pulse</td>
+            <td>signal ledger、due proactive、checklist cadence、foreground contention</td>
+            <td>deterministic reduce，产出 idle/deferred/suggestion/dispatch</td>
+            <td>Pulse 不调用 LLM，不直接创建任务。</td>
+          </tr>
+          <tr>
+            <td>Dispatch</td>
+            <td>cooldown、daily budget、evidence refs、task definition</td>
+            <td>创建建议、通知、任务或 runbook</td>
+            <td>只有 Pulse 明确升级时才运行；需要证据引用。</td>
+          </tr>
+          <tr>
+            <td>AutomationProfile</td>
+            <td>enabled、cadenceMinutes、staggerOffset、cooldown、budget、activeHours、profile</td>
+            <td>配置 observer/operator/dispatcher 行为</td>
+            <td>Heartbeat 所有权属于 AutomationProfile，不直接附着于 persona 模板。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>6.7 通道网关上下文</h3>
+      <p><strong>职责：</strong>将远程消息平台统一为安全可控的任务入口和进度出口。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Channel</td>
+            <td>type、name、enabled、encrypted config、securityConfig、status、botUsername</td>
+            <td>create、update、enable、disable、delete</td>
+            <td>配置应加密保存；默认安全模式倾向 pairing。</td>
+          </tr>
+          <tr>
+            <td>ChannelUser</td>
+            <td>channelUserId、displayName、allowed、pairingCode、attempts、lockoutUntil</td>
+            <td>pair、allow、deny、lockout、lastSeen</td>
+            <td>暴力配对失败需要锁定保护。</td>
+          </tr>
+          <tr>
+            <td>ChannelSession</td>
+            <td>chatId、userId、taskId、workspaceId、state、context</td>
+            <td>start task、queue follow-up、wait approval、reset with /new</td>
+            <td>follow-up 绑定当前任务，任务结束后下一条消息重新解析 specialization。</td>
+          </tr>
+          <tr>
+            <td>ChannelSpecialization</td>
+            <td>workspace、agentRole、prompt guidance、tool restrictions、shared-memory flag</td>
+            <td>按 channel/chat/thread 分流</td>
+            <td>解析优先级：thread > chat > channel > 默认设置。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>6.8 Everything Workbench 上下文</h3>
+      <p><strong>职责：</strong>把代理输出变成可继续操作的工作产物，而不是一次性下载结果。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Artifact</td>
+            <td>path、mimeType、sha256、size、taskId</td>
+            <td>register、open、preview、refresh</td>
+            <td>Artifact 必须关联 Task；preview 只能解析 workspace-contained 输出。</td>
+          </tr>
+          <tr>
+            <td>DocumentPreview</td>
+            <td>blocks、text、editable metadata、format</td>
+            <td>DOCX 编辑、保存、复制、外部打开</td>
+            <td>非 DOCX 格式采用 best-effort 或外部打开。</td>
+          </tr>
+          <tr>
+            <td>SpreadsheetPreview</td>
+            <td>sheets、bounds、values、formulas、styles、column widths</td>
+            <td>选择、编辑、添加行列、保存、复制</td>
+            <td>CSV/TSV 保留原 delimiter；复杂原生格式走外部应用。</td>
+          </tr>
+          <tr>
+            <td>PresentationPreview</td>
+            <td>slides、notes、thumbnail、cached image</td>
+            <td>导航、缩放、查看备注、渲染缓存</td>
+            <td>图片渲染不可用时保留 text-only fallback。</td>
+          </tr>
+          <tr>
+            <td>WebPreview / BrowserWorkbench</td>
+            <td>iframe html、assets、viewport、diagnostics、snapshot refs</td>
+            <td>预览 HTML/React 输出、测试实时网页、刷新 follow-up</td>
+            <td>React 源项目无 build 输出时显示 build-output-needed，不自动启动 dev server。</td>
+          </tr>
+          <tr>
+            <td>TerminalTab</td>
+            <td>pty process、cwd、replay buffer、status、size</td>
+            <td>创建、输入、resize、stop、close、replay</td>
+            <td>人类终端与 agent shell tool 分离，但共享工作上下文。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>6.9 技能运行时上下文</h3>
+      <p><strong>职责：</strong>把技能作为 additive context 注入任务，避免技能路由改写用户真实目标。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Skill</td>
+            <td>id、name、description、content、parameters、routing metadata</td>
+            <td>load、validate、rank、enable/disable</td>
+            <td>自然语言路由只产生 shortlist，不自动替换任务。</td>
+          </tr>
+          <tr>
+            <td>SkillApplication</td>
+            <td>skillId、trigger、parameters、content、reason、appliedAt、contextDirectives</td>
+            <td>apply、reuse guard、merge directives</td>
+            <td>技能只能附加上下文和收窄/指导工具，不能重定义 Task。</td>
+          </tr>
+          <tr>
+            <td>SlashCommand</td>
+            <td>token、args、skill slug、alias</td>
+            <td>解析、确定性调用 skill、参数收集</td>
+            <td>已识别 slash command 由 app/gateway 处理，不当作普通任务文本。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>6.10 MCP 与连接器上下文</h3>
+      <p><strong>职责：</strong>将外部 SaaS/API 能力作为受治理工具引入代理运行时。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>MCPServerConfig</td>
+            <td>server id、command/transport、enabled、tools、auth</td>
+            <td>connect、list tools、disconnect、refresh metadata</td>
+            <td>工具暴露必须经过模式、权限和 allowlist 过滤。</td>
+          </tr>
+          <tr>
+            <td>ConnectorOAuthRequest/Result</td>
+            <td>provider、scopes、redirect、token state</td>
+            <td>发起 OAuth、完成授权、刷新 token</td>
+            <td>auth failure 需要产生去重后的 integration notification。</td>
+          </tr>
+          <tr>
+            <td>SecureMcpTunnel</td>
+            <td>relay URL、client/caller tokens、policy、audit events、limits</td>
+            <td>forward JSON-RPC、audit、limit、deny</td>
+            <td>outbound-only，relay policy 与本地 policy 双重限制。</td>
+          </tr>
+          <tr>
+            <td>Connector Package</td>
+            <td>tool schemas、README、package、source</td>
+            <td>实现特定系统工具，例如 Jira、Linear、HubSpot、Maps</td>
+            <td>连接器应保持独立包边界，避免污染核心运行时。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>6.11 控制平面与 Company Ops 上下文</h3>
+      <p><strong>职责：</strong>把个人或公司级运营目标拆成可跟踪、可分派、可执行的工作项，并通过 Mission Control 统一观察。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Company</td>
+            <td>slug、monthlyBudgetCost、defaultWorkspaceId、operating profile</td>
+            <td>创建公司运营边界、配置预算和默认工作区</td>
+            <td>Company 是 Goal/Project/Issue 的上游组织边界，不直接替代 Workspace。</td>
+          </tr>
+          <tr>
+            <td>Goal</td>
+            <td>companyId、status、targetDate、owner、metrics</td>
+            <td>定义目标、更新状态、拆分为项目</td>
+            <td>Goal 应表达结果方向，Project/Issue 表达执行路径。</td>
+          </tr>
+          <tr>
+            <td>Project</td>
+            <td>goalId、workspaceId、status、priority、targetDate</td>
+            <td>承接目标、组织 Issue、关联工作区上下文</td>
+            <td>Project 应绑定执行工作区，便于任务运行和记忆归属。</td>
+          </tr>
+          <tr>
+            <td>Issue</td>
+            <td>projectId、priority、assigneeAgentRoleId、activeRunId、taskId、status</td>
+            <td>进入 backlog、分配代理、创建/关联 Task、更新执行状态</td>
+            <td>Issue 是运营计划到 Task Runtime 的主要映射点。</td>
+          </tr>
+          <tr>
+            <td>MissionControlItem</td>
+            <td>category、severity、decision、related task/run、workspaceId</td>
+            <td>聚合运行态势、风险、待决策项和 handoff 信息</td>
+            <td>Mission Control 是读模型/观察面，不应成为重复执行事实源。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>6.12 身份解析上下文</h3>
+      <p><strong>职责：</strong>在 Inbox、Gateway、Knowledge Graph 和联系人记忆之间识别“同一个人/组织”的多源身份。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>ContactIdentity</td>
+            <td>displayName、primaryEmail、kgEntityId、createdAt、updatedAt</td>
+            <td>创建身份、链接知识图谱实体、合并联系人上下文</td>
+            <td>ContactIdentity 表示归一化人/组织，不等同于某个渠道账号。</td>
+          </tr>
+          <tr>
+            <td>ContactIdentityHandle</td>
+            <td>handleType、normalizedValue、channelUserId、source、confidence</td>
+            <td>绑定邮箱、聊天账号、用户名、电话号码等 handle</td>
+            <td>Handle 应保留来源和归一化值，避免不同渠道同名误合并。</td>
+          </tr>
+          <tr>
+            <td>ContactIdentitySuggestion</td>
+            <td>candidateIdentityId、evidence、confidence、status</td>
+            <td>提出合并/链接建议，等待确认或拒绝</td>
+            <td>低置信度身份合并应走 suggestion，而不是静默写入。</td>
+          </tr>
+          <tr>
+            <td>ContactTimelineEntry</td>
+            <td>identityId、sourceType、sourceId、timestamp、summary</td>
+            <td>形成联系人相关邮件、通道消息、任务和承诺时间线</td>
+            <td>时间线应引用来源，不复制敏感消息全文。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="relationships">
+      <h2>7. 跨上下文关系</h2>
+      <div class="relation-grid">
+        <div class="card">
+          <div class="card-header"><h3>Task 是执行事实源</h3></div>
+          <div class="card-body">
+            <p>ManagedSession、ChannelSession、HeartbeatRun、AgentTeamRun 最终都会关联到 Task 或 TaskEvent。Task 是所有真实执行的汇聚点。</p>
+            <ul>
+              <li>ChannelSession 通过 <code>taskId</code> 绑定远程对话的当前任务。</li>
+              <li>ManagedSession 创建 exactly one backing Task。</li>
+              <li>Heartbeat Dispatch 创建的任务携带 <code>heartbeatRunId</code>。</li>
+              <li>Artifact、Approval、TaskEvent 都以 <code>taskId</code> 作为归属。</li>
+            </ul>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Workspace 是治理边界</h3></div>
+          <div class="card-body">
+            <p>Workspace 将本地路径、权限、记忆、工作区 kit、通道 specialization 和托管环境连接起来。</p>
+            <ul>
+              <li>WorkspacePermissions 决定读写、删除、网络、Shell 能力。</li>
+              <li>Workspace-local permission rules 可落库并镜像到 `.cowork/policy`。</li>
+              <li>Memory、Observation、Heartbeat、ManagedEnvironment 均按 workspace 归属。</li>
+            </ul>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Skill 是附加上下文</h3></div>
+          <div class="card-body">
+            <p>SkillApplication 影响执行上下文和工具暴露，但不修改 canonical task text。</p>
+            <ul>
+              <li>Skill 可由 slash、planner、model 或 explicit hint 触发。</li>
+              <li>contextDirectives 可提供 allowedTools、toolRestrictions、modelHint、artifactDirectories。</li>
+              <li>任务定义始终由 rawPrompt/userPrompt/prompt 的 canonical 顺序决定。</li>
+            </ul>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Memory 是学习事实源</h3></div>
+          <div class="card-body">
+            <p>任务完成、Chronicle、Heartbeat、Relationship Agent、Inbox 等都可能产生记忆证据；Dreaming 只产出候选。</p>
+            <ul>
+              <li>MemoryService 捕获、压缩、检索和注入。</li>
+              <li>MemoryObservation 将任务证据结构化。</li>
+              <li>DreamingCandidate 需要被审核后才会应用。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="events">
+      <h2>8. 领域事件与生命周期</h2>
+      <h3>8.1 任务生命周期</h3>
+      <div class="flow">
+        <div class="flow-node">TaskCreated<br /><span class="small">manual/cron/hook/api/channel</span></div>
+        <div class="arrow">→</div>
+        <div class="flow-node">TaskExecuting<br /><span class="small">strategy + runtime + tools</span></div>
+        <div class="arrow">→</div>
+        <div class="flow-node">TaskTerminal<br /><span class="small">completed/failed/paused/cancelled</span></div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>事件</th>
+            <th>触发源</th>
+            <th>消费者</th>
+            <th>业务意义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>TaskCreated</td>
+            <td>用户输入、Channel、Cron、Heartbeat、ManagedSession、Hook</td>
+            <td>AgentDaemon、Renderer、Mission Control</td>
+            <td>一个新执行目标进入系统。</td>
+          </tr>
+          <tr>
+            <td>TaskEventAppended</td>
+            <td>SessionRuntime、ToolScheduler、Daemon</td>
+            <td>Timeline、Trace、ManagedSessionEvent mirror、MemoryObservation</td>
+            <td>执行过程中的事实追加。</td>
+          </tr>
+          <tr>
+            <td>ApprovalRequested</td>
+            <td>PermissionEngine</td>
+            <td>Renderer、ChannelSession、TaskRuntime</td>
+            <td>执行因风险动作暂停，等待人类决策。</td>
+          </tr>
+          <tr>
+            <td>ArtifactCreated</td>
+            <td>工具执行或文件检测</td>
+            <td>Everything Workbench、Task feed、Preview IPC</td>
+            <td>任务产出进入可操作工作台。</td>
+          </tr>
+          <tr>
+            <td>TaskCompleted</td>
+            <td>AgentDaemon/SessionRuntime</td>
+            <td>MemoryService、DreamingService、Heartbeat、Mission Control</td>
+            <td>触发记忆巩固、结果投影、托管会话完成。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>8.2 Heartbeat 生命周期</h3>
+      <div class="flow">
+        <div class="flow-node">SignalEmitted<br /><span class="small">ambient/mention/manual/cron</span></div>
+        <div class="arrow">→</div>
+        <div class="flow-node">PulseReduced<br /><span class="small">idle/deferred/suggestion/dispatch</span></div>
+        <div class="arrow">→</div>
+        <div class="flow-node">DispatchOrDreaming<br /><span class="small">task/suggestion/candidate</span></div>
+      </div>
+
+      <h3>8.3 Managed Agent 生命周期</h3>
+      <div class="flow">
+        <div class="flow-node">ManagedAgentVersioned</div>
+        <div class="arrow">→</div>
+        <div class="flow-node">ManagedSessionCreated<br /><span class="small">bind environment</span></div>
+        <div class="arrow">→</div>
+        <div class="flow-node">BackingTaskObserved<br /><span class="small">events mirrored</span></div>
+      </div>
+    </section>
+
+    <section id="rules">
+      <h2>9. 关键业务规则与不变量</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>规则</th>
+            <th>所属上下文</th>
+            <th>解释</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Canonical Task Invariant</td>
+            <td>任务执行 / 技能运行时</td>
+            <td>原始任务文本按 <code>rawPrompt → userPrompt → prompt</code> 解析；技能只附加上下文，不替换任务定义。</td>
+          </tr>
+          <tr>
+            <td>Workspace Capability First</td>
+            <td>权限与安全</td>
+            <td>工作区能力是粗粒度边界，网络、Shell、写入、删除等能力必须先满足工作区权限。</td>
+          </tr>
+          <tr>
+            <td>Hard Deny Cannot Be Overridden</td>
+            <td>权限与安全</td>
+            <td>危险命令、硬 guardrail、task restriction、显式 deny 不被 mode 或 fallback 覆盖。</td>
+          </tr>
+          <tr>
+            <td>Data Export 独立审批</td>
+            <td>权限与安全</td>
+            <td>即使普通网络访问被允许，发送本地/导入内容到外部服务仍进入 <code>data_export</code> 审批通道。</td>
+          </tr>
+          <tr>
+            <td>ManagedSession 不直接执行</td>
+            <td>托管代理</td>
+            <td>ManagedSession 是 API-facing durable run，底层必须映射到 Task 或 AgentTeamRun。</td>
+          </tr>
+          <tr>
+            <td>Dreaming Review-First</td>
+            <td>记忆与学习</td>
+            <td>Dreaming 只能生成候选，不能静默修改 Memory；候选应用必须走 Memory/CuratedMemory 等现有路径。</td>
+          </tr>
+          <tr>
+            <td>Heartbeat Pulse Is Cheap</td>
+            <td>Heartbeat/自动化</td>
+            <td>Pulse 是确定性状态归约，不调用 LLM、不创建任务；只有 Dispatch 能升级为可见工作。</td>
+          </tr>
+          <tr>
+            <td>Channel Specialization Sticky Follow-up</td>
+            <td>通道网关</td>
+            <td>新任务按 specialization 路由；已有任务的 follow-up 保持原 workspace/role，避免对话中途切身份。</td>
+          </tr>
+          <tr>
+            <td>Artifacts Are Task-Owned</td>
+            <td>Everything Workbench</td>
+            <td>Artifact 以 Task 为归属，工作台 follow-up 仍回到同一任务语境或相关任务语境。</td>
+          </tr>
+          <tr>
+            <td>Shared Memory Is Opt-in</td>
+            <td>记忆 / 通道网关</td>
+            <td>群组/公共通道默认不注入共享记忆，除非 specialization 明确允许。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="strategic-design">
+      <h2>10. 战略设计视角</h2>
+      <h3>核心域</h3>
+      <p>
+        <strong>可治理代理执行平台</strong> 是项目竞争力核心：Task Runtime、Agent Orchestration、Permission Engine、Managed Agents 共同形成
+        “从自然语言目标到可审计执行产物”的业务闭环。这里应保持高内聚，避免被 UI 细节、连接器细节或具体 provider 细节污染。
+      </p>
+      <h3>支撑域</h3>
+      <p>
+        Memory/Heartbeat/Dreaming、Everything Workbench、Gateway/Connectors、Skills 是支撑域。它们增强核心域的长期性、可扩展性和工作产物质量，
+        但应通过明确事件、仓储接口和应用服务与 Task Runtime 协作。
+      </p>
+      <h3>通用域</h3>
+      <p>
+        Profiles、Settings、Updater、Telemetry、Native Helpers、打包脚本等属于通用域。它们对产品可用性很重要，但不应主导核心模型命名。
+      </p>
+      <div class="note warning">
+        <strong>建模风险：</strong>当前项目文件名中大量使用 Service/Repository，领域边界主要靠目录和文档表达。随着功能继续增长，建议把核心域对象的生命周期和规则进一步沉淀为领域层类型，而不是只在 Electron service 中隐式实现。
+      </div>
+    </section>
+
+    <section id="recommendations">
+      <h2>11. 后续建模建议</h2>
+      <ol>
+        <li><strong>建立 Context Map 文档：</strong>将本报告中的 15 个限界上下文固化为架构文档，明确每个上下文的 upstream/downstream、事件和所有权。</li>
+        <li><strong>强化聚合边界：</strong>Task、ManagedSession、Channel、Memory、HeartbeatRun 应明确哪些子对象只能通过聚合根修改，避免跨 Repository 任意写入。</li>
+        <li><strong>抽出领域事件命名：</strong>将 TaskCreated、TaskCompleted、ArtifactCreated、ApprovalRequested、MemoryCandidateProposed 等事件命名固化，减少 payload 语义漂移。</li>
+        <li><strong>为策略对象建测试矩阵：</strong>PermissionRule、TaskStrategySnapshot、ChannelSpecialization、HeartbeatPulseDecision、SkillApplication 是高价值策略对象，应有规则级测试。</li>
+        <li><strong>建立统一对象词汇表：</strong>README、docs 和 UI 中的 Agent、Managed Agent、Role、Session、Task、Run 应统一命名，避免用户和开发者混淆。</li>
+      </ol>
+    </section>
+
+    <section id="sources">
+      <h2>12. 证据来源</h2>
+      <p>本报告主要依据以下项目文件和文档抽取概念模型：</p>
+      <ul class="source-list">
+        <li>README.md</li>
+        <li>package.json</li>
+        <li>docs/architecture.md</li>
+        <li>docs/use-cases.md</li>
+        <li>docs/managed-agents.md</li>
+        <li>docs/everything-workbench.md</li>
+        <li>docs/channels.md</li>
+        <li>docs/skills-runtime-model.md</li>
+        <li>docs/heartbeat-v3.md</li>
+        <li>docs/dreaming.md</li>
+        <li>docs/permission-system.md</li>
+        <li>docs/relationship-agent-architecture.md</li>
+        <li>src/shared/types.ts</li>
+        <li>src/electron/database/schema.ts</li>
+        <li>src/electron/database/repositories.ts</li>
+        <li>src/electron/agent/runtime/SessionRuntime.ts</li>
+        <li>src/electron/agent/runtime/PermissionEngine.ts</li>
+        <li>src/electron/control-plane/ControlPlaneCoreService.ts</li>
+        <li>src/electron/managed/ManagedSessionService.ts</li>
+        <li>src/electron/managed/AgentBuilderService.ts</li>
+        <li>src/electron/memory/MemoryService.ts</li>
+        <li>src/electron/memory/DreamingService.ts</li>
+        <li>src/electron/agents/HeartbeatService.ts</li>
+        <li>src/electron/gateway/channels/types.ts</li>
+        <li>src/electron/identity/ContactIdentityService.ts</li>
+        <li>connectors/*/README.md</li>
+        <li>connectors/*/package.json</li>
+      </ul>
+      <p class="muted small">
+        注：本报告是代码与文档层面的概念建模，不代表数据库表、DTO 或 UI component 的逐项清单。对于 DDD，“领域对象”优先按业务语义和生命周期归并。
+      </p>
+    </section>
+  </main>
+
+  <footer>
+    Generated for CoWork OS domain modeling. Report format: standalone HTML. Recommended owner: architecture / product engineering.
+  </footer>
+</body>
+</html>
