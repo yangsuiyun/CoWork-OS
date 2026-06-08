@@ -607,6 +607,194 @@ export class BrowserWorkbenchService {
     };
   }
 
+  async inspectPoint(input: {
+    taskId: string;
+    sessionId?: unknown;
+    x: number;
+    y: number;
+  }): Promise<AnyRecord | null> {
+    const contents = await this.getWebContents(this.getSession(input.taskId, input.sessionId));
+    if (!contents) return null;
+    const x = Number.isFinite(input.x) ? Math.max(0, Math.round(input.x)) : 0;
+    const y = Number.isFinite(input.y) ? Math.max(0, Math.round(input.y)) : 0;
+    const debug = contents.debugger;
+    if (!debug) return null;
+    try {
+      if (!debug.isAttached()) debug.attach("1.3");
+      await debug.sendCommand("Runtime.enable").catch(() => undefined);
+    } catch {
+      return null;
+    }
+    const expression = `
+      (() => {
+        const pointX = ${JSON.stringify(x)};
+        const pointY = ${JSON.stringify(y)};
+        const el = document.elementFromPoint(pointX, pointY);
+        if (!el) return null;
+        const cssEscape = (value) => {
+          if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
+          return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\\\$&");
+        };
+        const selectorFor = (node) => {
+          if (!(node instanceof Element)) return "";
+          const parts = [];
+          let current = node;
+          while (current && current.nodeType === Node.ELEMENT_NODE && parts.length < 8) {
+            let part = current.localName.toLowerCase();
+            if (current.id) {
+              parts.unshift(part + "#" + cssEscape(current.id));
+              break;
+            }
+            const classNames = Array.from(current.classList || []).slice(0, 3);
+            if (classNames.length > 0) part += "." + classNames.map(cssEscape).join(".");
+            const parent = current.parentElement;
+            if (parent) {
+              const sameTag = Array.from(parent.children).filter((child) => child.localName === current.localName);
+              if (sameTag.length > 1) part += ":nth-of-type(" + (sameTag.indexOf(current) + 1) + ")";
+            }
+            parts.unshift(part);
+            current = parent;
+          }
+          return parts.join(" > ");
+        };
+        const xpathFor = (node) => {
+          if (!(node instanceof Element)) return "";
+          const parts = [];
+          let current = node;
+          while (current && current.nodeType === Node.ELEMENT_NODE) {
+            let index = 1;
+            let sibling = current.previousElementSibling;
+            while (sibling) {
+              if (sibling.localName === current.localName) index += 1;
+              sibling = sibling.previousElementSibling;
+            }
+            parts.unshift(current.localName.toLowerCase() + "[" + index + "]");
+            current = current.parentElement;
+          }
+          return "/" + parts.join("/");
+        };
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return {
+          rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          scroll: { x: window.scrollX || 0, y: window.scrollY || 0 },
+          selector: selectorFor(el),
+          xpath: xpathFor(el),
+          tagName: el.tagName ? el.tagName.toLowerCase() : "",
+          role: el.getAttribute("role") || "",
+          accessibleName: el.getAttribute("aria-label") || el.getAttribute("title") || "",
+          textQuote: (el.innerText || el.textContent || "").trim().replace(/\\s+/g, " ").slice(0, 300),
+          computedStyle: {
+            color: style.color,
+            backgroundColor: style.backgroundColor,
+            fontFamily: style.fontFamily,
+            fontSize: style.fontSize,
+            fontWeight: style.fontWeight,
+            lineHeight: style.lineHeight,
+            margin: style.margin,
+            padding: style.padding,
+            borderRadius: style.borderRadius,
+          },
+        };
+      })()
+    `;
+    const evaluated = await debug.sendCommand("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    return (evaluated?.result?.value || null) as AnyRecord | null;
+  }
+
+  async resolveAnnotationTargets(input: {
+    taskId: string;
+    sessionId?: unknown;
+    targets: AnyRecord[];
+  }): Promise<AnyRecord[]> {
+    const contents = await this.getWebContents(this.getSession(input.taskId, input.sessionId));
+    if (!contents) return [];
+    const targets = Array.isArray(input.targets) ? input.targets.slice(0, 100) : [];
+    if (targets.length === 0) return [];
+    const debug = contents.debugger;
+    if (!debug) return [];
+    try {
+      if (!debug.isAttached()) debug.attach("1.3");
+      await debug.sendCommand("Runtime.enable").catch(() => undefined);
+    } catch {
+      return targets.map((_, index) => ({
+        index,
+        resolved: false,
+        error: "Browser debugger is unavailable",
+      }));
+    }
+    const expression = `
+      (() => {
+        const targets = ${JSON.stringify(targets)};
+        const byXPath = (xpath) => {
+          if (!xpath) return null;
+          try {
+            const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+            return result.singleNodeValue instanceof Element ? result.singleNodeValue : null;
+          } catch {
+            return null;
+          }
+        };
+        const byText = (textQuote) => {
+          const needle = String(textQuote || "").trim().replace(/\\s+/g, " ").slice(0, 160);
+          if (!needle) return null;
+          const all = Array.from(document.body?.querySelectorAll("*") || []).slice(0, 2500);
+          return all.find((node) => {
+            const text = (node.innerText || node.textContent || "").trim().replace(/\\s+/g, " ");
+            return text && text.includes(needle);
+          }) || null;
+        };
+        const describe = (el) => {
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          return {
+            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+            scroll: { x: window.scrollX || 0, y: window.scrollY || 0 },
+            tagName: el.tagName ? el.tagName.toLowerCase() : "",
+            role: el.getAttribute("role") || "",
+            accessibleName: el.getAttribute("aria-label") || el.getAttribute("title") || "",
+            textQuote: (el.innerText || el.textContent || "").trim().replace(/\\s+/g, " ").slice(0, 300),
+            computedStyle: {
+              color: style.color,
+              backgroundColor: style.backgroundColor,
+              fontFamily: style.fontFamily,
+              fontSize: style.fontSize,
+              fontWeight: style.fontWeight,
+              lineHeight: style.lineHeight,
+              margin: style.margin,
+              padding: style.padding,
+              borderRadius: style.borderRadius,
+            },
+          };
+        };
+        return targets.map((target, index) => {
+          let el = null;
+          if (target.selector) {
+            try {
+              el = document.querySelector(target.selector);
+            } catch {
+              el = null;
+            }
+          }
+          if (!el) el = byXPath(target.xpath);
+          if (!el) el = byText(target.textQuote);
+          if (!el) return { index, resolved: false };
+          return { index, resolved: true, target: describe(el) };
+        });
+      })()
+    `;
+    const evaluated = await debug.sendCommand("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+    }).catch(() => null);
+    return Array.isArray(evaluated?.result?.value) ? evaluated.result.value as AnyRecord[] : [];
+  }
+
   private async captureFullPage(contents: Any): Promise<{ png: Buffer; size: { width: number; height: number } }> {
     const debug = contents.debugger;
     if (!debug) throw new Error("Browser debugger is not available for full-page capture");

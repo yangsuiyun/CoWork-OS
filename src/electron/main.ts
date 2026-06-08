@@ -84,6 +84,7 @@ import {
   ChannelMessageRepository,
   ChannelRepository,
   ChannelUserRepository,
+  AnnotationRepository,
   TaskEventRepository,
   TaskRepository,
   WorkspaceRepository,
@@ -4269,6 +4270,127 @@ if (!gotTheLock) {
     });
     if (!result) return { success: false, error: "No active browser workbench session" };
     return { success: true, ...result };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.BROWSER_WORKBENCH_INSPECT_POINT, async (_event, data: Any) => {
+    if (
+      !data ||
+      typeof data.taskId !== "string" ||
+      typeof data.x !== "number" ||
+      typeof data.y !== "number"
+    ) {
+      return { success: false, error: "Invalid browser inspect request" };
+    }
+    const target = await getBrowserWorkbenchService().inspectPoint({
+      taskId: data.taskId,
+      sessionId: typeof data.sessionId === "string" ? data.sessionId : "default",
+      x: data.x,
+      y: data.y,
+    });
+    if (!target) return { success: false, error: "No inspectable element at that point" };
+    return { success: true, target };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.BROWSER_WORKBENCH_RESOLVE_ANNOTATION_TARGETS, async (_event, data: Any) => {
+    if (
+      !data ||
+      typeof data.taskId !== "string" ||
+      !Array.isArray(data.targets)
+    ) {
+      return { success: false, error: "Invalid browser annotation target resolve request" };
+    }
+    const targets = await getBrowserWorkbenchService().resolveAnnotationTargets({
+      taskId: data.taskId,
+      sessionId: typeof data.sessionId === "string" ? data.sessionId : "default",
+      targets: data.targets.filter((target: Any) => target && typeof target === "object"),
+    });
+    return { success: true, targets };
+  });
+
+  const getAnnotationRepo = () => new AnnotationRepository(dbManager.getDatabase());
+  const annotationSurfaceTypes = new Set(["browser", "diff", "file", "artifact", "message"]);
+  const logAnnotationEvent = (type: string, annotation: Any, extra: Record<string, unknown> = {}) => {
+    if (!annotation?.taskId) return;
+    agentDaemon.logEvent(annotation.taskId, type, {
+      annotationId: annotation.id,
+      surfaceType: annotation.surfaceType,
+      status: annotation.status,
+      body: annotation.body,
+      targetRef: annotation.targetRef,
+      stylePatch: annotation.stylePatch,
+      screenshotPath: annotation.screenshotPath,
+      ...extra,
+    });
+  };
+
+  ipcMain.handle(IPC_CHANNELS.ANNOTATION_CREATE, (_event, data: Any) => {
+    if (!data || typeof data !== "object") {
+      throw new Error("Invalid annotation payload");
+    }
+    const taskId = typeof data.taskId === "string" ? data.taskId.trim() : "";
+    const body = typeof data.body === "string" ? data.body.trim() : "";
+    const surfaceType = typeof data.surfaceType === "string" ? data.surfaceType.trim() : "";
+    if (!taskId) throw new Error("Annotation taskId is required");
+    if (!body) throw new Error("Annotation body is required");
+    if (!annotationSurfaceTypes.has(surfaceType)) throw new Error("Annotation surfaceType is invalid");
+    if (!data.targetRef || typeof data.targetRef !== "object") {
+      throw new Error("Annotation targetRef is required");
+    }
+
+    const annotation = getAnnotationRepo().create({
+      taskId,
+      workspaceId: typeof data.workspaceId === "string" ? data.workspaceId : undefined,
+      surfaceType: surfaceType as Any,
+      surfaceId: typeof data.surfaceId === "string" ? data.surfaceId : undefined,
+      body,
+      targetRef: data.targetRef,
+      stylePatch: data.stylePatch && typeof data.stylePatch === "object" ? data.stylePatch : undefined,
+      artifactId: typeof data.artifactId === "string" ? data.artifactId : undefined,
+      screenshotPath: typeof data.screenshotPath === "string" ? data.screenshotPath : undefined,
+      createdBy: data.createdBy === "agent" || data.createdBy === "review" ? data.createdBy : "user",
+    });
+    logAnnotationEvent("annotation_created", annotation);
+    return annotation;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.ANNOTATION_LIST, (_event, query: Any) => {
+    const normalized = query && typeof query === "object" ? query : {};
+    return getAnnotationRepo().list({
+      taskId: typeof normalized.taskId === "string" ? normalized.taskId : undefined,
+      workspaceId: typeof normalized.workspaceId === "string" ? normalized.workspaceId : undefined,
+      surfaceType: typeof normalized.surfaceType === "string" ? normalized.surfaceType : undefined,
+      surfaceId: typeof normalized.surfaceId === "string" ? normalized.surfaceId : undefined,
+      statuses: Array.isArray(normalized.statuses) ? normalized.statuses : undefined,
+      limit: typeof normalized.limit === "number" ? normalized.limit : undefined,
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.ANNOTATION_UPDATE, (_event, data: Any) => {
+    const id = typeof data?.id === "string" ? data.id.trim() : "";
+    if (!id) throw new Error("Annotation id is required");
+    const patch = data?.patch && typeof data.patch === "object" ? data.patch : {};
+    const annotation = getAnnotationRepo().update(id, patch);
+    if (annotation) logAnnotationEvent("annotation_updated", annotation);
+    return annotation || null;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.ANNOTATION_RESOLVE, (_event, data: Any) => {
+    const id = typeof data?.id === "string" ? data.id.trim() : "";
+    if (!id) throw new Error("Annotation id is required");
+    const annotation = getAnnotationRepo().update(id, {
+      status: "resolved",
+      resolvedByEventId: typeof data?.resolvedByEventId === "string" ? data.resolvedByEventId : undefined,
+    });
+    if (annotation) logAnnotationEvent("annotation_resolved", annotation);
+    return annotation || null;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.ANNOTATION_DISMISS, (_event, data: Any) => {
+    const id = typeof data?.id === "string" ? data.id.trim() : "";
+    if (!id) throw new Error("Annotation id is required");
+    const annotation = getAnnotationRepo().update(id, { status: "dismissed" });
+    if (annotation) logAnnotationEvent("annotation_dismissed", annotation);
+    return annotation || null;
   });
 
   const resolveDialogDefaultPath = async (candidate?: string | null) => {

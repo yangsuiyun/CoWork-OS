@@ -10,6 +10,11 @@ import {
   TaskTraceRunSummary,
   EventType,
   Artifact,
+  Annotation,
+  AnnotationCreateInput,
+  AnnotationListQuery,
+  AnnotationStatus,
+  AnnotationUpdateInput,
   Workspace,
   ApprovalRequest,
   PersistedPermissionRule,
@@ -2627,6 +2632,248 @@ export class ArtifactRepository {
       sha256: row.sha256,
       size: row.size,
       createdAt: row.created_at,
+    };
+  }
+}
+
+const ANNOTATION_STATUSES: AnnotationStatus[] = [
+  "open",
+  "addressing",
+  "addressed",
+  "resolved",
+  "dismissed",
+];
+
+function normalizeAnnotationStatus(value: unknown, fallback: AnnotationStatus = "open"): AnnotationStatus {
+  return ANNOTATION_STATUSES.includes(value as AnnotationStatus)
+    ? (value as AnnotationStatus)
+    : fallback;
+}
+
+export class AnnotationRepository {
+  constructor(private db: Database.Database) {}
+
+  create(input: AnnotationCreateInput): Annotation {
+    const now = Date.now();
+    const annotation: Annotation = {
+      id: uuidv4(),
+      taskId: input.taskId,
+      workspaceId: input.workspaceId,
+      surfaceType: input.surfaceType,
+      surfaceId: input.surfaceId,
+      body: input.body.trim(),
+      status: "open",
+      targetRef: input.targetRef,
+      stylePatch: input.stylePatch,
+      artifactId: input.artifactId,
+      screenshotPath: input.screenshotPath,
+      createdBy: input.createdBy || "user",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.db
+      .prepare(`
+        INSERT INTO annotations (
+          id, task_id, workspace_id, surface_type, surface_id, body, status,
+          target_ref_json, style_patch_json, artifact_id, screenshot_path,
+          created_by, created_at, updated_at, resolved_at, resolved_by_event_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        annotation.id,
+        annotation.taskId,
+        annotation.workspaceId || null,
+        annotation.surfaceType,
+        annotation.surfaceId || null,
+        annotation.body,
+        annotation.status,
+        JSON.stringify(annotation.targetRef),
+        annotation.stylePatch ? JSON.stringify(annotation.stylePatch) : null,
+        annotation.artifactId || null,
+        annotation.screenshotPath || null,
+        annotation.createdBy,
+        annotation.createdAt,
+        annotation.updatedAt,
+        null,
+        null,
+      );
+
+    return annotation;
+  }
+
+  update(id: string, patch: AnnotationUpdateInput): Annotation | undefined {
+    const current = this.findById(id);
+    if (!current) return undefined;
+
+    const nextStatus = patch.status ? normalizeAnnotationStatus(patch.status, current.status) : current.status;
+    const now = Date.now();
+    const nextStylePatchJson =
+      patch.stylePatch === null
+        ? null
+        : patch.stylePatch !== undefined
+          ? JSON.stringify(patch.stylePatch)
+          : current.stylePatch
+            ? JSON.stringify(current.stylePatch)
+            : null;
+    const resolvedAt =
+      nextStatus === "resolved" || nextStatus === "dismissed"
+        ? current.resolvedAt || now
+        : patch.status && patch.status !== current.status
+          ? null
+          : current.resolvedAt || null;
+
+    this.db
+      .prepare(`
+        UPDATE annotations
+        SET body = ?,
+            status = ?,
+            target_ref_json = ?,
+            style_patch_json = ?,
+            artifact_id = ?,
+            screenshot_path = ?,
+            updated_at = ?,
+            resolved_at = ?,
+            resolved_by_event_id = ?
+        WHERE id = ?
+      `)
+      .run(
+        patch.body !== undefined ? patch.body.trim() : current.body,
+        nextStatus,
+        JSON.stringify(patch.targetRef || current.targetRef),
+        nextStylePatchJson,
+        patch.artifactId === null ? null : patch.artifactId || current.artifactId || null,
+        patch.screenshotPath === null ? null : patch.screenshotPath || current.screenshotPath || null,
+        now,
+        resolvedAt,
+        patch.resolvedByEventId === null
+          ? null
+          : patch.resolvedByEventId || current.resolvedByEventId || null,
+        id,
+      );
+
+    return this.findById(id);
+  }
+
+  markAddressing(taskId: string, annotationIds?: string[]): number {
+    const ids = (annotationIds || []).map((id) => id.trim()).filter(Boolean);
+    const now = Date.now();
+    if (ids.length > 0) {
+      const placeholders = ids.map(() => "?").join(", ");
+      const result = this.db
+        .prepare(`
+          UPDATE annotations
+          SET status = 'addressing', updated_at = ?
+          WHERE task_id = ?
+            AND status = 'open'
+            AND id IN (${placeholders})
+        `)
+        .run(now, taskId, ...ids);
+      return Number(result.changes || 0);
+    }
+    const result = this.db
+      .prepare(`
+        UPDATE annotations
+        SET status = 'addressing', updated_at = ?
+        WHERE task_id = ?
+          AND status = 'open'
+      `)
+      .run(now, taskId);
+    return Number(result.changes || 0);
+  }
+
+  markAddressed(taskId: string): number {
+    const result = this.db
+      .prepare(`
+        UPDATE annotations
+        SET status = 'addressed', updated_at = ?
+        WHERE task_id = ?
+          AND status = 'addressing'
+      `)
+      .run(Date.now(), taskId);
+    return Number(result.changes || 0);
+  }
+
+  findById(id: string): Annotation | undefined {
+    const row = this.db.prepare("SELECT * FROM annotations WHERE id = ?").get(id) as Any;
+    return row ? this.mapRowToAnnotation(row) : undefined;
+  }
+
+  list(query: AnnotationListQuery = {}): Annotation[] {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (query.taskId) {
+      clauses.push("task_id = ?");
+      params.push(query.taskId);
+    }
+    if (query.workspaceId) {
+      clauses.push("workspace_id = ?");
+      params.push(query.workspaceId);
+    }
+    if (query.surfaceType) {
+      clauses.push("surface_type = ?");
+      params.push(query.surfaceType);
+    }
+    if (query.surfaceId) {
+      clauses.push("surface_id = ?");
+      params.push(query.surfaceId);
+    }
+    const statuses = (query.statuses || []).filter((status) =>
+      ANNOTATION_STATUSES.includes(status),
+    );
+    if (statuses.length > 0) {
+      clauses.push(`status IN (${statuses.map(() => "?").join(", ")})`);
+      params.push(...statuses);
+    }
+    const limit =
+      typeof query.limit === "number" && Number.isFinite(query.limit)
+        ? Math.min(Math.max(Math.floor(query.limit), 1), 500)
+        : 200;
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.db
+      .prepare(`
+        SELECT *
+        FROM annotations
+        ${where}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `)
+      .all(...params, limit) as Any[];
+    return rows.map((row) => this.mapRowToAnnotation(row));
+  }
+
+  listOpenByTask(taskId: string): Annotation[] {
+    return this.list({
+      taskId,
+      statuses: ["open", "addressing"],
+      limit: 100,
+    });
+  }
+
+  private mapRowToAnnotation(row: Any): Annotation {
+    const status = normalizeAnnotationStatus(row.status);
+    return {
+      id: row.id,
+      taskId: row.task_id,
+      workspaceId: row.workspace_id || undefined,
+      surfaceType: row.surface_type as Annotation["surfaceType"],
+      surfaceId: row.surface_id || undefined,
+      body: row.body || "",
+      status,
+      targetRef: safeJsonParse(row.target_ref_json, {
+        surfaceType: row.surface_type || "browser",
+      } as Annotation["targetRef"], "annotation.target_ref_json"),
+      stylePatch: row.style_patch_json
+        ? safeJsonParse(row.style_patch_json, undefined, "annotation.style_patch_json")
+        : undefined,
+      artifactId: row.artifact_id || undefined,
+      screenshotPath: row.screenshot_path || undefined,
+      createdBy: (row.created_by || "user") as Annotation["createdBy"],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      resolvedAt: row.resolved_at || undefined,
+      resolvedByEventId: row.resolved_by_event_id || undefined,
     };
   }
 }
