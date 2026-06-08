@@ -322,6 +322,153 @@
       font-weight: 800;
     }
 
+    .diagram-panel {
+      margin: 18px 0 26px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      overflow: hidden;
+    }
+
+    .diagram-title {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .diagram-title h3 {
+      margin: 0;
+    }
+
+    .diagram-title span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .diagram-svg {
+      width: 100%;
+      min-height: 460px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background:
+        radial-gradient(circle at 50% 45%, rgba(37, 99, 235, 0.08), transparent 20rem),
+        linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
+    }
+
+    .diagram-svg text {
+      font-family: var(--sans);
+      fill: #0f172a;
+    }
+
+    .diagram-node {
+      fill: #ffffff;
+      stroke: #cbd5e1;
+      stroke-width: 1.4;
+      filter: drop-shadow(0 8px 14px rgba(15, 23, 42, 0.08));
+    }
+
+    .diagram-node.core {
+      fill: #eff6ff;
+      stroke: #2563eb;
+      stroke-width: 2;
+    }
+
+    .diagram-node.support {
+      fill: #f5f3ff;
+      stroke: #7c3aed;
+    }
+
+    .diagram-node.safety {
+      fill: #fef2f2;
+      stroke: #dc2626;
+    }
+
+    .diagram-node.output {
+      fill: #ecfdf5;
+      stroke: #059669;
+    }
+
+    .diagram-edge {
+      fill: none;
+      stroke: #64748b;
+      stroke-width: 1.6;
+      marker-end: url(#arrowhead);
+    }
+
+    .diagram-edge.strong {
+      stroke: #2563eb;
+      stroke-width: 2.4;
+    }
+
+    .diagram-edge.green {
+      stroke: #059669;
+    }
+
+    .diagram-edge.purple {
+      stroke: #7c3aed;
+    }
+
+    .diagram-label {
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .diagram-caption {
+      margin: 12px 2px 0;
+      color: #475569;
+      font-size: 14px;
+    }
+
+    .mini-map {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .mini-node {
+      position: relative;
+      padding: 14px 14px 13px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fff;
+    }
+
+    .mini-node strong {
+      display: block;
+      margin-bottom: 5px;
+      color: #0f172a;
+    }
+
+    .mini-node span {
+      color: #64748b;
+      font-size: 13px;
+    }
+
+    .mini-node.core {
+      border-color: #93c5fd;
+      background: #eff6ff;
+    }
+
+    .mini-node.output {
+      border-color: #86efac;
+      background: #ecfdf5;
+    }
+
+    .mini-node.policy {
+      border-color: #fecaca;
+      background: #fef2f2;
+    }
+
+    .mini-node.support {
+      border-color: #c4b5fd;
+      background: #f5f3ff;
+    }
+
     .arrow {
       color: var(--brand);
       font-size: 26px;
@@ -391,6 +538,7 @@
       .context-grid,
       .object-grid,
       .relation-grid,
+      .mini-map,
       .source-list {
         grid-template-columns: 1fr;
       }
@@ -480,6 +628,7 @@
         <a href="#events">领域事件与生命周期</a>
         <a href="#rules">关键业务规则</a>
         <a href="#recommendations">建模建议</a>
+        <a href="#use-cases">产品用例图谱</a>
       </div>
     </section>
 
@@ -593,6 +742,201 @@
     <section id="context-map">
       <h2>4. 限界上下文地图</h2>
       <p class="lead">CoWork OS 可以拆为 15 个主要限界上下文。核心上下文围绕 Task Runtime，其他上下文通过事件、策略、仓储和 UI 投影与它协作。</p>
+
+      <div class="diagram-panel" id="relationship-diagrams">
+        <div class="diagram-title">
+          <h3>4.1 核心上下文关系图</h3>
+          <span>读图方式：蓝色为核心执行域，紫色为支撑域，红色为治理域，绿色为产出/学习沉淀。</span>
+        </div>
+        <svg class="diagram-svg" viewBox="0 0 1120 540" role="img" aria-label="CoWork OS 领域上下文关系图">
+          <defs>
+            <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+              <path d="M 0 0 L 10 4 L 0 8 z" fill="#64748b"></path>
+            </marker>
+          </defs>
+
+          <path class="diagram-edge strong" d="M 145 100 C 260 90, 320 150, 418 214"></path>
+          <path class="diagram-edge strong" d="M 145 268 C 260 270, 320 250, 400 250"></path>
+          <path class="diagram-edge strong" d="M 145 430 C 265 430, 330 350, 423 288"></path>
+          <path class="diagram-edge purple" d="M 560 180 C 560 120, 642 98, 720 96"></path>
+          <path class="diagram-edge purple" d="M 634 232 C 710 200, 772 176, 840 164"></path>
+          <path class="diagram-edge green" d="M 630 284 C 730 316, 770 358, 840 390"></path>
+          <path class="diagram-edge green" d="M 560 316 C 560 380, 646 430, 720 444"></path>
+          <path class="diagram-edge purple" d="M 742 426 C 640 392, 588 360, 548 322"></path>
+          <path class="diagram-edge" d="M 486 320 C 420 398, 342 468, 252 468"></path>
+          <path class="diagram-edge" d="M 488 180 C 412 100, 330 62, 252 62"></path>
+          <path class="diagram-edge" d="M 632 250 C 710 250, 780 250, 840 250"></path>
+          <path class="diagram-edge purple" d="M 840 262 C 780 268, 712 268, 644 264"></path>
+
+          <rect class="diagram-node support" x="36" y="48" width="216" height="84" rx="18"></rect>
+          <text class="diagram-label" x="144" y="82" text-anchor="middle">Channel Gateway</text>
+          <text x="144" y="108" text-anchor="middle" font-size="12">远程消息 / slash / follow-up</text>
+
+          <rect class="diagram-node support" x="36" y="226" width="216" height="84" rx="18"></rect>
+          <text class="diagram-label" x="144" y="260" text-anchor="middle">Managed Agents</text>
+          <text x="144" y="286" text-anchor="middle" font-size="12">ManagedSession / team run</text>
+
+          <rect class="diagram-node support" x="36" y="388" width="216" height="84" rx="18"></rect>
+          <text class="diagram-label" x="144" y="422" text-anchor="middle">Heartbeat / Automation</text>
+          <text x="144" y="448" text-anchor="middle" font-size="12">Pulse / Dispatch / Routine</text>
+
+          <rect class="diagram-node core" x="400" y="178" width="240" height="144" rx="24"></rect>
+          <text x="520" y="220" text-anchor="middle" font-size="22" font-weight="900">Task Runtime</text>
+          <text x="520" y="250" text-anchor="middle" font-size="13">Task + SessionRuntime</text>
+          <text x="520" y="274" text-anchor="middle" font-size="13">TurnKernel + ToolScheduler</text>
+          <text x="520" y="298" text-anchor="middle" font-size="13">Timeline + Trace + Recovery</text>
+
+          <rect class="diagram-node safety" x="710" y="54" width="220" height="84" rx="18"></rect>
+          <text class="diagram-label" x="820" y="88" text-anchor="middle">Permission & Safety</text>
+          <text x="820" y="114" text-anchor="middle" font-size="12">approval / guardrail / policy</text>
+
+          <rect class="diagram-node support" x="840" y="122" width="220" height="84" rx="18"></rect>
+          <text class="diagram-label" x="950" y="156" text-anchor="middle">Skills + MCP</text>
+          <text x="950" y="182" text-anchor="middle" font-size="12">工具扩展 / additive context</text>
+
+          <rect class="diagram-node output" x="840" y="348" width="220" height="84" rx="18"></rect>
+          <text class="diagram-label" x="950" y="382" text-anchor="middle">Everything Workbench</text>
+          <text x="950" y="408" text-anchor="middle" font-size="12">文档 / 表格 / PPT / Web</text>
+
+          <rect class="diagram-node output" x="710" y="402" width="220" height="84" rx="18"></rect>
+          <text class="diagram-label" x="820" y="436" text-anchor="middle">Workflow Intelligence</text>
+          <text x="820" y="462" text-anchor="middle" font-size="12">Memory / KG / Dreaming / Reflection</text>
+
+          <rect class="diagram-node support" x="840" y="208" width="220" height="84" rx="18"></rect>
+          <text class="diagram-label" x="950" y="242" text-anchor="middle">Agent Orchestration</text>
+          <text x="950" y="268" text-anchor="middle" font-size="12">AgentTeamRun / OrchestrationGraph</text>
+
+          <rect class="diagram-node support" x="36" y="10" width="216" height="32" rx="12"></rect>
+          <text x="144" y="31" text-anchor="middle" font-size="12" font-weight="800">外部入口</text>
+          <rect class="diagram-node output" x="36" y="478" width="216" height="32" rx="12"></rect>
+          <text x="144" y="499" text-anchor="middle" font-size="12" font-weight="800">运营/自动化入口</text>
+        </svg>
+        <p class="diagram-caption">
+          这张图体现了最重要的依赖方向：所有入口最终都会汇聚到 <code>Task Runtime</code>，
+          权限治理在工具执行前横切介入，产物与记忆从执行事实中沉淀出来，curated/hot memory 又会在功能开启时回注后续任务（Memory 与 Task Runtime 之间的双向边）。Agent Orchestration 以 <code>rootTaskId</code> 锚定并向下派发子 Task，属于双向协作。
+        </p>
+
+        <div class="mini-map">
+          <div class="mini-node support">
+            <strong>入口层</strong>
+            <span>用户、通道、自动化、托管代理都只是创建或继续任务的不同入口。</span>
+          </div>
+          <div class="mini-node core">
+            <strong>执行层</strong>
+            <span><code>Task</code> 是执行事实源，<code>SessionRuntime</code> 拥有会话状态。</span>
+          </div>
+          <div class="mini-node policy">
+            <strong>治理层</strong>
+            <span>权限规则、审批、数据导出、guardrail 控制工具是否可执行。</span>
+          </div>
+          <div class="mini-node output">
+            <strong>沉淀层</strong>
+            <span>Artifact、TaskEvent、Memory、Dreaming Candidate 形成长期资产。</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="diagram-panel">
+        <div class="diagram-title">
+          <h3>4.2 Task 聚合关系图</h3>
+          <span>围绕核心聚合根 <code>Task</code> 展开。</span>
+        </div>
+        <svg class="diagram-svg" viewBox="0 0 1120 430" role="img" aria-label="Task 聚合对象关系图">
+          <defs>
+            <marker id="arrowhead-task" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+              <path d="M 0 0 L 10 4 L 0 8 z" fill="#64748b"></path>
+            </marker>
+          </defs>
+          <style>
+            #task-map .diagram-edge { marker-end: url(#arrowhead-task); }
+          </style>
+          <g id="task-map">
+            <path class="diagram-edge strong" d="M 300 212 L 438 212"></path>
+            <path class="diagram-edge" d="M 560 138 L 560 96"></path>
+            <path class="diagram-edge" d="M 560 286 L 560 334"></path>
+            <path class="diagram-edge green" d="M 684 212 L 822 132"></path>
+            <path class="diagram-edge green" d="M 684 212 L 822 212"></path>
+            <path class="diagram-edge green" d="M 684 212 L 822 292"></path>
+            <path class="diagram-edge purple" d="M 300 92 L 438 178"></path>
+            <path class="diagram-edge purple" d="M 300 332 L 438 246"></path>
+
+            <rect class="diagram-node support" x="80" y="170" width="220" height="84" rx="18"></rect>
+            <text class="diagram-label" x="190" y="204" text-anchor="middle">Workspace</text>
+            <text x="190" y="230" text-anchor="middle" font-size="12">path / permissions / policy</text>
+
+            <rect class="diagram-node support" x="80" y="50" width="220" height="84" rx="18"></rect>
+            <text class="diagram-label" x="190" y="84" text-anchor="middle">AgentConfig</text>
+            <text x="190" y="110" text-anchor="middle" font-size="12">mode / role / model / restrictions</text>
+
+            <rect class="diagram-node support" x="80" y="290" width="220" height="84" rx="18"></rect>
+            <text class="diagram-label" x="190" y="324" text-anchor="middle">SkillApplication</text>
+            <text x="190" y="350" text-anchor="middle" font-size="12">运行时投影 / additive context</text>
+
+            <rect class="diagram-node core" x="438" y="138" width="246" height="148" rx="24"></rect>
+            <text x="561" y="180" text-anchor="middle" font-size="22" font-weight="900">Task</text>
+            <text x="561" y="210" text-anchor="middle" font-size="13">prompt / status / sessionId</text>
+            <text x="561" y="234" text-anchor="middle" font-size="13">parentTaskId / workerRole</text>
+            <text x="561" y="258" text-anchor="middle" font-size="13">risk / budget / outcome</text>
+
+            <rect class="diagram-node safety" x="450" y="20" width="220" height="76" rx="18"></rect>
+            <text class="diagram-label" x="560" y="52" text-anchor="middle">ApprovalRequest</text>
+            <text x="560" y="76" text-anchor="middle" font-size="12">pending / approved / denied</text>
+
+            <rect class="diagram-node output" x="450" y="334" width="220" height="76" rx="18"></rect>
+            <text class="diagram-label" x="560" y="366" text-anchor="middle">SessionRuntimeSnapshotV2</text>
+            <text x="560" y="390" text-anchor="middle" font-size="12">schema: session_runtime_v2</text>
+
+            <rect class="diagram-node output" x="822" y="92" width="220" height="76" rx="18"></rect>
+            <text class="diagram-label" x="932" y="124" text-anchor="middle">TaskEvent</text>
+            <text x="932" y="148" text-anchor="middle" font-size="12">append-only timeline</text>
+
+            <rect class="diagram-node output" x="822" y="174" width="220" height="76" rx="18"></rect>
+            <text class="diagram-label" x="932" y="206" text-anchor="middle">Artifact</text>
+            <text x="932" y="230" text-anchor="middle" font-size="12">file output / preview</text>
+
+            <rect class="diagram-node output" x="822" y="256" width="220" height="76" rx="18"></rect>
+            <text class="diagram-label" x="932" y="288" text-anchor="middle">MemoryObservation</text>
+            <text x="932" y="312" text-anchor="middle" font-size="12">facts / evidence / concepts</text>
+          </g>
+        </svg>
+        <p class="diagram-caption">
+          <code>Task</code> 是最核心的聚合根：左侧是输入与执行策略，上方是审批，底部是 <code>session_runtime_v2</code> 快照，右侧是事件、产物与经 Memory 捕获/巩固后形成的记忆证据。
+        </p>
+      </div>
+
+      <div class="diagram-panel">
+        <div class="diagram-title">
+          <h3>4.3 自动化与记忆闭环图</h3>
+          <span>展示 Heartbeat、Task、Memory、Dreaming 之间的反馈循环（含 Heartbeat 直达 Dreaming 旁路）。</span>
+        </div>
+        <div class="flow">
+          <div class="flow-node">HeartbeatSignal<br /><span class="small">ambient / manual / cron</span></div>
+          <div class="arrow">→</div>
+          <div class="flow-node">Pulse<br /><span class="small">无 LLM、不建任务</span></div>
+          <div class="arrow">→</div>
+          <div class="flow-node">Dispatch / Suggestion<br /><span class="small">升级为可见工作</span></div>
+          <div class="arrow">→</div>
+          <div class="flow-node">Task Execution<br /><span class="small">events / artifacts / outcomes</span></div>
+        </div>
+        <div class="flow">
+          <div class="flow-node">Task 执行事实<br /><span class="small">transcript / events</span></div>
+          <div class="arrow">→</div>
+          <div class="flow-node">Memory Capture<br /><span class="small">capture / consolidation</span></div>
+          <div class="arrow">→</div>
+          <div class="flow-node">MemoryObservation<br /><span class="small">memory 的索引/控制面</span></div>
+        </div>
+        <div class="flow">
+          <div class="flow-node">Dreaming<br /><span class="small">多源证据：observations + transcript + curated</span></div>
+          <div class="arrow">→</div>
+          <div class="flow-node">DreamingCandidate<br /><span class="small">可审核记忆变更</span></div>
+          <div class="arrow">→</div>
+          <div class="flow-node">Curated Memory<br /><span class="small">接受后回注后续任务</span></div>
+        </div>
+        <p class="diagram-caption">
+          这条链路说明 Workflow Intelligence 的边界：Heartbeat 决定是否值得行动（<strong>Pulse 不调用 LLM、不创建任务</strong>，只有 Dispatch / Suggestion 路径才升级为可见工作）；Task 产生执行事实，Memory 捕获/巩固后由 MemoryObservation 充当索引与控制面。Dreaming 并行读取 observations、transcript 与 curated 等多源证据后只提出可审核候选；候选被接受并应用到 Curated Memory 后，才会在功能开启时回注之后的任务执行。此外 Heartbeat 也可<strong>直接触发 Dreaming</strong>（旁路 Task 执行链），完整环还包含 Reflection、Suggestions 与用户反馈。
+        </p>
+      </div>
+
       <div class="flow">
         <div class="flow-node">用户/通道/自动化<br />创建 Task</div>
         <div class="arrow">→</div>
@@ -616,7 +960,7 @@
         <div class="card">
           <div class="card-header">
             <h3>代理编排上下文</h3>
-            <div class="tagline">AgentRole、TeamRun、DelegationGraph、WorkerRole</div>
+            <div class="tagline">AgentRole、AgentTeamRun、OrchestrationGraph、WorkerRole</div>
           </div>
           <div class="card-body">
             <p>负责子代理、并行代理、多角色团队、多模型评审和远程 Agent 调用。</p>
@@ -1148,10 +1492,10 @@
             <td>团队运行仍以 Task/TaskEvent 为执行事实源。</td>
           </tr>
           <tr>
-            <td>DelegationGraph</td>
-            <td>run、node、event、parent-child relation</td>
+            <td>OrchestrationGraph<br><span style="font-size:12px;opacity:.7">OrchestrationGraphRun / OrchestrationGraphNode</span></td>
+            <td>rootTaskId、node、event、parent-child relation</td>
             <td>统一 spawned agents、multitask lanes、workflow phases、ACP tasks</td>
-            <td>所有委派工作应进入同一图模型，方便追踪和恢复。</td>
+            <td>所有委派工作应进入同一图模型（以 rootTaskId 锚定），方便追踪和恢复。</td>
           </tr>
         </tbody>
       </table>
@@ -1785,8 +2129,224 @@
       </ol>
     </section>
 
+    <section id="use-cases">
+      <h2>12. 产品用例图谱</h2>
+      <p class="lead">
+        这一章把 <code>docs/use-cases.md</code> 中的 21 类可运行用例，按“用户想搞定什么事”重新归并为 7 个主题组，
+        并映射回前面建模出的限界上下文，方便从业务场景反推领域协作。
+      </p>
+      <div class="note">
+        <strong>贯穿所有用例的安全门（Human-in-the-loop Confirmation Gate）：</strong>
+        凡是会产生外部副作用的动作（发送消息、预订、退订/归档/删除、状态变更、合并/部署、拨打电话、不可逆操作），
+        CoWork OS 默认<strong>先停下来征求确认</strong>，再执行。这正是 <em>Permission &amp; Safety</em> 上下文与 <code>SessionRuntime</code> 暂停/恢复协作的体现。
+        下方用 <span class="pill amber">需确认</span> 标注确认门，<span class="pill red">不可逆·需确认</span> 标注高风险动作，
+        <span class="pill purple">/命令</span> 标注可直接调用的 slash 命令或快捷方式。
+      </div>
+
+      <h3>12.1 用例总览</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>主题组</th>
+            <th>你想搞定的事</th>
+            <th>代表用例</th>
+            <th>主要限界上下文</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>① 消息与监控</strong></td>
+            <td>盯住重要消息、订阅源和账单，先看懂再决定要不要回。</td>
+            <td>回复草稿、Newsletter 摘要、交易/反欺诈扫描</td>
+            <td>Channel Gateway、Task Runtime</td>
+          </tr>
+          <tr>
+            <td><strong>② 收件箱关系代理</strong></td>
+            <td>把邮箱变成会分诊、起草、跟承诺、补关系的助理。</td>
+            <td>Inbox 自动驾驶、Today 模式、Ask Inbox、承诺跟进、跨渠道回复、Mission Control 交接</td>
+            <td>Inbox/关系代理、Identity、Workflow Intelligence</td>
+          </tr>
+          <tr>
+            <td><strong>③ 简报与生活事务</strong></td>
+            <td>每天开局有简报，琐事自动落到清单/提醒里。</td>
+            <td>家庭事务入 Notion/Reminders、每日 digest、晨间 chief-of-staff 简报</td>
+            <td>Channel Gateway、MCP Connectors、Workflow Intelligence</td>
+          </tr>
+          <tr>
+            <td><strong>④ 预订与表单</strong></td>
+            <td>找可用时段、对照日历、填表，但<strong>提交前停下</strong>。</td>
+            <td>OpenTable 风格预订（查空位 + 查冲突 + 停在最终提交前）</td>
+            <td>Browser/Computer Use、Permission &amp; Safety</td>
+          </tr>
+          <tr>
+            <td><strong>⑤ 开发 / 编排 / 确定性工作流</strong></td>
+            <td>把待办队列、并行执行、批量改写、智能家居编排交给代理。</td>
+            <td>Dev 任务队列、Figure-it-out 兜底、<code>/simplify</code> <code>/batch</code> <code>/llm-wiki</code>、智能家居</td>
+            <td>Agent Orchestration、Skills Runtime、Task Runtime</td>
+          </tr>
+          <tr>
+            <td><strong>⑥ Everything Workbench 与专业技能</strong></td>
+            <td>一句话生成可预览、可继续编辑的文档/表格/PPT/网页/PDF/视频。</td>
+            <td>法律技能、Manim 视频、Kami 文档、网页 Dashboard、LaTeX 论文</td>
+            <td>Everything Workbench、Skills Runtime</td>
+          </tr>
+          <tr>
+            <td><strong>⑦ 位置感知本地服务</strong></td>
+            <td>基于当前位置找最近的店/服务，排步行时间、给路线。</td>
+            <td>就近跑腿、位置感知餐厅预订、多点步行路线、紧急本地服务</td>
+            <td>Browser/Computer Use、MCP Connectors（Maps）</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>12.2 分组详情</h3>
+      <div class="context-grid">
+        <div class="card">
+          <div class="card-header">
+            <h3>① 消息与监控</h3>
+            <div class="tagline">Channel Gateway · 把通道消息变成“看懂 + 草稿 + 建议”，外发前先确认。</div>
+            <div class="pill-row">
+              <span class="pill green">Channel Gateway</span>
+              <span class="pill green">Task Runtime</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <ul>
+              <li><strong>消息回复草稿（iMessage / Slack）：</strong>用 <code>channel_list_chats</code> 让你选 chat，再拉 <code>channel_history</code> 总结并给 2 个回复版本。<span class="pill amber">需确认</span></li>
+              <li><strong>Newsletter 摘要：</strong>抓最近 24h 订阅源，输出带链接的 1-2 句摘要 digest；可 <code>/schedule here daily 8am ...</code> 每天定时。<span class="pill purple">/schedule</span></li>
+              <li><strong>交易 / 反欺诈扫描：</strong>从银行/卡通知或 Gmail 抽取交易表，标记可疑（新商户、快速重复、异常大额）并给建议。<span class="pill amber">需确认</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>② 收件箱关系代理</h3>
+            <div class="tagline">Inbox / 关系代理 · 分诊、起草、跟承诺、补关系，所有写操作前都停。</div>
+            <div class="pill-row">
+              <span class="pill green">Inbox/关系代理</span>
+              <span class="pill green">Identity</span>
+              <span class="pill green">Workflow Intelligence</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <ul>
+              <li><strong>收件箱自动驾驶：</strong>对最近邮件分级（urgent/today/this-week/no-action），给优先级表、草稿、清理候选、待跟进。<span class="pill purple">/inbox autopilot 180</span> <span class="pill amber">需确认</span></li>
+              <li><strong>已发邮件复盘：</strong>检查 Sent 线程，总结发了什么、列出隐含承诺，建议要更新到联系人记忆/知识图谱的内容。</li>
+              <li><strong>Today 模式 / Ask Inbox：</strong>按 Needs action / Happening today 等泳道梳理；或用 <code>@inbox ...</code> 在本地 FTS、语义、附件文本中检索发票/合同等证据。<span class="pill purple">@inbox</span></li>
+              <li><strong>手动回复或转发：</strong>用手写邮件编辑器填好 To/Cc/Bcc 与正文，发送前停下让你逐字审阅。<span class="pill amber">需确认</span></li>
+              <li><strong>承诺与跟进：</strong>抽取开放承诺/逾期跟进，输出 commitment、due date、owner、next action 表。<span class="pill amber">需确认</span></li>
+              <li><strong>知识图谱补全：</strong>从线程抽取人/公司/项目，建议要链接或更新到 Knowledge Graph 的关系。</li>
+              <li><strong>跨渠道回复：</strong>若联系人在 Slack/Teams/WhatsApp/Signal/iMessage 更活跃，优先在该渠道起草回复。<span class="pill amber">需确认</span></li>
+              <li><strong>Mission Control 交接 / 身份审核：</strong>把线程交接为 company/operator/issue 预览（创建前确认）；或在 Identity 里手动把 handle 关联到正确联系人，不自动链接歧义项。<span class="pill amber">需确认</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>③ 简报与生活事务</h3>
+            <div class="tagline">Briefing &amp; Logistics · 开局有简报，琐事自动落清单。</div>
+            <div class="pill-row">
+              <span class="pill green">Channel Gateway</span>
+              <span class="pill green">MCP Connectors</span>
+              <span class="pill green">Workflow Intelligence</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <ul>
+              <li><strong>家庭事务入 Notion / Reminders：</strong>把一串待办拆成 Notion 页面，隐含截止日期先确认，再可选写入 Apple Reminders，返回页面与提醒 ID。<span class="pill amber">需确认</span></li>
+              <li><strong>每日 digest 草稿：</strong>汇总“明天”的日历与提醒，拟一条可发给家人的短消息，发送前确认内容与对象。<span class="pill amber">需确认</span></li>
+              <li><strong>晨间 chief-of-staff 简报：</strong>执行摘要 + 日历风险 + 收件箱优先级 + 待办，缺失信号单独列 Missing Data，按手机阅读排版。<span class="pill purple">/brief morning</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>④ 预订与表单</h3>
+            <div class="tagline">Booking &amp; Forms · 查空位、对日历、填表，最终提交前必停。</div>
+            <div class="pill-row">
+              <span class="pill green">Browser/Computer Use</span>
+              <span class="pill green">Permission &amp; Safety</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <ul>
+              <li><strong>OpenTable 风格预订：</strong>打开 URL 校验店名，找未来 14 天指定时段空位，交叉核对日历冲突，给 3 个无冲突方案并存成 <code>reservation_options.json</code>。<span class="pill amber">提交前停下确认</span></li>
+              <li><strong>表单填写：</strong>可自动填好表单，但在“最终提交 / 付款”这一步前强制确认门。<span class="pill amber">需确认</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>⑤ 开发 / 编排 / 确定性工作流</h3>
+            <div class="tagline">Agent Orchestration · Skills · 队列、并行、批改写、兜底编排。</div>
+            <div class="pill-row">
+              <span class="pill green">Agent Orchestration</span>
+              <span class="pill green">Skills Runtime</span>
+              <span class="pill green">Task Runtime</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <ul>
+              <li><strong>Dev 任务队列：</strong>从仓库高优 issue 生成带验收标准/依赖/风险/owner 的队列，最多 8 个并行并给进度检查点；代码变更在合并/部署前停。<span class="pill purple">/multitask 6 ...</span> <span class="pill amber">合并前确认</span></li>
+              <li><strong>Figure-it-out 兜底编排：</strong>先走直接路径，失败就换工具并记录 attempt log（最多 3 次兜底），无证据不声称成功，不可逆动作前停。<span class="pill red">不可逆·需确认</span></li>
+              <li><strong>确定性 slash 工作流：</strong><code>/simplify</code> 做质量精简、<code>/batch</code> 做可并行的迁移/改写、<code>/llm-wiki</code> 建持久研究库。<span class="pill purple">/simplify · /batch · /llm-wiki</span></li>
+              <li><strong>智能家居编排：</strong>先发现可用集成，产出 dry-run 计划（设备+动作+预期+回滚），遵守静默时段，任何物理状态变更前确认。<span class="pill amber">状态变更前确认</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>⑥ Everything Workbench 与专业技能</h3>
+            <div class="tagline">Everything Workbench · Skills · 生成可预览、可续编的工件。</div>
+            <div class="pill-row">
+              <span class="pill green">Everything Workbench</span>
+              <span class="pill green">Skills Runtime</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <ul>
+              <li><strong>法律交易防御：</strong>用合同评审 / 律师函回应 / 可核验研究备忘等技能，产出带 claim 级核验日志的报告。<span class="pill purple">legal-* skills</span></li>
+              <li><strong>Manim 技术视频：</strong>脚手架化 plan/script/render 等文件，依赖齐全才草稿渲染，否则停在脚手架并说明缺什么。</li>
+              <li><strong>Kami 编辑级文档：</strong>把笔记变成一页纸 / 简历 / PPTX；可用时导出 PDF，缺浏览器依赖则保留源文件并说明。</li>
+              <li><strong>网页 / Dashboard：</strong>生成单页 HTML 或 React/Vite 产物，在沙箱 iframe 预览，跟进编辑后自动刷新。</li>
+              <li><strong>LaTeX 论文：</strong>先写可编辑 <code>.tex</code>，再用 <code>compile_latex</code> 出 PDF，源文件与 PDF 配对放进同一工件工作台。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>⑦ 位置感知本地服务</h3>
+            <div class="tagline">Browser/Computer Use · Maps · 基于当前位置找店、排步行时间、给路线。</div>
+            <div class="pill-row">
+              <span class="pill green">Browser/Computer Use</span>
+              <span class="pill green">MCP Connectors（Maps）</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <ul>
+              <li><strong>就近跑腿：</strong><code>get_current_location</code> 定位后搜步行可达的店（如童装、药店），按步行时间排序并给逐步路线。</li>
+              <li><strong>位置感知餐厅预订：</strong>找步行可达、今晚有空位的餐厅，交叉核对日历，按步行时间/菜系排序，预订前停。<span class="pill amber">需确认</span></li>
+              <li><strong>多点步行路线规划：</strong>为邮局/干洗/采购等多件事规划最省时的步行路线，给总时长与逐段拆解。</li>
+              <li><strong>紧急本地服务：</strong>找附近开锁/急诊等紧急服务，按距离排序并显示电话与预计到达，拨打前确认。<span class="pill amber">需确认</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <p class="muted small">
+        说明：以上为产品用例的业务视角归并，命令与快捷方式以 <code>docs/use-cases.md</code>、<code>docs/message-box-shortcuts.md</code> 为准；
+        部分高级用例（如 legal / manim / kami）依赖可选技能包，未安装时代理会停在脚手架并提示缺失依赖。
+      </p>
+    </section>
+
     <section id="sources">
-      <h2>12. 证据来源</h2>
+      <h2>13. 证据来源</h2>
       <p>本报告主要依据以下项目文件和文档抽取概念模型：</p>
       <ul class="source-list">
         <li>README.md</li>
