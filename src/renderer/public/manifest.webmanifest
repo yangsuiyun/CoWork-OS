@@ -1,0 +1,11 @@
+{
+  "name": "CoWork OS Web Access",
+  "short_name": "CoWork OS",
+  "description": "Mobile-friendly Web Access for CoWork OS agent tasks.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b1020",
+  "theme_color": "#0b1020",
+  "orientation": "any"
+}

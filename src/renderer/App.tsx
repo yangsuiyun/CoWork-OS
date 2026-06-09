@@ -5432,7 +5432,8 @@ export function App() {
       (window.location.protocol === "http:" || window.location.protocol === "https:");
     const isViteDevServer =
       typeof window !== "undefined" &&
-      (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+      (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") &&
+      window.location.port === "5173";
 
     if (isHttpContext && !isViteDevServer) {
       return <WebAccessClient />;

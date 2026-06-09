@@ -70,11 +70,33 @@ import {
   setStrategicPlannerService,
 } from "../electron/control-plane/StrategicPlannerService";
 import { attachControlPlaneTaskLifecycleSync } from "../electron/control-plane/task-run-sync";
+import { WebAccessServer } from "../electron/web-server/WebAccessServer";
+import type { WebAccessConfig } from "../electron/web-server/types";
+import {
+  ManagedAccountManager,
+  type ManagedAccountStatus,
+} from "../electron/accounts/managed-account-manager";
 
 interface StartedControlPlane {
   server: ControlPlaneServer;
   detachAgentBridge: (() => void) | null;
 }
+
+interface StartedWebAccess {
+  server: WebAccessServer;
+}
+
+const WEB_ACCESS_EVENT_TYPES = [
+  "timeline_group_started",
+  "timeline_group_finished",
+  "timeline_step_started",
+  "timeline_step_updated",
+  "timeline_step_finished",
+  "timeline_evidence_attached",
+  "timeline_artifact_emitted",
+  "timeline_command_output",
+  "timeline_error",
+] as const;
 
 async function maybeBootstrapWorkspace(
   agentDaemon: AgentDaemon,
@@ -243,6 +265,167 @@ async function startControlPlane(options: {
     console.error("[Daemon] Control Plane start error:", error);
     return { ok: false, error: error?.message || String(error) };
   }
+}
+
+function getWebAccessArgValue(name: string): string | undefined {
+  return getArgValue(name);
+}
+
+function shouldEnableWebAccess(): boolean {
+  const raw =
+    process.env.COWORK_WEB_ACCESS ||
+    process.env.COWORK_WEB_ACCESS_ENABLED ||
+    getWebAccessArgValue("--web-access");
+  if (typeof raw !== "string") return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function getWebAccessAllowedOrigins(): string[] {
+  const raw =
+    process.env.COWORK_WEB_ACCESS_ALLOWED_ORIGINS ||
+    getWebAccessArgValue("--web-access-allowed-origins") ||
+    "";
+  return raw
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function getWebAccessRendererPath(): string {
+  const explicit =
+    process.env.COWORK_WEB_ACCESS_RENDERER_PATH ||
+    getWebAccessArgValue("--web-access-renderer-path");
+  if (explicit && explicit.trim()) {
+    return path.resolve(explicit.trim());
+  }
+  return path.resolve(__dirname, "../../renderer");
+}
+
+function buildWebAccessConfig(): Partial<WebAccessConfig> {
+  const portRaw =
+    process.env.COWORK_WEB_ACCESS_PORT ||
+    getWebAccessArgValue("--web-access-port");
+  const host =
+    process.env.COWORK_WEB_ACCESS_HOST ||
+    getWebAccessArgValue("--web-access-host") ||
+    "127.0.0.1";
+  const token =
+    process.env.COWORK_WEB_ACCESS_TOKEN ||
+    getWebAccessArgValue("--web-access-token") ||
+    "";
+  const allowedOrigins = getWebAccessAllowedOrigins();
+  return {
+    enabled: shouldEnableWebAccess(),
+    host,
+    ...(portRaw ? { port: Number.parseInt(portRaw, 10) } : {}),
+    ...(token ? { token } : {}),
+    ...(allowedOrigins.length > 0 ? { allowedOrigins } : {}),
+  };
+}
+
+async function startWebAccess(options: {
+  agentDaemon: AgentDaemon;
+  dbManager: DatabaseManager;
+}): Promise<StartedWebAccess | null> {
+  const config = buildWebAccessConfig();
+  if (!config.enabled) return null;
+
+  const db = options.dbManager.getDatabase();
+  const taskRepo = new TaskRepository(db);
+  const workspaceRepo = new _WorkspaceRepository(db);
+  const webAccessServer = new WebAccessServer(config, {
+    handleIpcInvoke: async (channel: string, ...args: Any[]) => {
+      switch (channel) {
+        case "task:list":
+          return taskRepo.findAll();
+        case "task:create": {
+          const payload = args[0] && typeof args[0] === "object" ? (args[0] as Any) : {};
+          const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
+          if (!prompt) throw new Error("Task prompt is required.");
+          const workspaceId =
+            typeof payload.workspaceId === "string" && payload.workspaceId.trim().length > 0
+              ? payload.workspaceId.trim()
+              : workspaceRepo.findAll().find((workspace) => !workspace.isTemp)?.id;
+          if (!workspaceId) throw new Error("No workspace available for task creation.");
+          const title =
+            typeof payload.title === "string" && payload.title.trim().length > 0
+              ? payload.title.trim()
+              : "Web Access Task";
+          return options.agentDaemon.createTask({
+            title,
+            prompt,
+            workspaceId,
+            source: "api",
+          });
+        }
+        case "task:get": {
+          const taskId = typeof args[0] === "string" ? args[0].trim() : "";
+          if (!taskId) throw new Error("Task ID is required.");
+          return taskRepo.findById(taskId) ?? null;
+        }
+        case "task:sendMessage": {
+          const payload = args[0] && typeof args[0] === "object" ? (args[0] as Any) : {};
+          const taskId = typeof payload.taskId === "string" ? payload.taskId.trim() : "";
+          const message = typeof payload.message === "string" ? payload.message.trim() : "";
+          if (!taskId || !message) throw new Error("taskId and message are required.");
+          return options.agentDaemon.sendMessage(taskId, message);
+        }
+        case "task:events": {
+          const taskId = typeof args[0] === "string" ? args[0].trim() : "";
+          if (!taskId) throw new Error("Task ID is required.");
+          return options.agentDaemon.getTaskEvents(taskId, { limit: 600 });
+        }
+        case "workspace:list":
+          return workspaceRepo.findAll().filter((workspace) => !workspace.isTemp);
+        case "account:list": {
+          const payload = args[0] && typeof args[0] === "object" ? (args[0] as Any) : {};
+          const status =
+            typeof payload.status === "string" ? (payload.status.trim() as ManagedAccountStatus) : undefined;
+          const accounts = ManagedAccountManager.list({
+            provider: typeof payload.provider === "string" ? payload.provider : undefined,
+            status,
+          });
+          return {
+            accounts: accounts.map((account) => ManagedAccountManager.toPublicView(account, false)),
+          };
+        }
+        case "account:get": {
+          const payload = args[0] && typeof args[0] === "object" ? (args[0] as Any) : {};
+          const accountId = typeof payload.accountId === "string" ? payload.accountId.trim() : "";
+          if (!accountId) throw new Error("accountId is required.");
+          const account = ManagedAccountManager.getById(accountId);
+          return {
+            account: account ? ManagedAccountManager.toPublicView(account, false) : null,
+          };
+        }
+        default:
+          throw new Error(`Unsupported web access channel: ${channel}`);
+      }
+    },
+    getRendererPath: getWebAccessRendererPath,
+    onDaemonEvent: (callback) => {
+      const off: Array<() => void> = [];
+      for (const eventType of WEB_ACCESS_EVENT_TYPES) {
+        const handler = (event: Any) => callback(event);
+        options.agentDaemon.on(eventType, handler);
+        off.push(() => options.agentDaemon.off(eventType, handler));
+      }
+      return () => {
+        for (const detach of off) detach();
+      };
+    },
+    log: (...args: unknown[]) => console.log("[WebAccess]", ...args),
+  });
+
+  await webAccessServer.start();
+  const status = webAccessServer.getStatus();
+  const normalized = webAccessServer.getConfig();
+  console.log(`[Daemon] WebAccess listening: ${status.url}`);
+  if (!config.token && normalized.token) {
+    console.log(`[Daemon] WebAccess token: ${normalized.token}`);
+  }
+  return { server: webAccessServer };
 }
 
 async function main(): Promise<void> {
@@ -702,8 +885,20 @@ async function main(): Promise<void> {
     console.log("[Daemon] Control Plane disabled (skipping auto-start)");
   }
 
+  let startedWebAccess: StartedWebAccess | null = null;
+  try {
+    startedWebAccess = await startWebAccess({ agentDaemon, dbManager });
+  } catch (error) {
+    console.error("[Daemon] WebAccess failed to start:", error);
+  }
+
   const shutdown = async (reason: string) => {
     console.log(`[Daemon] Shutting down (${reason})...`);
+    try {
+      if (startedWebAccess) await startedWebAccess.server.stop();
+    } catch (error) {
+      console.warn("[Daemon] Failed to stop WebAccess:", error);
+    }
     try {
       await shutdownRemoteGatewayClient();
     } catch {

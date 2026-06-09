@@ -1,45 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-
-interface WebWorkspace {
-  id: string;
-  name: string;
-  path?: string;
-}
-
-interface WebTask {
-  id: string;
-  title?: string;
-  status?: string;
-  workspaceId?: string;
-  createdAt?: number;
-}
-
-interface WebTaskEvent {
-  id?: string;
-  type?: string;
-  createdAt?: number;
-  payload?: unknown;
-}
-
-async function apiRequest<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers || {});
-  headers.set("Content-Type", "application/json");
-  const trimmedToken = token.trim();
-  if (trimmedToken) {
-    headers.set("Authorization", `Bearer ${trimmedToken}`);
-  }
-  const response = await fetch(path, { ...init, headers });
-  const bodyText = await response.text();
-  const parsed = bodyText ? JSON.parse(bodyText) : null;
-  if (!response.ok) {
-    const msg =
-      typeof parsed?.error === "string"
-        ? parsed.error
-        : `Request failed (${response.status}) for ${path}`;
-    throw new Error(msg);
-  }
-  return parsed as T;
-}
+import {
+  createWebAccessPlatformAPI,
+  type WebAccessCapabilities,
+  type WebTask,
+  type WebTaskEvent,
+  type WebWorkspace,
+} from "../platform/webAccessPlatform";
 
 function formatDate(ts?: number): string {
   if (!ts) return "-";
@@ -64,6 +30,8 @@ export function WebAccessClient() {
   const [workspaces, setWorkspaces] = useState<WebWorkspace[]>([]);
   const [tasks, setTasks] = useState<WebTask[]>([]);
   const [taskEvents, setTaskEvents] = useState<WebTaskEvent[]>([]);
+  const [capabilities, setCapabilities] = useState<WebAccessCapabilities | null>(null);
+  const [liveStatus, setLiveStatus] = useState<"idle" | "connecting" | "connected" | "closed" | "error">("idle");
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [title, setTitle] = useState("Web Access Task");
@@ -72,11 +40,12 @@ export function WebAccessClient() {
   const [statusMessage, setStatusMessage] = useState("Disconnected");
   const [healthOk, setHealthOk] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  const webAccessApi = useMemo(() => createWebAccessPlatformAPI(() => token), [token]);
 
   const refreshHealth = async () => {
     try {
-      const health = await fetch("/api/health");
-      setHealthOk(health.ok);
+      await webAccessApi.health();
+      setHealthOk(true);
     } catch {
       setHealthOk(false);
     }
@@ -90,8 +59,8 @@ export function WebAccessClient() {
 
   const refreshData = async () => {
     const [loadedWorkspaces, loadedTasks] = await Promise.all([
-      apiRequest<WebWorkspace[]>("/api/workspaces", token),
-      apiRequest<WebTask[]>("/api/tasks", token),
+      webAccessApi.listWorkspaces(),
+      webAccessApi.listTasks(),
     ]);
     setWorkspaces(loadedWorkspaces || []);
     setTasks(loadedTasks || []);
@@ -104,7 +73,8 @@ export function WebAccessClient() {
   const connect = async () => {
     setBusy(true);
     try {
-      await refreshData();
+      const [loadedCapabilities] = await Promise.all([webAccessApi.capabilities(), refreshData()]);
+      setCapabilities(loadedCapabilities);
       setStatusMessage("Connected");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Connection failed");
@@ -127,9 +97,10 @@ export function WebAccessClient() {
       if (selectedWorkspaceId) {
         payload.workspaceId = selectedWorkspaceId;
       }
-      await apiRequest<WebTask>("/api/tasks", token, {
-        method: "POST",
-        body: JSON.stringify(payload),
+      await webAccessApi.createTask({
+        title: payload.title,
+        prompt: payload.prompt,
+        ...(payload.workspaceId ? { workspaceId: payload.workspaceId } : {}),
       });
       setPrompt("");
       setStatusMessage("Task created");
@@ -145,7 +116,7 @@ export function WebAccessClient() {
     if (!selectedTaskId) return;
     setBusy(true);
     try {
-      const events = await apiRequest<WebTaskEvent[]>(`/api/tasks/${selectedTaskId}/events`, token);
+      const events = await webAccessApi.listTaskEvents(selectedTaskId);
       setTaskEvents(events || []);
       setStatusMessage(`Loaded ${events?.length || 0} event(s)`);
     } catch (error) {
@@ -159,9 +130,9 @@ export function WebAccessClient() {
     if (!selectedTaskId || !followupMessage.trim()) return;
     setBusy(true);
     try {
-      await apiRequest(`/api/tasks/${selectedTaskId}/message`, token, {
-        method: "POST",
-        body: JSON.stringify({ message: followupMessage.trim() }),
+      await webAccessApi.sendTaskMessage({
+        taskId: selectedTaskId,
+        message: followupMessage.trim(),
       });
       setFollowupMessage("");
       setStatusMessage("Message sent");
@@ -172,6 +143,34 @@ export function WebAccessClient() {
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!token.trim()) {
+      setLiveStatus("idle");
+      return;
+    }
+
+    return webAccessApi.connectLiveEvents(
+      (event) => {
+        if (event.event === "daemon.event") {
+          const payload = event.payload as { type?: string; taskId?: string; timestamp?: number } | undefined;
+          if (payload?.taskId && (!selectedTaskId || payload.taskId === selectedTaskId)) {
+            setTaskEvents((current) => [
+              ...current.slice(-199),
+              {
+                taskId: payload.taskId,
+                type: payload.type || event.event,
+                timestamp: payload.timestamp || event.timestamp,
+                payload,
+              },
+            ]);
+          }
+          void refreshData().catch(() => {});
+        }
+      },
+      (status) => setLiveStatus(status),
+    );
+  }, [selectedTaskId, token, webAccessApi]);
 
   return (
     <div
@@ -188,7 +187,7 @@ export function WebAccessClient() {
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
         <h1 style={{ marginBottom: 6, fontSize: 22 }}>CoWork OS Web Access</h1>
         <p style={{ margin: 0, color: "#9ca3af", fontSize: 13 }}>
-          Browser client for the Web Access REST API.
+          Mobile-first browser client for the Web Access API.
         </p>
 
         <div
@@ -256,11 +255,12 @@ export function WebAccessClient() {
             <strong style={{ color: healthOk === true ? "#34d399" : healthOk === false ? "#f87171" : "#fbbf24" }}>
               {healthOk === null ? "checking..." : healthOk ? "ok" : "down"}
             </strong>{" "}
-            | Status: <strong style={{ color: "#e5e7eb" }}>{statusMessage}</strong>
+            | Status: <strong style={{ color: "#e5e7eb" }}>{statusMessage}</strong> | Live:{" "}
+            <strong style={{ color: liveStatus === "connected" ? "#34d399" : "#fbbf24" }}>{liveStatus}</strong>
           </div>
         </div>
 
-        <div style={{ display: "grid", gap: 14, marginTop: 14, gridTemplateColumns: "1fr 1fr" }}>
+        <div className="web-access-grid">
           <div
             style={{
               padding: 14,
@@ -435,6 +435,43 @@ export function WebAccessClient() {
           </div>
         </div>
 
+        {capabilities ? (
+          <div
+            style={{
+              marginTop: 14,
+              padding: 14,
+              borderRadius: 12,
+              background: "rgba(15, 23, 42, 0.7)",
+              border: "1px solid rgba(255,255,255,0.12)",
+            }}
+          >
+            <h2 style={{ marginTop: 0, marginBottom: 10, fontSize: 14, color: "#9ca3af" }}>
+              Web Coverage
+            </h2>
+            <div className="web-access-capabilities">
+              {[...capabilities.apiGroups, ...capabilities.localFeatures].map((capability) => (
+                <div
+                  key={capability.id}
+                  style={{
+                    padding: 10,
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "rgba(0,0,0,0.18)",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <strong style={{ fontSize: 13 }}>{capability.label}</strong>
+                    <span style={{ color: capability.status === "available" ? "#34d399" : "#fbbf24", fontSize: 12 }}>
+                      {capability.status}
+                    </span>
+                  </div>
+                  <div style={{ color: "#9ca3af", fontSize: 12, marginTop: 6 }}>{capability.notes}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div
           style={{
             marginTop: 14,
@@ -505,6 +542,25 @@ export function WebAccessClient() {
           </pre>
         </div>
       </div>
+      <style>{`
+        .web-access-grid {
+          display: grid;
+          gap: 14px;
+          margin-top: 14px;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        }
+        .web-access-capabilities {
+          display: grid;
+          gap: 10px;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        @media (max-width: 720px) {
+          .web-access-grid,
+          .web-access-capabilities {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
     </div>
   );
 }

@@ -10,7 +10,13 @@ import * as http from "http";
 import * as path from "path";
 import * as fs from "fs";
 import * as crypto from "crypto";
-import { WebAccessConfig, WebAccessStatus, DEFAULT_WEB_ACCESS_CONFIG } from "./types";
+import { WebSocketServer, WebSocket } from "ws";
+import {
+  WebAccessConfig,
+  WebAccessStatus,
+  DEFAULT_WEB_ACCESS_CONFIG,
+  WEB_ACCESS_CAPABILITIES,
+} from "./types";
 
 interface WebAccessServerDeps {
   /** Handle an IPC-equivalent invoke from the web client */
@@ -18,16 +24,18 @@ interface WebAccessServerDeps {
   /** Get the path to the built renderer files */
   getRendererPath: () => string;
   /** Forward real-time events to connected WebSocket clients */
-  onDaemonEvent?: (callback: (event: Any) => void) => void;
+  onDaemonEvent?: (callback: (event: Any) => void) => void | (() => void);
   log?: (...args: unknown[]) => void;
 }
 
 export class WebAccessServer {
   private server: http.Server | null = null;
-  private wsClients: Set<Any> = new Set();
+  private wss: WebSocketServer | null = null;
+  private wsClients: Set<WebSocket> = new Set();
   private config: WebAccessConfig;
   private deps: WebAccessServerDeps;
   private startedAt?: number;
+  private detachDaemonEvent?: () => void;
 
   constructor(config: Partial<WebAccessConfig>, deps: WebAccessServerDeps) {
     this.config = this.normalizeConfig(config);
@@ -40,11 +48,18 @@ export class WebAccessServer {
     if (this.server) return;
 
     this.server = http.createServer((req, res) => this.handleRequest(req, res));
+    this.wss = new WebSocketServer({ noServer: true });
+    this.wss.on("connection", (client) => this.handleWebSocketConnection(client));
 
     // WebSocket upgrade
     this.server.on("upgrade", (req, socket, head) => {
       this.handleWebSocketUpgrade(req, socket, head);
     });
+
+    const detach = this.deps.onDaemonEvent?.((event) => {
+      this.broadcastLiveEvent("daemon.event", event);
+    });
+    this.detachDaemonEvent = typeof detach === "function" ? detach : undefined;
 
     return new Promise((resolve, reject) => {
       this.server!.listen(this.config.port, this.config.host, () => {
@@ -68,6 +83,18 @@ export class WebAccessServer {
       }
     }
     this.wsClients.clear();
+    try {
+      this.detachDaemonEvent?.();
+    } catch {
+      // ignore
+    }
+    this.detachDaemonEvent = undefined;
+    try {
+      this.wss?.close();
+    } catch {
+      // ignore
+    }
+    this.wss = null;
 
     return new Promise((resolve) => {
       this.server!.close(() => {
@@ -161,6 +188,12 @@ export class WebAccessServer {
     if (url.pathname === "/api/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok", timestamp: Date.now() }));
+      return;
+    }
+
+    if (url.pathname === "/api/capabilities") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(WEB_ACCESS_CAPABILITIES));
       return;
     }
 
@@ -317,11 +350,19 @@ export class WebAccessServer {
 
   // ── WebSocket ───────────────────────────────────────────────────
 
-  private handleWebSocketUpgrade(req: http.IncomingMessage, socket: Any, _head: Buffer): void {
-    // Simplified WebSocket handling using raw socket
-    // In production, use the `ws` package (already a dependency)
+  private handleWebSocketUpgrade(req: http.IncomingMessage, socket: Any, head: Buffer): void {
     try {
       const url = new URL(req.url || "/", `http://${req.headers.host}`);
+      if (url.pathname !== "/ws") {
+        socket.destroy();
+        return;
+      }
+      const requestOrigin =
+        typeof req.headers.origin === "string" ? req.headers.origin.trim() : "";
+      if (requestOrigin && !this.resolveCorsOrigin(requestOrigin)) {
+        socket.destroy();
+        return;
+      }
       const token = url.searchParams.get("token");
       const tokenBuf = Buffer.from(token || "");
       const expectedBuf = Buffer.from(this.config.token);
@@ -335,12 +376,45 @@ export class WebAccessServer {
         return;
       }
 
-      // For full WebSocket support, wire up the existing `ws` package here
-      // This is a placeholder for the upgrade handler
-      this.log("[WebAccess] WebSocket upgrade requested — wire ws package for full support");
-      socket.destroy();
+      if (!this.wss) {
+        socket.destroy();
+        return;
+      }
+      this.wss.handleUpgrade(req, socket, head, (client) => {
+        this.wss?.emit("connection", client, req);
+      });
     } catch {
       socket.destroy();
+    }
+  }
+
+  private handleWebSocketConnection(client: WebSocket): void {
+    this.wsClients.add(client);
+    client.on("close", () => {
+      this.wsClients.delete(client);
+    });
+    client.on("error", () => {
+      this.wsClients.delete(client);
+    });
+    this.sendLiveEvent(client, "webaccess.connected", {
+      status: "ok",
+      timestamp: Date.now(),
+      capabilities: WEB_ACCESS_CAPABILITIES,
+    });
+  }
+
+  private broadcastLiveEvent(event: string, payload?: unknown): void {
+    for (const client of this.wsClients) {
+      this.sendLiveEvent(client, event, payload);
+    }
+  }
+
+  private sendLiveEvent(client: WebSocket, event: string, payload?: unknown): void {
+    if (client.readyState !== WebSocket.OPEN) return;
+    try {
+      client.send(JSON.stringify({ event, payload, timestamp: Date.now() }));
+    } catch {
+      this.wsClients.delete(client);
     }
   }
 

@@ -126,6 +126,9 @@ hero:
       text: Evolving Agent Intelligence
       link: /evolving-agent-intelligence
     - theme: alt
+      text: Agent Research Guide
+      link: /agent-framework-research-and-build-guide
+    - theme: alt
       text: Reliability Flywheel
       link: /reliability-flywheel
     - theme: alt

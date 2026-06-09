@@ -1,11 +1,20 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import * as http from "http";
+import { WebSocket } from "ws";
 import { WebAccessServer } from "../WebAccessServer";
 
 function makeDeps() {
+  let daemonEventCallback: ((event: Any) => void) | null = null;
   return {
     handleIpcInvoke: vi.fn().mockResolvedValue({ tasks: [] }),
     getRendererPath: () => "/tmp/renderer",
+    onDaemonEvent: vi.fn((callback: (event: Any) => void) => {
+      daemonEventCallback = callback;
+      return () => {
+        daemonEventCallback = null;
+      };
+    }),
+    emitDaemonEvent: (event: Any) => daemonEventCallback?.(event),
     log: vi.fn(),
   };
 }
@@ -95,6 +104,15 @@ describe("WebAccessServer", () => {
     const body = JSON.parse(res.body);
     expect(body.status).toBe("ok");
     expect(body.timestamp).toBeGreaterThan(0);
+  });
+
+  it("GET /api/capabilities returns the Web MVP coverage without auth", async () => {
+    const res = await request(testPort, { path: "/api/capabilities" });
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.mvpScope).toBe("agent_task_loop");
+    expect(body.apiGroups.some((group: Any) => group.id === "tasks")).toBe(true);
+    expect(body.localFeatures.some((feature: Any) => feature.id === "terminal")).toBe(true);
   });
 
   // ── Authentication ────────────────────────────────────────────
@@ -301,6 +319,35 @@ describe("WebAccessServer", () => {
 
     expect(res.status).toBe(500);
     expect(JSON.parse(res.body).error).toBe("DB connection failed");
+  });
+
+  // ── WebSocket live events ─────────────────────────────────────
+
+  it("streams daemon events to authenticated WebSocket clients", async () => {
+    const client = new WebSocket(`ws://127.0.0.1:${testPort}/ws?token=${TEST_TOKEN}`);
+    const messages: Any[] = [];
+    client.on("message", (data) => {
+      messages.push(JSON.parse(String(data)));
+    });
+    await new Promise<void>((resolve, reject) => {
+      client.on("open", resolve);
+      client.on("error", reject);
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    deps.emitDaemonEvent({ taskId: "task-1", type: "timeline_step_updated" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(messages.some((message) => message.event === "webaccess.connected")).toBe(true);
+    expect(
+      messages.some(
+        (message) =>
+          message.event === "daemon.event" &&
+          message.payload?.taskId === "task-1" &&
+          message.payload?.type === "timeline_step_updated",
+      ),
+    ).toBe(true);
+    client.close();
   });
 
   // ── Token auto-generation ─────────────────────────────────────

@@ -20,7 +20,7 @@
 
 ### Backlog
 
-- [ ] 继续补充使用中产生的新问题和研究方向。
+- 按需持续补充使用中产生的新问题和研究方向。
 
 ### Done
 
@@ -77,10 +77,11 @@
 ### ISSUE-002 - npm 启动时出现 electron_mirror 警告
 
 - 优先级：`P2`
-- 状态：`Backlog`
+- 状态：`Fixed`
 - 现象：运行 npm 命令时出现 `Unknown user config "electron_mirror"` 警告。
 - 影响：不阻塞使用，但会污染日志。
-- 下一步：检查 `.npmrc` 或用户级 npm config，改为 npm 支持的配置方式。
+- 修复：删除用户级 npm config 中过期的 `electron_mirror` 键；项目 dev 脚本继续使用支持的 `ELECTRON_MIRROR` 环境变量。
+- 验证：`npm config get electron_mirror` 与 `npm config get electron-mirror` 均返回 `undefined`；`npm run --silent dev:react -- --version` 不再输出 npm warning。
 
 ### ISSUE-003 - 简单寒暄任务被过度规划并误判失败
 
@@ -107,7 +108,7 @@
 | 编号 | 优化点 | 现象 / 用户反馈 | 影响 | 优先级 | 下一步 |
 | --- | --- | --- | --- | --- | --- |
 | OPT-001 | 聊天输入可靠性 | 聊天过程中偶发感觉用户输入被吞掉，输入后没有形成可见消息或没有触发预期执行 | 会破坏连续对话信任感，尤其影响长会话和高频 follow-up | High | Fixed：composer 现在会等待 `onCreateTask` / `onSendMessage` 成功后再清空输入；`App` 层发送/建任务失败会在 toast 后继续向上抛错；完成态 delivery 视图会保留助手回答后的用户追问，避免已持久化的 follow-up 在 UI 中不可见 |
-| OPT-002 | Session 列表层级化与检索 | 当前 session 以平铺列表为主，后续历史增多后不方便查找 | 影响复盘、恢复上下文和按项目继续工作 | Medium | Scoped：现有侧栏已有搜索、模式筛选、日期分组、自动任务折叠、父子任务树；下一步先定义 workspace / worker directory 的聚合口径，再做分组 UI |
+| OPT-002 | Session 列表层级化与检索 | 当前 session 以平铺列表为主，后续历史增多后不方便查找 | 影响复盘、恢复上下文和按项目继续工作 | Medium | Designed：已明确分组数据口径和低保真 UI 方案；实现应作为后续独立 UI 迭代，不阻塞明天 dogfood |
 
 ## 自动化验证记录
 
@@ -126,8 +127,12 @@
 - OPT-002 范围梳理：`Sidebar` 目前已有 `filterTaskTreeBySearch`、mode filters、date groups、automated folder、parent-child tree；下一步不应重复做基础搜索，而应补 workspace / worker directory 分组模型。
 - OPT-001 / OPT-002 跟踪验证：`npm run type-check` 通过；`npx vitest run src/renderer/components/__tests__/main-content-working-state.test.ts src/renderer/components/__tests__/main-content-markdown-normalization.test.ts src/renderer/__tests__/sidebar-helpers.test.ts`：3 个测试文件通过，123 个测试通过；`oxlint` 无 error，剩余为既有 warning。
 - dev 部署验证：重启 `npm run dev:log` 成功，Vite `ready in 162 ms`；Electron 使用 dev profile 启动，`Startup complete in 373 ms`；最新 workspace 为 `/Users/cloud/Projects/00Private/CoWork-OS`；dev smoke artifact / agent / trigger 数据仍有效。
-
+- ISSUE-002 验证：删除用户级 `electron_mirror` npm config 后，`npm run --silent dev:react -- --version` 输出 `vite/7.3.1 darwin-arm64 node-v24.16.0`，没有 npm warning。
+- 明天检查清单预验证：dev 环境已启动；最近 workspace 为 `/Users/cloud/Projects/00Private/CoWork-OS`；已有完成的 `hi` 简单任务；最近任务历史可读；`DEV_SMOKE_ARTIFACT.html` 文件仍在 workspace；Artifacts / Agents / Automation smoke 数据仍在 dev 数据库。
+- 完整聚焦回归（20:45）：`npm run type-check` 通过；`npx vitest run ...` 覆盖 Browser、Terminal、Settings、Chat 分流、Memory、Artifacts、Agents / Automation、输入可靠性、Sidebar，共 25 个测试文件、420 个测试通过；真实 `BrowserService.navigate("data:text/html,...")` smoke 通过；dev 日志未发现 `Uncaught`、`Unhandled`、`Invalid workspace ID`、Playwright executable missing 等关键错误。
 - OPT-001 追问显示回归（21:10）：用户反馈 `test` session 第二个问句不可见；数据库确认 task `9c39e479-53ee-4d1a-88a5-ad8c19d57ecd` 已持久化 follow-up `user_message`，内容为 `你能干什么？有什么功能？`。根因是非 chat 判定的 completed task 默认进入 `delivery` 视图，只展示最终回答/交付物，过滤了助手回答后的用户追问。已修复 `selectVisibleTaskFeedRows`：delivery 模式保留助手回答之后出现的用户 follow-up；新增回归测试 `keeps follow-up user questions visible in completed delivery mode`。验证：`npm run type-check` 通过；`npx vitest run src/renderer/components/__tests__/main-content-working-state.test.ts` 65 个测试通过；触达文件 IDE lint 无错误。
+- 当前残余风险：`oxlint` 无 error，但扫描触达文件时仍有 25 个既有 warning，主要集中在 `executor.ts` 与 `MainContent.tsx` 的历史 `any` / unused / 常量条件问题；不阻塞本次 dogfood 目标，建议后续单独清理。
+
 ## 研究方向池
 
 | 编号 | 方向 | 来源 | 优先级 | 下一步 |
@@ -143,8 +148,26 @@
 | 编号 | 任务 | 来源 | 优先级 | 状态 | 下一步 |
 | --- | --- | --- | --- | --- | --- |
 | TASK-001 | 输入提交链路可靠性回归 | OPT-001 | High | Done for today | 已覆盖两类问题：提交失败不清空输入；完成态 delivery 视图不隐藏 follow-up 用户问句。明天高频 follow-up 继续观察，若仍复现再补 renderer submit id 与 IPC ack 日志 |
-| TASK-002 | Session 分组数据口径 | OPT-002 / RESEARCH-005 | Medium | Ready to design | 确认每个 task 是否已有稳定 workspace path / worker directory / source 字段；决定根分组优先级 |
-| TASK-003 | Session 侧栏低保真方案 | OPT-002 / RESEARCH-005 | Medium | Pending | 在不破坏现有搜索和虚拟列表的前提下设计 workspace/worker 分组、折叠、计数和最近活跃排序 |
+| TASK-002 | Session 分组数据口径 | OPT-002 / RESEARCH-005 | Medium | Done | 使用 `workspaceId` 关联 workspace path；优先用 `worktreePath` 代表 worker/worktree directory；无 worktree 时归入 workspace 根；`source` 只作为辅助标签，不作为主分组 |
+| TASK-003 | Session 侧栏低保真方案 | OPT-002 / RESEARCH-005 | Medium | Done | 方案见下方“Session 侧栏分组方案”；后续实现需保持现有搜索、模式筛选、日期分组、自动任务折叠、父子任务树与虚拟列表兼容 |
+
+### Session 侧栏分组方案
+
+数据口径：
+
+1. 根分组优先级为 `workspace path`，通过 `Task.workspaceId` 关联 `workspaces.path`。
+2. 二级分组优先使用 `Task.worktreePath`；存在 worktree 时显示 worktree 目录名和 branch，代表 worker/worktree directory。
+3. 没有 `worktreePath` 的任务进入该 workspace 的 `Main workspace` 分组。
+4. `Task.source`、`agentConfig.executionMode`、`agentConfig.taskDomain`、`labels`、`status` 作为筛选/标签，不作为根分组，避免把同一工作目录拆散。
+5. `parentTaskId` 仍用于父子树展示，不能被 workspace/worktree 分组打断。
+
+低保真 UI：
+
+1. Sidebar `Sessions` 下先显示当前 workspace 组；后续跨 workspace 展示时再显示多个 workspace 组。
+2. workspace 组内按 `Main workspace`、活跃 worktree、历史 worktree 分组；每组展示数量、最近活跃时间、运行中/等待用户数量。
+3. 搜索时保留当前 `filterTaskTreeBySearch` 语义：匹配子项时保留父组和父任务。
+4. 模式筛选、失败隐藏、自动任务折叠继续作用在分组内的 session tree 上。
+5. 虚拟列表 row 类型需要新增 `workspace-header` 和 `worktree-header`，高度固定，避免破坏现有滚动性能。
 
 ## 产品设计备忘
 
@@ -177,10 +200,11 @@ flowchart TD
 
 ## 明天使用前检查清单
 
-- [ ] 启动 `cowork-dev`。
-- [ ] 确认当前 workspace 是 `/Users/cloud/Projects/00Private/CoWork-OS`。
-- [ ] 创建一个简单任务，确认 LLM 能响应。
-- [ ] 打开最近任务，确认历史仍在。
-- [ ] 创建一个测试文件并重启，确认文件仍在。
-- [ ] 快速确认 Artifacts 和 Agents / Automation smoke 记录在 UI 中可见。
-- [ ] 使用中产生的新问题先写入本文件，再决定是否当天修。
+- [x] 启动 `cowork-dev`。
+- [x] 确认当前 workspace 是 `/Users/cloud/Projects/00Private/CoWork-OS`。
+- [x] 创建一个简单任务，确认 LLM 能响应。
+- [x] 打开最近任务，确认历史仍在。
+- [x] 创建一个测试文件并重启，确认文件仍在。
+- [x] 快速确认 Artifacts 和 Agents / Automation smoke 记录在 UI 中可见。
+
+持续原则：使用中产生的新问题先写入本文件，再决定是否当天修。
