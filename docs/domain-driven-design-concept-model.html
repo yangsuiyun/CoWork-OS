@@ -568,7 +568,7 @@
         提取业务愿景、核心域/支撑域/通用域、限界上下文、聚合根、实体、值对象、领域服务、策略规则与领域事件。
       </p>
       <div class="hero-grid">
-        <div class="metric"><strong>15</strong><span>主要限界上下文</span></div>
+        <div class="metric"><strong>16</strong><span>主要限界上下文</span></div>
         <div class="metric"><strong>20+</strong><span>核心聚合/实体族</span></div>
         <div class="metric"><strong>17</strong><span>消息通道集成方向</span></div>
         <div class="metric"><strong>Local-first</strong><span>本地优先的代理操作系统</span></div>
@@ -586,7 +586,7 @@
       </p>
       <div class="note">
         <strong>核心域判断：</strong>项目最有业务差异化的核心域是“可治理的代理任务执行与多代理协作”。围绕它形成三个强支撑域：
-        Workflow Intelligence（记忆、Heartbeat、Dreaming、Suggestions）、Everything Workbench（工件工作台）和 Integration/Gateway（通道与连接器）。
+        Workflow Intelligence（记忆、Heartbeat、Dreaming、Suggestions）、Everything Workbench（工件工作台）和 Integration/Gateway（通道、连接器与外部 Agent）。
       </div>
       <h3>领域分层</h3>
       <table>
@@ -605,8 +605,8 @@
           </tr>
           <tr>
             <td><span class="badge">Supporting Domain</span></td>
-            <td>Memory & Workflow Intelligence、Everything Workbench、Channel Gateway、Skills Runtime、MCP Connectors</td>
-            <td>让执行过程具备长期记忆、可复用技能、远程消息入口、生成工件和外部系统连接能力。</td>
+            <td>Memory & Workflow Intelligence、Everything Workbench、Channel Gateway、Skills Runtime、MCP Connectors、External Agent Interoperability</td>
+            <td>让执行过程具备长期记忆、可复用技能、远程消息入口、生成工件、外部工具连接和外部 Agent 委派能力。</td>
           </tr>
           <tr>
             <td><span class="badge">Generic Domain</span></td>
@@ -627,8 +627,11 @@
         <a href="#relationships">跨上下文关系</a>
         <a href="#events">领域事件与生命周期</a>
         <a href="#rules">关键业务规则</a>
+        <a href="#strategic-design">战略设计视角</a>
+        <a href="#industry-practices">行业最佳实践对照</a>
         <a href="#recommendations">建模建议</a>
         <a href="#use-cases">产品用例图谱</a>
+        <a href="#sources">证据来源</a>
       </div>
     </section>
 
@@ -741,7 +744,7 @@
 
     <section id="context-map">
       <h2>4. 限界上下文地图</h2>
-      <p class="lead">CoWork OS 可以拆为 15 个主要限界上下文。核心上下文围绕 Task Runtime，其他上下文通过事件、策略、仓储和 UI 投影与它协作。</p>
+      <p class="lead">CoWork OS 可以拆为 16 个主要限界上下文。核心上下文围绕 Task Runtime，其他上下文通过事件、策略、仓储和 UI 投影与它协作。</p>
 
       <div class="diagram-panel" id="relationship-diagrams">
         <div class="diagram-title">
@@ -1218,6 +1221,27 @@
             <td>代理编排</td>
             <td>runId、nodes、events、workerRole、childTasks</td>
             <td>拆分任务、调度子代理、汇总结果、可视化协作图。</td>
+          </tr>
+          <tr>
+            <td>聚合根</td>
+            <td>ACPAgentCard / ExternalAgent</td>
+            <td>外部 Agent 互操作</td>
+            <td>agentId、origin、endpoint、capabilities、skills、provider、status</td>
+            <td>注册远程 Agent、声明能力、按能力发现、更新可用状态。</td>
+          </tr>
+          <tr>
+            <td>聚合根/运行实例</td>
+            <td>ACPTask / ExternalAgentRun</td>
+            <td>外部 Agent 互操作</td>
+            <td>requesterId、assigneeId、coworkTaskId、remoteTaskId、status、result、error</td>
+            <td>创建委派任务、同步远程状态、取消远程任务、收敛输出。</td>
+          </tr>
+          <tr>
+            <td>领域服务/防腐层</td>
+            <td>RemoteAgentInvoker / A2AJsonRpcRequest</td>
+            <td>外部 Agent 互操作</td>
+            <td>endpoint、method、timeout、authorization、normalized result</td>
+            <td>调用 <code>tasks/send</code>、<code>tasks/create</code>、<code>tasks/get</code>、<code>tasks/cancel</code>，并把远程结果规范化为内部运行状态。</td>
           </tr>
           <tr>
             <td>聚合根</td>
@@ -1824,7 +1848,64 @@
         </tbody>
       </table>
 
-      <h3>6.11 控制平面与 Company Ops 上下文</h3>
+      <h3>6.11 外部 Agent 互操作上下文</h3>
+      <p><strong>职责：</strong>把 CoWork OS 与外部 Agent 生态连接起来，使内部任务可以发现、选择、委派给远程 ACP/A2A Agent，并把远程运行状态收敛回统一的 OrchestrationGraph、TaskEvent、Artifact 和审批体系。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>属性</th>
+            <th>行为</th>
+            <th>规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>ACPAgentCard / ExternalAgent</td>
+            <td>id、name、description、version、provider、origin、endpoint、capabilities、skills、status</td>
+            <td>注册远程 Agent、展示能力、按 capability/query/status/origin 发现候选</td>
+            <td>外部 Agent 是协作主体，不是普通 MCP tool；必须显式注册并声明能力边界。</td>
+          </tr>
+          <tr>
+            <td>ACPCapability / AgentCapabilityManifest</td>
+            <td>capability id、name、description、input/output content types、streaming support</td>
+            <td>描述可处理任务类型、输入输出形态和流式支持</td>
+            <td>编排器只能基于已声明能力选择远程 Agent，不能靠自由文本猜测可用能力。</td>
+          </tr>
+          <tr>
+            <td>ACPTask / ExternalAgentRun</td>
+            <td>requesterId、assigneeId、title、prompt、status、coworkTaskId、remoteTaskId、workspaceId、result、error</td>
+            <td>创建委派、持久化运行、查询状态、取消任务、映射远程结果</td>
+            <td>一次远程委派必须有内部可审计 task/run id，并可追踪到 remoteTaskId。</td>
+          </tr>
+          <tr>
+            <td>OrchestrationGraphNode</td>
+            <td>dispatchTarget、acpAgentId、remoteTaskId、publicHandle、summary、output、error</td>
+            <td>把 <code>remote_acp</code> 节点派发给远程 Agent，并把远程状态投影到编排图</td>
+            <td>远程 Agent 委派应复用统一编排图，不维护第二套并行运行模型。</td>
+          </tr>
+          <tr>
+            <td>RemoteAgentInvoker / AgentProtocolBinding</td>
+            <td>endpoint、authorization header、JSON-RPC method、timeout、normalized result</td>
+            <td>调用 A2A 风格 <code>tasks/send</code>、<code>tasks/create</code>、<code>tasks/get</code>、<code>tasks/cancel</code></td>
+            <td>协议绑定是防腐层：远程响应必须规范化为内部 status/result/error。</td>
+          </tr>
+          <tr>
+            <td>AgentTrustPolicy / DataSharingPolicy</td>
+            <td>endpoint validation、scope、allowed context、authorization metadata、audit trail</td>
+            <td>限制远程 endpoint、授权请求、控制上下文外发、记录委派审计</td>
+            <td>远程 Agent 默认不可信；prompt、workspace、memory、mailbox 等上下文外发必须受 Permission &amp; Safety 约束。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="muted small">
+        代码证据：<code>src/electron/acp/types.ts</code> 定义 <code>ACPAgentCard</code> 与 <code>ACPTask</code>；
+        <code>src/electron/acp/agent-registry.ts</code> 管理本地/远程 Agent；
+        <code>src/electron/acp/remote-invoker.ts</code> 封装 A2A JSON-RPC 调用；
+        <code>OrchestrationGraphNode.dispatchTarget</code> 已包含 <code>remote_acp</code> 与 <code>external_runtime</code>。
+      </p>
+
+      <h3>6.12 控制平面与 Company Ops 上下文</h3>
       <p><strong>职责：</strong>把个人或公司级运营目标拆成可跟踪、可分派、可执行的工作项，并通过 Mission Control 统一观察。</p>
       <table>
         <thead>
@@ -1869,7 +1950,7 @@
         </tbody>
       </table>
 
-      <h3>6.12 身份解析上下文</h3>
+      <h3>6.13 身份解析上下文</h3>
       <p><strong>职责：</strong>在 Inbox、Gateway、Knowledge Graph 和联系人记忆之间识别“同一个人/组织”的多源身份。</p>
       <table>
         <thead>
@@ -1957,6 +2038,17 @@
             </ul>
           </div>
         </div>
+        <div class="card">
+          <div class="card-header"><h3>外部 Agent 是受治理的协作者</h3></div>
+          <div class="card-body">
+            <p>ACP/A2A Agent 可以承接编排节点，但必须通过注册、能力声明、权限检查和统一状态投影接入。</p>
+            <ul>
+              <li><code>acp_discover</code> 先发现 local/remote Agent，再由 <code>acp_agent_id</code> 指定委派目标。</li>
+              <li><code>OrchestrationGraphNode.dispatchTarget = remote_acp</code> 时，远程运行以 <code>remoteTaskId</code> 回写节点状态。</li>
+              <li>远程输出最终收敛为编排节点 output/error，并可进一步形成 TaskEvent、Artifact 或 Memory。</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -2009,6 +2101,18 @@
             <td>AgentDaemon/SessionRuntime</td>
             <td>MemoryService、DreamingService、Heartbeat、Mission Control</td>
             <td>触发记忆巩固、结果投影、托管会话完成。</td>
+          </tr>
+          <tr>
+            <td>ACPAgentRegistered</td>
+            <td>Control Plane / ACP Agent Registry</td>
+            <td>Agent Orchestration、Permission &amp; Safety、Renderer</td>
+            <td>一个可委派的本地或远程 Agent 进入可发现集合。</td>
+          </tr>
+          <tr>
+            <td>RemoteAgentDelegated / ACPTaskUpdated</td>
+            <td>OrchestrationGraphEngine / RemoteAgentInvoker</td>
+            <td>OrchestrationGraph、Task Runtime、Mission Control</td>
+            <td>远程 Agent 运行状态、输出或错误被规范化并投影回内部编排图。</td>
           </tr>
         </tbody>
       </table>
@@ -2064,6 +2168,11 @@
             <td>即使普通网络访问被允许，发送本地/导入内容到外部服务仍进入 <code>data_export</code> 审批通道。</td>
           </tr>
           <tr>
+            <td>Remote Agent Is Not A Tool</td>
+            <td>外部 Agent 互操作 / 权限与安全</td>
+            <td>外部 Agent 是具备自主执行能力的协作者；委派前必须经过 endpoint 校验、能力声明、授权范围与数据外发审查，不能按普通工具调用处理。</td>
+          </tr>
+          <tr>
             <td>ManagedSession 不直接执行</td>
             <td>托管代理</td>
             <td>ManagedSession 是 API-facing durable run，底层必须映射到 Task 或 AgentTeamRun。</td>
@@ -2106,7 +2215,7 @@
       </p>
       <h3>支撑域</h3>
       <p>
-        Memory/Heartbeat/Dreaming、Everything Workbench、Gateway/Connectors、Skills 是支撑域。它们增强核心域的长期性、可扩展性和工作产物质量，
+        Memory/Heartbeat/Dreaming、Everything Workbench、Gateway/Connectors、Skills、External Agent Interoperability 是支撑域。它们增强核心域的长期性、可扩展性、外部协作能力和工作产物质量，
         但应通过明确事件、仓储接口和应用服务与 Task Runtime 协作。
       </p>
       <h3>通用域</h3>
@@ -2118,10 +2227,158 @@
       </div>
     </section>
 
+    <section id="industry-practices">
+      <h2>11. 行业最佳实践对照与优化方向</h2>
+      <p class="lead">
+        结合 Claude Code、OpenClaw/acpx、Hermes Agent 以及 2026 年多代理系统实践，CoWork OS 的总体方向与业界趋势一致：
+        以稳定运行时和安全内核承载长期任务，再通过编排、技能、通道和协议接入扩展能力。差异主要在于若干边界还可以建模得更硬、更可审计。
+      </p>
+
+      <div class="note">
+        <strong>核心判断：</strong>CoWork OS 应继续坚持“Task Runtime + Permission &amp; Safety 是稳定内核；Agent Orchestration / Skills / Gateway / ACP / MCP 是用户态能力层”的分层。外部经验不是推翻当前设计，而是帮助把上下文边界、会话所有权、权限隔离和自学习闭环表达得更明确。
+      </div>
+
+      <h3>11.1 开源/业界项目经验</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>项目/实践</th>
+            <th>值得借鉴的经验</th>
+            <th>对 CoWork OS 的启发</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Claude Code</strong><br><span class="small muted">subagents / skills / hooks / MCP / permissions</span></td>
+            <td>子代理拥有独立上下文、独立工具白名单和权限模式；skills 作为可复用能力包按需注入；hooks 在工具调用前后提供确定性拦截。</td>
+            <td>强化 <code>AgentRole</code> 的上下文归属、工具范围和权限策略；把 runtime hooks 从工程机制提升为领域对象；技能应采用索引 + 按需加载，避免 prompt 污染。</td>
+          </tr>
+          <tr>
+            <td><strong>OpenClaw</strong><br><span class="small muted">local-first gateway / channel routing / ACP-MCP bridge</span></td>
+            <td>Gateway 是消息通道、路由、认证和 session 管理的单一控制平面；ACP 用于 agent session，MCP 用于工具/数据接入，二者职责分明。</td>
+            <td>明确 <code>Channel Gateway</code>、<code>Control Plane</code>、<code>Task Runtime</code> 的边界：Gateway 负责路由和会话入口，Task Runtime 负责执行事实，MCP 不应替代 ACP。</td>
+          </tr>
+          <tr>
+            <td><strong>acpx</strong><br><span class="small muted">ACP client / warm session owner / queue owner</span></td>
+            <td>把一次 CLI 调用拆成 thin client 与长期 session owner；session owner 持有 ACP 连接、队列、lease、heartbeat 和顺序执行语义。</td>
+            <td>外部 Agent 委派不应只是一次 HTTP 调用，应建模为 <code>ExternalAgentSession</code>、<code>SessionOwnerLease</code>、<code>RemoteRunQueue</code>、<code>RemoteRunHeartbeat</code>。</td>
+          </tr>
+          <tr>
+            <td><strong>Hermes Agent</strong><br><span class="small muted">persistent memory / self-improving skills / cloud-native runtime</span></td>
+            <td>统一 agent loop 服务 CLI、Gateway、Cron、ACP 等入口；记忆分为 session context、persistent facts、procedural skills；任务完成后可沉淀新 skill。</td>
+            <td>把 <code>Workflow Intelligence</code> 的事实记忆、关系记忆、过程技能和反思候选拆清；补全 <code>Task Outcome → Reflection → SkillCandidate → Review → Published Skill</code> 生命周期。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>11.2 建议补强的领域对象</h3>
+      <div class="context-grid">
+        <div class="card">
+          <div class="card-header">
+            <h3>Hook / Guardrail Lifecycle</h3>
+            <div class="tagline">从“提示词规则”升级为可审计的确定性拦截机制。</div>
+          </div>
+          <div class="card-body">
+            <p>新增或强化 <code>RuntimeHook</code>、<code>HookTrigger</code>、<code>HookExecution</code>、<code>HookDecision</code>、<code>PolicyViolation</code>。尤其是 <code>PreToolUseHook</code>，应作为 <code>PermissionEngine</code> 的确定性前后置治理点。</p>
+            <div class="pill-row">
+              <span class="pill red">Safety</span>
+              <span class="pill amber">Deterministic Guardrail</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>Steward Agent</h3>
+            <div class="tagline">让 Agent 绑定限界上下文，避免万能 Agent 污染上下文窗口。</div>
+          </div>
+          <div class="card-body">
+            <p>为 <code>AgentRole</code>、<code>ManagedAgent</code> 增加 <code>boundedContext</code>、<code>toolScope</code>、<code>memoryScope</code>、<code>skillScope</code>。编排器按上下文把任务派给主责 agent，而不是让所有 agent 继承全量工具。</p>
+            <div class="pill-row">
+              <span class="pill green">Agent Orchestration</span>
+              <span class="pill purple">Context Isolation</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>External Agent Session Owner</h3>
+            <div class="tagline">借鉴 acpx，把远程 Agent 委派建模为持久 session。</div>
+          </div>
+          <div class="card-body">
+            <p>在 <code>ExternalAgentRun</code> 之外补充 <code>ExternalAgentSession</code>、<code>SessionOwnerLease</code>、<code>RemoteRunQueue</code>、<code>RequestId</code>、<code>StreamEvent</code>、<code>IdleTtl</code> 和 <code>StaleRecovery</code>。</p>
+            <div class="pill-row">
+              <span class="pill green">ACP/A2A</span>
+              <span class="pill amber">Long-running Session</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>Skill Learning Loop</h3>
+            <div class="tagline">把“任务后复盘生成技能”纳入 Workflow Intelligence。</div>
+          </div>
+          <div class="card-body">
+            <p>将成功任务的经验沉淀为 <code>Reflection</code>、<code>SkillCandidate</code>、<code>SkillReview</code> 与 <code>PublishedSkill</code>。候选技能必须经过审核后才进入可路由技能库。</p>
+            <div class="pill-row">
+              <span class="pill green">Workflow Intelligence</span>
+              <span class="pill purple">Procedural Memory</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h3>11.3 对当前模型的优先级建议</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>优先级</th>
+            <th>优化项</th>
+            <th>落地方式</th>
+            <th>预期收益</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge">P0</span></td>
+            <td>明确 MCP 与 ACP 的边界</td>
+            <td>MCP 固定为工具/数据防腐层；ACP/A2A 固定为外部 Agent 协作协议；文档与代码命名避免互相替代。</td>
+            <td>减少集成语义混乱，让外部 Agent、外部工具、通道会话各归其位。</td>
+          </tr>
+          <tr>
+            <td><span class="badge">P0</span></td>
+            <td>外部 Agent 持久 session 化</td>
+            <td>在 <code>ACPTask</code> 与 <code>OrchestrationGraphNode</code> 之外建模 session owner、lease、heartbeat、queue、cancel/retry。</td>
+            <td>让远程 coding agent、cloud agent、CLI agent 能长期运行、可恢复、可取消。</td>
+          </tr>
+          <tr>
+            <td><span class="badge">P1</span></td>
+            <td>Agent 上下文绑定</td>
+            <td>为 agent 角色声明所属限界上下文、可用工具、记忆范围和技能范围。</td>
+            <td>降低上下文噪音和越权风险，支持真正的 Steward Agent 模式。</td>
+          </tr>
+          <tr>
+            <td><span class="badge">P1</span></td>
+            <td>Skills 渐进式加载</td>
+            <td>先注入 <code>SkillIndexEntry</code>，模型决策后再加载完整 <code>SKILL.md</code> / skill content。</td>
+            <td>减少 prompt 体积，降低技能误触发和跨领域污染。</td>
+          </tr>
+          <tr>
+            <td><span class="badge">P1</span></td>
+            <td>任务后自学习闭环</td>
+            <td>将 <code>Dreaming</code>、<code>Reflection</code>、<code>SkillCandidate</code> 和人工审核串成明确生命周期。</td>
+            <td>让系统从“记住事实”进化到“沉淀方法”，但仍保留人工审查。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <section id="recommendations">
-      <h2>11. 后续建模建议</h2>
+      <h2>12. 后续建模建议</h2>
       <ol>
-        <li><strong>建立 Context Map 文档：</strong>将本报告中的 15 个限界上下文固化为架构文档，明确每个上下文的 upstream/downstream、事件和所有权。</li>
+        <li><strong>建立 Context Map 文档：</strong>将本报告中的 16 个限界上下文固化为架构文档，明确每个上下文的 upstream/downstream、事件和所有权。</li>
         <li><strong>强化聚合边界：</strong>Task、ManagedSession、Channel、Memory、HeartbeatRun 应明确哪些子对象只能通过聚合根修改，避免跨 Repository 任意写入。</li>
         <li><strong>抽出领域事件命名：</strong>将 TaskCreated、TaskCompleted、ArtifactCreated、ApprovalRequested、MemoryCandidateProposed 等事件命名固化，减少 payload 语义漂移。</li>
         <li><strong>为策略对象建测试矩阵：</strong>PermissionRule、TaskStrategySnapshot、ChannelSpecialization、HeartbeatPulseDecision、SkillApplication 是高价值策略对象，应有规则级测试。</li>
@@ -2130,7 +2387,7 @@
     </section>
 
     <section id="use-cases">
-      <h2>12. 产品用例图谱</h2>
+      <h2>13. 产品用例图谱</h2>
       <p class="lead">
         这一章把 <code>docs/use-cases.md</code> 中的 21 类可运行用例，按“用户想搞定什么事”重新归并为 7 个主题组，
         并映射回前面建模出的限界上下文，方便从业务场景反推领域协作。
@@ -2143,7 +2400,7 @@
         <span class="pill purple">/命令</span> 标注可直接调用的 slash 命令或快捷方式。
       </div>
 
-      <h3>12.1 用例总览</h3>
+      <h3>13.1 用例总览</h3>
       <table>
         <thead>
           <tr>
@@ -2199,7 +2456,7 @@
         </tbody>
       </table>
 
-      <h3>12.2 分组详情</h3>
+      <h3>13.2 分组详情</h3>
       <div class="context-grid">
         <div class="card">
           <div class="card-header">
@@ -2285,6 +2542,7 @@
             <div class="tagline">Agent Orchestration · Skills · 队列、并行、批改写、兜底编排。</div>
             <div class="pill-row">
               <span class="pill green">Agent Orchestration</span>
+              <span class="pill green">External Agent Interoperability</span>
               <span class="pill green">Skills Runtime</span>
               <span class="pill green">Task Runtime</span>
             </div>
@@ -2346,7 +2604,7 @@
     </section>
 
     <section id="sources">
-      <h2>13. 证据来源</h2>
+      <h2>14. 证据来源</h2>
       <p>本报告主要依据以下项目文件和文档抽取概念模型：</p>
       <ul class="source-list">
         <li>README.md</li>
@@ -2366,6 +2624,10 @@
         <li>src/electron/database/repositories.ts</li>
         <li>src/electron/agent/runtime/SessionRuntime.ts</li>
         <li>src/electron/agent/runtime/PermissionEngine.ts</li>
+        <li>src/electron/acp/types.ts</li>
+        <li>src/electron/acp/agent-registry.ts</li>
+        <li>src/electron/acp/remote-invoker.ts</li>
+        <li>src/electron/agent/orchestration/OrchestrationGraphEngine.ts</li>
         <li>src/electron/control-plane/ControlPlaneCoreService.ts</li>
         <li>src/electron/managed/ManagedSessionService.ts</li>
         <li>src/electron/managed/AgentBuilderService.ts</li>
@@ -2374,8 +2636,13 @@
         <li>src/electron/agents/HeartbeatService.ts</li>
         <li>src/electron/gateway/channels/types.ts</li>
         <li>src/electron/identity/ContactIdentityService.ts</li>
+        <li>docs/acp-acpx-integration.md</li>
         <li>connectors/*/README.md</li>
         <li>connectors/*/package.json</li>
+        <li>Claude Code public docs: subagents, skills, hooks, MCP, permissions</li>
+        <li>OpenClaw / acpx public docs: Gateway architecture, ACP bridge, warm session owner, sessions</li>
+        <li>Hermes Agent public docs: architecture, agent loop, persistent memory, skill learning</li>
+        <li>Agent libOS / Qualixar OS / multi-agent architecture research notes</li>
       </ul>
       <p class="muted small">
         注：本报告是代码与文档层面的概念建模，不代表数据库表、DTO 或 UI component 的逐项清单。对于 DDD，“领域对象”优先按业务语义和生命周期归并。
