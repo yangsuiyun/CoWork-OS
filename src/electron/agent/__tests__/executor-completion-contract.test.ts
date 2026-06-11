@@ -3,6 +3,7 @@ import { TaskExecutor } from "../executor";
 import {
   buildCompletionGuidancePrompt,
   detectReadOnlyConstraint,
+  responseHasExecutionReportEvidenceSignal,
 } from "../executor-completion-utils";
 
 type HarnessOptions = {
@@ -849,6 +850,58 @@ Verification complete: this routine produced a review-backed build-health conclu
         error: expect.stringContaining("missing verification evidence"),
       }),
     );
+  });
+
+  it("rejects build-health mutation-blocker summaries that contain labels but no command/API evidence", () => {
+    const text = `Almarion, the package.json step did not make changes. The attempted write_file operation was correctly blocked because it would have replaced the existing root manifest with minimal starter content.
+
+Verification Evidence
+commands completed:
+No shell commands were run.
+Attempted mutation: write_file on package.json.
+exit codes:
+Not applicable; no shell command executed.
+required check status:
+Required write_file attempt: completed as an attempted mutation, but safely rejected.
+package.json update: failed due to destructive overwrite protection.
+final build-health verdict:
+Blocked. Build health cannot be improved or re-verified from this step until the package.json change is made non-destructive.
+Verification complete: this routine produced a review-backed build-health conclusion.`;
+
+    expect(responseHasExecutionReportEvidenceSignal(text)).toBe(false);
+  });
+
+  it("requires command or API tool evidence for build-health command execution steps", () => {
+    const executor = createExecuteHarness({
+      title: "CoWork OS Build Health Watcher",
+      prompt: `Run a fresh build-health check.
+
+Required checks:
+- npm run lint
+- npm run type-check
+
+End with a final section titled "Verification Evidence".`,
+      lastOutput: "",
+      planStepDescription: "Required build/check commands executed.",
+      source: "cron",
+    });
+    (executor as Any).toolResultMemory = [
+      { tool: "read_file", summary: "Read package.json", timestamp: Date.now() },
+      { tool: "glob", summary: "Found config files", timestamp: Date.now() },
+      { tool: "task_history", summary: "Read previous routine history", timestamp: Date.now() },
+    ];
+
+    expect((executor as Any).isBuildHealthCommandEvidenceStep({
+      id: "1",
+      description: "Required build/check commands executed.",
+      status: "pending",
+    })).toBe(true);
+    expect((executor as Any).hasBuildHealthCommandOrApiEvidence()).toBe(false);
+
+    (executor as Any).toolResultMemory = [
+      { tool: "http_request", summary: "GitHub check-runs HTTP 200", timestamp: Date.now() },
+    ];
+    expect((executor as Any).hasBuildHealthCommandOrApiEvidence()).toBe(true);
   });
 
   it("accepts completed review/check steps even when the final response is operational", async () => {

@@ -10573,6 +10573,24 @@ ${transcript}
     const descriptionRaw = String(step.description || "");
     const description = descriptionRaw.toLowerCase();
     const requiredTools = this.extractRequiredToolsFromStepDescription(description);
+    const buildHealthReadOnlyStep = this.isBuildHealthReadOnlyStep(step);
+    if (buildHealthReadOnlyStep) {
+      for (const toolName of [
+        "write_file",
+        "edit_file",
+        "create_document",
+        "generate_document",
+        "compile_latex",
+        "create_spreadsheet",
+        "generate_spreadsheet",
+        "create_presentation",
+        "generate_presentation",
+        "canvas_create",
+        "canvas_push",
+      ]) {
+        requiredTools.delete(toolName);
+      }
+    }
     if (this.isTerminalImageGenerationTask()) {
       requiredTools.add(canonicalizeToolNameUtil("generate_image"));
     }
@@ -10597,7 +10615,9 @@ ${transcript}
         requiredTools.delete("edit_file");
       }
     }
-    const requiresArtifactEvidence = this.stepRequiresArtifactEvidence(step);
+    const requiresArtifactEvidence = buildHealthReadOnlyStep
+      ? false
+      : this.stepRequiresArtifactEvidence(step);
     const artifactContractMode = requiresArtifactEvidence
       ? this.resolveStepArtifactContractMode(step)
       : null;
@@ -10630,9 +10650,9 @@ ${transcript}
       requiresMutation: inferredMutation,
       requiresArtifactEvidence,
       requiresWriteByArtifactMode: artifactWriteRequired,
-      hasReadOnlyConstraint: this.promptHasReadOnlyConstraint(
-        `${this.task?.title || ""}\n${this.getContractPrompt()}`,
-      ),
+      hasReadOnlyConstraint:
+        buildHealthReadOnlyStep ||
+        this.promptHasReadOnlyConstraint(`${this.task?.title || ""}\n${this.getContractPrompt()}`),
     });
     const policyRequiredTools = getPolicyRequiredToolsForMode(
       this.agentPolicyConfig,
@@ -11751,6 +11771,68 @@ ${transcript}
       requiresDirectAnswer: this.promptRequiresDirectAnswer(),
       requiresDecisionSignal: this.promptRequestsDecision(),
       isWatchSkipRecommendationTask: this.promptIsWatchSkipRecommendationTask(),
+    });
+  }
+
+  private isBuildHealthVerificationTask(): boolean {
+    const prompt = `${this.task?.title || ""}\n${this.getContractPrompt()}`.toLowerCase();
+    if (!prompt.trim()) return false;
+    const hasBuildHealthCue =
+      /\bbuild[-\s]?health\b/.test(prompt) ||
+      /\bbuild\s+surfaces?\b/.test(prompt) ||
+      /\bmain\s+build\s+surfaces?\b/.test(prompt);
+    if (!hasBuildHealthCue) return false;
+
+    return (
+      /\b(watcher|routine|check|checks?|verification evidence|review-backed|exit codes?|passed or failed|final build-health verdict|build-health conclusion)\b/.test(
+        prompt,
+      ) || /\bnpm\s+run\s+(?:build|lint|type-check|test)/.test(prompt)
+    );
+  }
+
+  private isBuildHealthReadOnlyStep(step: PlanStep): boolean {
+    if (!this.isBuildHealthVerificationTask()) return false;
+    if (this.buildCompletionContract().requiresArtifactEvidence) return false;
+
+    const desc = String(step.description || "").trim().toLowerCase();
+    if (!desc) return false;
+
+    const stripped = desc.replace(/^`+|`+$/g, "");
+    if (
+      /^(?:\.\/)?(?:package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb|npm-shrinkwrap\.json|tsconfig[^/]*\.json|vite\.config\.[cm]?[jt]s|vitest\.config\.[cm]?[jt]s|eslint\.config\.[cm]?js|\.oxlintrc\.json|electron-builder[^/]*\.(?:json|ya?ml|[cm]?[jt]s))$/.test(
+        stripped,
+      )
+    ) {
+      return true;
+    }
+
+    return /\b(required build\/check commands executed|build-health checks?|build health checks?|exit codes? captured|pass\/fail status|passed or failed|blockers? clearly identified|final build-health verdict|verification evidence|inspect workspace structure|identify package\/build tooling)\b/.test(
+      desc,
+    );
+  }
+
+  private isBuildHealthCommandEvidenceStep(step: PlanStep): boolean {
+    if (!this.isBuildHealthVerificationTask()) return false;
+    const desc = String(step.description || "").toLowerCase();
+    if (!desc.trim()) return false;
+    return /\b(required build\/check commands executed|build-health checks?|build health checks?|run build-health checks?|run build health checks?|commands? executed|commands? completed|exit codes? captured|pass\/fail status|passed or failed)\b/.test(
+      desc,
+    );
+  }
+
+  private hasBuildHealthCommandOrApiEvidence(): boolean {
+    const evidenceTools = new Set(["run_command", "http_request", "web_fetch"]);
+    if (this.successfulToolUsageCounts instanceof Map) {
+      for (const [toolName, count] of this.successfulToolUsageCounts.entries()) {
+        const canonical = canonicalizeToolNameUtil(String(toolName || "").trim().toLowerCase());
+        if ((count || 0) > 0 && evidenceTools.has(canonical)) return true;
+      }
+    }
+
+    const memory = Array.isArray(this.toolResultMemory) ? this.toolResultMemory : [];
+    return memory.some((entry) => {
+      const canonical = canonicalizeToolNameUtil(String(entry?.tool || "").trim().toLowerCase());
+      return evidenceTools.has(canonical);
     });
   }
 
@@ -30088,6 +30170,18 @@ Return ONLY a JSON object:
         stepFailed = true;
         if (!lastFailureReason) {
           lastFailureReason = "run_command failed and no subsequent tool succeeded.";
+        }
+      }
+
+      if (
+        !stepFailed &&
+        this.isBuildHealthCommandEvidenceStep(step) &&
+        !this.hasBuildHealthCommandOrApiEvidence()
+      ) {
+        stepFailed = true;
+        if (!lastFailureReason) {
+          lastFailureReason =
+            "Build-health verification step expected concrete command/API evidence, but no successful run_command, http_request, or web_fetch result was recorded.";
         }
       }
 
