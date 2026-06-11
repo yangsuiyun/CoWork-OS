@@ -302,6 +302,46 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
     expect(reason).toBeNull();
   });
 
+  it("treats build-health package.json plan steps as read-only tooling inspection", () => {
+    const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
+    fakeThis.workspace = { path: process.cwd() };
+    fakeThis.task = {
+      id: "t-build-health",
+      title: "CoWork OS Build Health Watcher",
+      prompt: `Run a fresh build-health check.
+
+Required checks:
+- npm run lint
+- npm run type-check
+
+End with a final section titled "Verification Evidence".`,
+      rawPrompt: `Run a fresh build-health check.
+
+Required checks:
+- npm run lint
+- npm run type-check
+
+End with a final section titled "Verification Evidence".`,
+      source: "cron",
+    };
+    fakeThis.agentPolicyConfig = null;
+    fakeThis.toolRegistry = { getTools: () => [] };
+    const step = {
+      id: "s-build-health-package",
+      description: "`package.json`",
+      kind: "primary",
+      status: "pending",
+    };
+    fakeThis.plan = { steps: [step] };
+
+    const contract = (TaskExecutor as Any).prototype.resolveStepExecutionContract.call(fakeThis, step);
+
+    expect(contract.mode).toBe("analysis_only");
+    expect(contract.requiresMutation).toBe(false);
+    expect(contract.requiresArtifactEvidence).toBe(false);
+    expect(Array.from(contract.requiredTools)).not.toContain("write_file");
+  });
+
   it("does not preflight-fail verification-only relative paths that are not yet materialized", () => {
     const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
     fakeThis.workspace = { path: process.cwd() };

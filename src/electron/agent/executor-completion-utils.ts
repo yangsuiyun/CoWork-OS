@@ -458,16 +458,13 @@ export function responseHasExecutionReportEvidenceSignal(text: string): boolean 
   if (!normalized.trim()) return false;
 
   const hasCommandOrApiEvidence =
-    /\b(?:cargo|go|make|cmake|xcodebuild|swift|pytest|python -m pytest|gradle|mvn|dotnet)\b[\w\s:.-]{0,80}/.test(
+    /(?:^|[\n`*-]\s*)(?:cargo|go|make|cmake|xcodebuild|swift|pytest|python -m pytest|gradle|mvn|dotnet)\s+[\w:./-]+/m.test(
       normalized,
     ) ||
     /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?[\w:-]+\b/.test(normalized) ||
     /\bexit(?:\s+code)?\s*`?\d+`?\b/.test(normalized) ||
     /\bhttp\s*`?\d{3}`?\b/.test(normalized) ||
-    /\b(?:get|post|put|patch|delete)\s+https?:\/\//.test(normalized) ||
-    /\bapi requests?\b/.test(normalized) ||
-    /\bcommands? completed\b/.test(normalized) ||
-    /\bexact command results\b/.test(normalized);
+    /\b(?:get|post|put|patch|delete)\s+https?:\/\//.test(normalized);
   const hasPassFailEvidence =
     /\b(?:passed|failed|skipped|success|failure)\b/.test(normalized) ||
     /\bpass\/fail\b/.test(normalized) ||
