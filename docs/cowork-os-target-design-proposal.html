@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CoWork OS 目标设计方案（Design-First Proposal）</title>
+    <style>
+      :root {
+        --bg: #0b1020;
+        --ink: #0f172a;
+        --muted: #64748b;
+        --line: #dbe3ef;
+        --card: #ffffff;
+        --soft: #f8fafc;
+        --brand: #2563eb;
+        --brand-2: #7c3aed;
+        --accent: #0f766e;
+        --warn: #b45309;
+        --danger: #b91c1c;
+        --ok: #047857;
+        --soft-blue: #eff6ff;
+        --soft-purple: #f5f3ff;
+        --soft-green: #ecfdf5;
+        --soft-amber: #fffbeb;
+        --soft-red: #fef2f2;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; color: var(--ink); background: #eef2f7; font-family: var(--sans); line-height: 1.6; }
+      a { color: var(--brand); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .hero {
+        color: #fff;
+        background:
+          radial-gradient(circle at 18% 22%, rgba(37,99,235,.42), transparent 30rem),
+          radial-gradient(circle at 86% 14%, rgba(124,58,237,.36), transparent 26rem),
+          linear-gradient(135deg, #0b1020 0%, #111827 50%, #1e1b4b 100%);
+        padding: 60px 28px 44px;
+      }
+      .hero-inner, main { width: min(1140px, calc(100vw - 40px)); margin: 0 auto; }
+      .eyebrow { margin: 0 0 12px; color: #bfdbfe; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 13px; }
+      h1 { margin: 0; max-width: 940px; font-size: clamp(32px, 5.5vw, 56px); line-height: 1.05; letter-spacing: -.04em; }
+      .subtitle { max-width: 880px; margin: 20px 0 0; color: #dbeafe; font-size: 18px; }
+      .hero-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; margin-top: 30px; }
+      .metric { padding: 16px; border: 1px solid rgba(255,255,255,.16); border-radius: 16px; background: rgba(255,255,255,.08); }
+      .metric strong { display: block; font-size: 24px; line-height: 1; }
+      .metric span { display: block; margin-top: 8px; color: #cbd5e1; font-size: 13px; }
+      main { padding: 32px 0 80px; }
+      section { margin: 24px 0; padding: 26px; border: 1px solid var(--line); border-radius: 22px; background: var(--card); box-shadow: 0 16px 40px rgba(15,23,42,.06); }
+      h2 { margin: 0 0 14px; font-size: 26px; letter-spacing: -.02em; }
+      h3 { margin: 22px 0 8px; font-size: 19px; }
+      h4 { margin: 16px 0 6px; font-size: 15px; }
+      p { margin: 10px 0; }
+      .lead { font-size: 17px; color: #334155; }
+      .muted { color: var(--muted); }
+      .small { font-size: 13px; }
+      .toc { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+      .toc a { display: block; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft); color: #1e293b; font-weight: 700; }
+      table { width: 100%; border-collapse: collapse; margin: 14px 0 20px; font-size: 14px; }
+      th, td { vertical-align: top; padding: 10px 12px; border: 1px solid var(--line); text-align: left; }
+      th { background: #f1f5f9; color: #334155; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+      code { padding: 2px 5px; border-radius: 6px; background: #e2e8f0; color: #0f172a; font-family: var(--mono); font-size: .92em; }
+      ul, ol { padding-left: 20px; margin: 8px 0 14px; }
+      li { margin: 5px 0; }
+      .note { margin: 14px 0; padding: 14px 16px; border-left: 4px solid var(--brand); border-radius: 12px; background: var(--soft-blue); }
+      .note.warn { border-color: var(--warn); background: var(--soft-amber); }
+      .note.danger { border-color: var(--danger); background: var(--soft-red); }
+      .note.ok { border-color: var(--ok); background: var(--soft-green); }
+      .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+      .pill.blue { background: var(--soft-blue); color: #1d4ed8; }
+      .pill.purple { background: var(--soft-purple); color: #5b21b6; }
+      .pill.green { background: var(--soft-green); color: #047857; }
+      .pill.amber { background: var(--soft-amber); color: #92400e; }
+      .pill.red { background: var(--soft-red); color: #991b1b; }
+      .badge { display: inline-block; padding: 2px 8px; border-radius: 8px; font-size: 12px; font-weight: 800; background: #e0e7ff; color: #3730a3; }
+      .badge.now { background: #dcfce7; color: #166534; }
+      .badge.next { background: #fef9c3; color: #854d0e; }
+      .badge.later { background: #e2e8f0; color: #334155; }
+      .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
+      .card { border: 1px solid var(--line); border-radius: 16px; background: var(--soft); overflow: hidden; }
+      .card .hd { padding: 14px 16px; background: linear-gradient(135deg, #f8fafc, #eef2ff); border-bottom: 1px solid var(--line); font-weight: 800; }
+      .card .bd { padding: 14px 16px; background: #fff; }
+      .layers { display: grid; gap: 12px; margin: 16px 0; }
+      .layer { border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; }
+      .layer.kernel { background: linear-gradient(135deg, #eff6ff, #f5f3ff); border-color: #c7d2fe; }
+      .layer.user { background: var(--soft); }
+      .layer.generic { background: #f8fafc; }
+      .layer h3 { margin: 0 0 6px; }
+      .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+      .chip { padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: #fff; font-size: 13px; font-weight: 700; }
+      .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0; }
+      .flow .n { padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft-blue); font-weight: 800; font-size: 13px; }
+      .flow .a { color: var(--muted); font-weight: 800; }
+      footer { padding: 30px; text-align: center; color: var(--muted); font-size: 13px; }
+      .kpi { font-variant-numeric: tabular-nums; }
+    </style>
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-inner">
+        <p class="eyebrow">Design-First Architecture Proposal</p>
+        <h1>CoWork OS 目标设计方案</h1>
+        <p class="subtitle">
+          脱离当前代码实现，从第一性原理出发，给出 CoWork OS
+          的「最优目标设计」：在保留现有领域语言与上下文清单的前提下，补齐一致性边界、领域事件契约、安全内核与外部
+          Agent 持久会话，并提供「现状 → 目标 → 代价」的可增量演进路线。
+        </p>
+        <div class="hero-grid">
+          <div class="metric"><strong>2 层</strong><span>稳定内核 / 用户态能力层</span></div>
+          <div class="metric"><strong>4+5</strong><span>核心域 / 支撑域分组</span></div>
+          <div class="metric"><strong>3 缺口</strong><span>一致性·事件契约·失败语义</span></div>
+          <div class="metric"><strong>现在/演进/暂缓</strong><span>变更三档分级</span></div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section id="meta">
+        <h2>0. 本文档定位</h2>
+        <p class="lead">
+          本文是对 <code>docs/domain-driven-design-concept-model.html</code>（代码派生的现状建模报告）的<strong>升一层版本</strong>：
+          前者回答「现在的代码长什么样」，本文回答「最优设计应该长什么样，以及如何从现状走过去」。
+        </p>
+        <div class="note">
+          <strong>方法论：</strong>本方案由多视角专家评审（实用 / 架构 / 创新 / 运维 / 批判）综合得出。
+          所有外部项目对标一律降权为<strong>「灵感参考」</strong>而非权威依据；所有新增对象均按
+          <span class="badge now">现在</span> / <span class="badge next">演进</span> /
+          <span class="badge later">暂缓</span> 三档分级，并附迁移代价，避免「对象动物园」与纸上架构。
+        </div>
+        <div class="note warn">
+          <strong>与现状报告的边界：</strong>本文是设计目标，不是逐项重构清单。落地时以「核心域不变量优先固化、支撑域给接口契约」为原则增量推进。
+        </div>
+      </section>
+
+      <section id="toc">
+        <h2>1. 目录</h2>
+        <div class="toc">
+          <a href="#principles">设计原则</a>
+          <a href="#layering">目标分层架构</a>
+          <a href="#contexts">限界上下文（收敛视图）</a>
+          <a href="#aggregates">聚合与不变量</a>
+          <a href="#events">领域事件契约</a>
+          <a href="#consistency">一致性与事务边界</a>
+          <a href="#security">安全内核</a>
+          <a href="#external">外部 Agent 持久会话</a>
+          <a href="#learning">自学习闭环</a>
+          <a href="#runtime">运行时与可靠性</a>
+          <a href="#best-practice">§11 最佳实践评估</a>
+          <a href="#roadmap">演进路线</a>
+        </div>
+      </section>
+
+      <section id="principles">
+        <h2>2. 设计原则（First Principles）</h2>
+        <table>
+          <thead><tr><th>#</th><th>原则</th><th>含义</th><th>为何最优</th></tr></thead>
+          <tbody>
+            <tr><td>P1</td><td>内核稳定，能力易变</td><td>状态、安全、审计沉淀在内核；编排/技能/通道/协议放用户态。</td><td>同构于 OS kernel/userland、k8s control-plane/data-plane，隔离变化半径。</td></tr>
+            <tr><td>P2</td><td>执行即事实，事件即真相</td><td>所有入口最终汇聚为 <code>Task</code>，过程以<strong>领域事件</strong>追加记录。</td><td>恢复、时间线、审计、回放统一在一条事件链上。</td></tr>
+            <tr><td>P3</td><td>默认零权限，按边界授予</td><td>Agent/Task 默认不持有任何危险能力，按限界上下文显式授予。</td><td>最小权限 / 零信任；Steward Agent 自然成立。</td></tr>
+            <tr><td>P4</td><td>单向依赖（DAG）</td><td>上层依赖下层，禁止反向；跨上下文一律走事件或仓储接口。</td><td>避免循环依赖、权限绕行、状态分叉。</td></tr>
+            <tr><td>P5</td><td>边界即防腐层（ACL）</td><td>外部世界通过明确 ACL 接入：MCP=工具/数据，ACP/A2A=外部 Agent。</td><td>外部协议变化不污染核心域语义。</td></tr>
+            <tr><td>P6</td><td>失败显式，绝不静默</td><td>失败有类型、有补偿、有对账；日志记录但不替代状态语义。</td><td>day-2 可运维，符合 Fail-Fast。</td></tr>
+            <tr><td>P7</td><td>人类在关键回路</td><td>现实副作用、记忆固化、技能发布须经确定性治理或人工审核。</td><td>强 Agent 安全不能依赖模型自觉。</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="layering">
+        <h2>3. 目标分层架构</h2>
+        <p class="lead">把「变化快的 Agent 能力」放用户态，把「状态 / 安全 / 审计」留在稳定内核——这是 §11.1 方向的形式化版本，并补齐了内核中缺失的<strong>事件存储</strong>与<strong>能力授权</strong>。</p>
+        <div class="layers">
+          <div class="layer user">
+            <h3>用户态能力层 <span class="pill purple">易变 · 可扩展</span></h3>
+            <p class="small muted">承接需求多样性，通过事件 / 仓储接口与内核协作，绝不反向耦合进内核。</p>
+            <div class="chip-row">
+              <span class="chip">Agent Orchestration</span>
+              <span class="chip">Skills Runtime</span>
+              <span class="chip">Channel Gateway</span>
+              <span class="chip">MCP Connectors (Tool ACL)</span>
+              <span class="chip">ACP / A2A (Agent ACL)</span>
+              <span class="chip">Everything Workbench</span>
+              <span class="chip">Memory & Workflow Intelligence</span>
+            </div>
+          </div>
+          <div class="layer kernel">
+            <h3>稳定内核 <span class="pill blue">状态 · 安全 · 审计</span></h3>
+            <p class="small muted">系统的不变量与事实源所在；对上只暴露窄接口（命令 + 事件）。</p>
+            <div class="chip-row">
+              <span class="chip">Task Runtime（执行事实源）</span>
+              <span class="chip">Event Store / Timeline（事件真相）</span>
+              <span class="chip">Permission &amp; Safety（能力授权）</span>
+              <span class="chip">Workspace Governance（治理边界）</span>
+              <span class="chip">Session Runtime（运行态拥有者）</span>
+            </div>
+          </div>
+          <div class="layer generic">
+            <h3>通用域 <span class="pill amber">工程支撑</span></h3>
+            <div class="chip-row">
+              <span class="chip">Profiles / Settings</span>
+              <span class="chip">Updater</span>
+              <span class="chip">Telemetry</span>
+              <span class="chip">Native Helpers</span>
+              <span class="chip">Secure Storage</span>
+            </div>
+          </div>
+        </div>
+        <div class="note">
+          <strong>与现状的关键增量：</strong>内核显式纳入 <code>Event Store</code>（当前为 <code>TaskEvent</code> 追加日志，已具雏形）与
+          <code>Capability 授权</code>（当前为执行时询问式 <code>PermissionEngine</code>）。二者均给出双态演进（见 §6 / §7）。
+        </div>
+      </section>
+
+      <section id="contexts">
+        <h2>4. 限界上下文（收敛分组视图）</h2>
+        <p class="lead">现状报告列出 16 个上下文，认知负荷偏高。本方案保留完整清单，但以「4 核心域 + 5 支撑域 + 通用域」分组导航，并明确每组的上游/下游与所有权。</p>
+        <table>
+          <thead><tr><th>分组</th><th>限界上下文</th><th>上游（依赖谁）</th><th>下游（被谁依赖）</th></tr></thead>
+          <tbody>
+            <tr><td><span class="pill blue">核心域</span></td><td>任务执行 / 代理编排 / 托管代理 / 权限与安全</td><td>Event Store、Workspace</td><td>几乎所有支撑域</td></tr>
+            <tr><td><span class="pill green">支撑域</span></td><td>记忆与 Workflow Intelligence / Everything Workbench / 通道网关 / 技能运行时 / MCP·外部 Agent 互操作</td><td>Task 事件、Workspace</td><td>UI / 自动化</td></tr>
+            <tr><td><span class="pill amber">通用域</span></td><td>Profile / 设置 / 更新 / 遥测 / 控制平面与设备 / 报告评估可靠性</td><td>—</td><td>全局横切</td></tr>
+          </tbody>
+        </table>
+        <div class="note">
+          <strong>收敛建议：</strong>「Inbox/关系代理」「浏览器/电脑使用」可作为<em>能力</em>归入对应支撑域（前者→通道网关 + 记忆，后者→技能运行时 + 权限），而非独立顶层上下文，减少边界碎片。
+        </div>
+      </section>
+
+      <section id="aggregates">
+        <h2>5. 聚合与不变量</h2>
+        <p class="lead">最优设计的价值不在「更多对象」，而在「更少、更硬的不变量 + 明确的聚合根写入口径」。下表只固化核心域聚合。</p>
+        <table>
+          <thead><tr><th>聚合根</th><th>只能经聚合根修改的子对象</th><th>关键不变量</th><th>并发策略</th></tr></thead>
+          <tbody>
+            <tr><td><code>Task</code></td><td>TaskEvent、SessionSnapshot、Result、Approval 归属</td><td>Canonical Task：<code>rawPrompt → userPrompt → prompt</code>，技能只附加上下文不替换定义。</td><td>事件追加幂等（seq 单调）；状态由事件投影。</td></tr>
+            <tr><td><code>Workspace</code></td><td>WorkspacePermissions、本地策略镜像 <code>.cowork/policy</code></td><td>Workspace Capability First：网络/Shell/写/删先过工作区能力。</td><td>乐观锁（version）。</td></tr>
+            <tr><td><code>ApprovalRequest</code></td><td>审批状态机</td><td>Hard Deny 不可被 mode/fallback 覆盖；data_export 独立审批。</td><td>单写：仅 PermissionEngine 创建。</td></tr>
+            <tr><td><code>AgentTeamRun / OrchestrationGraph</code></td><td>GraphNode、childTasks</td><td>远程节点回写以 <code>remoteTaskId</code> 收敛为节点 output/error。</td><td>节点级幂等更新。</td></tr>
+            <tr><td><code>ExternalAgentSession</code> <span class="badge next">演进</span></td><td>Lease、Queue、RemoteRun、Heartbeat</td><td>Remote Agent Is Not A Tool：委派前过 endpoint/能力/授权/数据外发审查。</td><td>租约持有者单写 + 心跳续租。</td></tr>
+          </tbody>
+        </table>
+        <div class="note warn">
+          <strong>反伪抽象：</strong>§11.4 提议的 Hook/Session 系列细粒度对象，本方案<strong>只在有两个真实消费者时</strong>才引入；初期以聚合内字段 + 事件表达，避免过度建模。
+        </div>
+      </section>
+
+      <section id="events">
+        <h2>6. 领域事件契约</h2>
+        <p class="lead">跨上下文协作<strong>一律走领域事件</strong>，事件名与 payload schema 版本化，杜绝语义漂移。事件是内核对用户态唯一的「外发真相」。</p>
+        <div class="flow">
+          <span class="n">TaskCreated</span><span class="a">→</span>
+          <span class="n">TaskEventAppended*</span><span class="a">→</span>
+          <span class="n">ApprovalRequested?</span><span class="a">→</span>
+          <span class="n">ArtifactCreated?</span><span class="a">→</span>
+          <span class="n">TaskCompleted / Failed</span>
+        </div>
+        <table>
+          <thead><tr><th>事件</th><th>生产者（唯一）</th><th>消费者</th><th>契约要点</th></tr></thead>
+          <tbody>
+            <tr><td><code>TaskCreated</code></td><td>Task Runtime</td><td>Daemon、Renderer、Mission Control</td><td>必带来源 <code>origin</code>（manual/cron/hook/api/channel）+ correlationId。</td></tr>
+            <tr><td><code>TaskEventAppended</code></td><td>Session Runtime / ToolScheduler</td><td>Timeline、Trace、Memory、ManagedSession mirror</td><td>seq 单调、actor 明确、payload 版本号。</td></tr>
+            <tr><td><code>ApprovalRequested / Resolved</code></td><td>PermissionEngine</td><td>Renderer、ChannelSession、Task Runtime</td><td>风险动作暂停，决策回写为事件而非直接改状态。</td></tr>
+            <tr><td><code>ArtifactCreated</code></td><td>工具执行 / 文件检测</td><td>Workbench、Task feed</td><td>以 taskId 归属 + sha256 幂等。</td></tr>
+            <tr><td><code>TaskCompleted</code></td><td>Task Runtime</td><td>Memory、Dreaming、Heartbeat</td><td>触发记忆巩固 / 自学习候选（仅候选）。</td></tr>
+            <tr><td><code>RemoteAgentDelegated / ACPTaskUpdated</code> <span class="badge next">演进</span></td><td>RemoteAgentInvoker</td><td>OrchestrationGraph、Mission Control</td><td>远程状态规范化回写，必带 requestId 幂等。</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="consistency">
+        <h2>7. 一致性与事务边界 <span class="pill red">现状最大缺口</span></h2>
+        <p class="lead">现状报告未明确各上下文是强一致还是最终一致——这是设计被质疑时的薄弱点。本方案显式定义。</p>
+        <table>
+          <thead><tr><th>关系</th><th>一致性模型</th><th>失败处理 / 补偿</th></tr></thead>
+          <tbody>
+            <tr><td>Task ↔ 其 TaskEvent</td><td><strong>强一致</strong>（同聚合，事务内）</td><td>事件写失败 → 命令整体失败，不产生半状态。</td></tr>
+            <tr><td>Task ↔ Artifact</td><td><strong>最终一致</strong>（事件驱动登记）</td><td>落盘成功但事件失败 → 后台对账扫描 orphan artifact 补登记。</td></tr>
+            <tr><td>Task ↔ Memory</td><td><strong>最终一致</strong>（TaskCompleted 触发）</td><td>记忆固化失败可重放事件；Dreaming 仅候选，不静默写。</td></tr>
+            <tr><td>Task ↔ ManagedSession</td><td><strong>最终一致</strong>（事件镜像）</td><td>ManagedSession 是 backing Task 的投影，丢失可由事件重建。</td></tr>
+            <tr><td>内核 ↔ 远程 Agent</td><td><strong>最终一致 + 租约</strong></td><td>心跳丢失 → stale recovery；重复投递由 requestId 幂等吸收。</td></tr>
+          </tbody>
+        </table>
+        <div class="note ok">
+          <strong>原则：</strong>聚合内强一致、跨聚合事件最终一致、外部集成经 ACL + 幂等。任何「假设成功」的隐式路径都要替换为显式对账。
+        </div>
+      </section>
+
+      <section id="security">
+        <h2>8. 安全内核（Capability + Hook）</h2>
+        <div class="grid2">
+          <div class="card">
+            <div class="hd">当前态：询问式 PermissionEngine <span class="badge now">现在</span></div>
+            <div class="bd">
+              <p>工具调用时调用 PermissionEngine 产出 allow/deny/ask；hard-deny、危险命令、task restriction 不可覆盖；data_export 独立审批。</p>
+              <p class="small muted">保留并强化：把 hard-deny 规则与审批通道做规则级测试矩阵。</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="hd">目标态：能力令牌 + 确定性 Hook <span class="badge next">演进</span></div>
+            <div class="bd">
+              <p>Task/Agent 启动时被授予一束<strong>可吊销能力令牌</strong>（按 bounded context）；工具调用须持令牌；hard-deny 是「不可铸造的能力」。</p>
+              <p><code>PreToolUse</code> / <code>PostToolUse</code> Hook 作为 PermissionEngine 的确定性前后置治理点（从「提示词规则」升级为可审计拦截）。</p>
+            </div>
+          </div>
+        </div>
+        <div class="note danger">
+          <strong>不变量（两态共同）：</strong>强 Agent 会产生现实副作用，安全绝不依赖模型自觉。发送 / 删除 / 部署 / 数据外发必须先治理再执行。
+        </div>
+      </section>
+
+      <section id="external">
+        <h2>9. 外部 Agent 持久会话 <span class="pill green">高价值</span></h2>
+        <p class="lead">外部 Agent 是「受治理的协作者」而非工具。借鉴 actor / 租约模型（参考 acpx warm session owner，<em>作为灵感</em>），把一次委派建模为持久会话而非 HTTP 调用。</p>
+        <div class="flow">
+          <span class="n">acp_discover</span><span class="a">→</span>
+          <span class="n">能力声明 + 授权</span><span class="a">→</span>
+          <span class="n">SessionOwnerLease</span><span class="a">→</span>
+          <span class="n">RemoteRunQueue (顺序)</span><span class="a">→</span>
+          <span class="n">Heartbeat 续租</span><span class="a">→</span>
+          <span class="n">回写节点 output/error</span>
+        </div>
+        <table>
+          <thead><tr><th>对象</th><th>职责</th><th>失败语义</th></tr></thead>
+          <tbody>
+            <tr><td><code>ExternalAgentSession</code></td><td>持有远程连接与生命周期</td><td>断连 → 进入 stale，等待 recovery。</td></tr>
+            <tr><td><code>SessionOwnerLease</code></td><td>单写所有权 + TTL</td><td>租约过期 → 释放并可被接管。</td></tr>
+            <tr><td><code>RemoteRunQueue</code> + <code>requestId</code></td><td>顺序执行 + 幂等</td><td>重复投递被 requestId 吸收。</td></tr>
+            <tr><td><code>RemoteRunHeartbeat</code></td><td>存活探测</td><td>心跳丢失 → 取消传播 + 重试或失败上报。</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="learning">
+        <h2>10. 自学习闭环</h2>
+        <p class="lead">让系统从「记住事实」进化到「沉淀方法」，但保留人类在关键回路（候选必经审核）。</p>
+        <div class="flow">
+          <span class="n">Task Outcome</span><span class="a">→</span>
+          <span class="n">Reflection</span><span class="a">→</span>
+          <span class="n">SkillCandidate</span><span class="a">→</span>
+          <span class="n">SkillReview（人工）</span><span class="a">→</span>
+          <span class="n">PublishedSkill</span>
+        </div>
+        <div class="note">
+          <strong>分层记忆：</strong>session context（短期）/ persistent facts（事实）/ procedural skills（过程）/ reflection candidate（反思）。
+          Dreaming 与 Skill 候选共用「Review-First」不变量——只产候选，不静默改库。
+        </div>
+        <h3>技能渐进式加载</h3>
+        <p>先注入 <code>SkillIndexEntry</code>（短索引），模型决策命中后再加载完整 <code>SKILL.md</code>，降低 prompt 体积与跨域误触发。</p>
+      </section>
+
+      <section id="runtime">
+        <h2>11. 运行时与可靠性（Day-2）</h2>
+        <p class="lead">与领域建模分离的独立专章，避免运维细节污染领域层，但交叉引用。</p>
+        <div class="grid2">
+          <div class="card"><div class="hd">可观测性</div><div class="bd"><ul><li>领域事件天然双写 trace/timeline。</li><li>统一 correlationId 链：<code>taskId</code> / <code>runId</code> / <code>heartbeatRunId</code> 串成一条 trace。</li><li>「3am 只看日志能否定位」测试。</li></ul></div></div>
+          <div class="card"><div class="hd">失败与降级</div><div class="bd"><ul><li>每个跨上下文调用定义超时矩阵。</li><li>orphan artifact / 半状态 → 后台对账。</li><li>外部 Agent：lease 过期 / 心跳丢失 / stale recovery 状态机。</li></ul></div></div>
+          <div class="card"><div class="hd">自动化护栏</div><div class="bd"><ul><li>Heartbeat Pulse 确定性归约，不调 LLM、不建任务。</li><li>Dispatch 升级为任务需速率限制 + 熔断。</li><li>失控保护：单位时间任务/外发上限。</li></ul></div></div>
+          <div class="card"><div class="hd">恢复</div><div class="bd"><ul><li>事件可重放 → Session/Task 状态可重建。</li><li>快照 + 事件混合恢复，降低重放成本。</li></ul></div></div>
+        </div>
+      </section>
+
+      <section id="best-practice">
+        <h2>12. §11「行业最佳实践」是否合理 / 能否作为新方案</h2>
+        <div class="note ok">
+          <strong>结论：方向合理，可作为新设计的<em>骨架</em>，但不可<em>原样</em>作为方案。</strong>
+          需要三处修正：①外部对标降权为参考；②补三大缺失契约（已在 §6/§7/§11）；③新对象按三档分级 + 迁移代价。
+        </div>
+        <table>
+          <thead><tr><th>§11 主张</th><th>评估</th><th>本方案处理</th></tr></thead>
+          <tbody>
+            <tr><td>稳定内核 / 用户态分层</td><td><span class="pill green">合理</span></td><td>采纳为主轴，补 Event Store + Capability（§3）。</td></tr>
+            <tr><td>MCP=工具 ACL / ACP=Agent ACL 分层</td><td><span class="pill green">合理</span></td><td>升为设计原则 P5，文档与命名禁止互相替代。</td></tr>
+            <tr><td>外部 Agent 持久会话</td><td><span class="pill green">合理</span></td><td>采纳，落为显式状态机（§9）。</td></tr>
+            <tr><td>Hook/Guardrail 升级为领域对象</td><td><span class="pill amber">合理但需克制</span></td><td>采纳目标，但按「两个消费者」门槛引入，先用字段+事件。</td></tr>
+            <tr><td>Steward Agent 绑定上下文</td><td><span class="pill green">合理</span></td><td>采纳为原则 P3（默认零权限 + 按边界授予）。</td></tr>
+            <tr><td>引用 Hermes / OpenClaw / acpx / Qualixar OS 作为「业界事实」</td><td><span class="pill red">可验证性不足</span></td><td>全部降权为「灵感参考」，加限定语，不作权威依据。</td></tr>
+            <tr><td>§11.4 一次性提议 ~15 个新对象</td><td><span class="pill red">过度建模风险</span></td><td>三档分级，多数标 <span class="badge next">演进</span>/<span class="badge later">暂缓</span>。</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="roadmap">
+        <h2>13. 演进路线（现状 → 目标 → 代价）</h2>
+        <table>
+          <thead><tr><th>优先级</th><th>变更</th><th>现状 → 目标</th><th>代价 / 风险</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge now">现在 P0</span></td><td>MCP/ACP 边界澄清</td><td>命名混用 → 文档与代码命名固定职责</td><td>纯文档/命名，低成本高收益。</td></tr>
+            <tr><td><span class="badge now">现在 P0</span></td><td>一致性与事件契约固化</td><td>隐式 → §6/§7 显式契约 + 对账</td><td>需补对账任务与 schema 版本，中等。</td></tr>
+            <tr><td><span class="badge now">现在 P0</span></td><td>策略对象测试矩阵</td><td>隐式于 service → 规则级单测</td><td>PermissionRule / HeartbeatPulse / ChannelSpecialization，中等。</td></tr>
+            <tr><td><span class="badge next">演进 P1</span></td><td>外部 Agent 持久会话</td><td>HTTP 式调用 → Session+Lease+Queue+Heartbeat</td><td>真实运行时工程，需状态机，较高。</td></tr>
+            <tr><td><span class="badge next">演进 P1</span></td><td>Agent 上下文绑定 + 技能渐进加载</td><td>全量工具/技能 → 按边界授予 + 索引加载</td><td>需路由与 ranking，中等。</td></tr>
+            <tr><td><span class="badge next">演进 P1</span></td><td>自学习闭环</td><td>Dreaming 候选 → Reflection→Candidate→Review→Published</td><td>需审核 UI 与技能库治理，中等。</td></tr>
+            <tr><td><span class="badge later">暂缓 P2</span></td><td>内核范式：Event Store 为源 + Capability 令牌</td><td>Task 投影/询问式 → 事件溯源/能力安全</td><td>较大范式迁移，待两个真实驱动力再启动。</td></tr>
+          </tbody>
+        </table>
+        <div class="note">
+          <strong>采纳建议：</strong>先做三项 P0（皆为契约/文档/测试，低风险高价值），让设计「可被增量采纳」；P1 按需推进；P2 作为标注清晰的目标态，避免一次性大重构。
+        </div>
+      </section>
+
+      <section id="sources">
+        <h2>14. 参考与来源</h2>
+        <p class="muted small">
+          基线：<code>docs/domain-driven-design-concept-model.html</code>（现状建模报告）。
+          外部灵感（<strong>非权威、仅参考</strong>）：Claude Code 公开文档（subagents/skills/hooks/MCP/permissions，可核实）；
+          actor/租约模型与 CQRS/事件溯源等通用架构范式。对无法核实的具体第三方项目一律不作为设计依据。
+        </p>
+      </section>
+    </main>
+
+    <footer>CoWork OS Target Design Proposal · Design-first, code-independent · Owner: architecture / product engineering</footer>
+  </body>
+</html>

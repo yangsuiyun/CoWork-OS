@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CoWork OS 完整设计规格（Code-Independent, Implementation-Aware）</title>
+    <style>
+      :root {
+        --ink: #0f172a; --muted: #64748b; --line: #dbe3ef; --card: #fff; --soft: #f8fafc;
+        --brand: #2563eb; --brand-2: #7c3aed; --accent: #0f766e; --warn: #b45309; --danger: #b91c1c; --ok: #047857;
+        --soft-blue: #eff6ff; --soft-purple: #f5f3ff; --soft-green: #ecfdf5; --soft-amber: #fffbeb; --soft-red: #fef2f2;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; color: var(--ink); background: #eef2f7; font-family: var(--sans); line-height: 1.6; }
+      a { color: var(--brand); text-decoration: none; } a:hover { text-decoration: underline; }
+      .hero { color: #fff; padding: 60px 28px 44px;
+        background: radial-gradient(circle at 18% 22%, rgba(37,99,235,.42), transparent 30rem),
+          radial-gradient(circle at 86% 14%, rgba(124,58,237,.36), transparent 26rem),
+          linear-gradient(135deg, #0b1020 0%, #111827 50%, #1e1b4b 100%); }
+      .hero-inner, main { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+      .eyebrow { margin: 0 0 12px; color: #bfdbfe; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 13px; }
+      h1 { margin: 0; max-width: 960px; font-size: clamp(32px, 5.5vw, 56px); line-height: 1.05; letter-spacing: -.04em; }
+      .subtitle { max-width: 900px; margin: 20px 0 0; color: #dbeafe; font-size: 18px; }
+      .hero-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; margin-top: 30px; }
+      .metric { padding: 16px; border: 1px solid rgba(255,255,255,.16); border-radius: 16px; background: rgba(255,255,255,.08); }
+      .metric strong { display: block; font-size: 22px; line-height: 1; } .metric span { display: block; margin-top: 8px; color: #cbd5e1; font-size: 13px; }
+      main { padding: 32px 0 80px; }
+      section { margin: 24px 0; padding: 26px; border: 1px solid var(--line); border-radius: 22px; background: var(--card); box-shadow: 0 16px 40px rgba(15,23,42,.06); }
+      h2 { margin: 0 0 14px; font-size: 26px; letter-spacing: -.02em; scroll-margin-top: 20px; }
+      h3 { margin: 22px 0 8px; font-size: 19px; } h4 { margin: 16px 0 6px; font-size: 15px; color: #334155; }
+      p { margin: 10px 0; } .lead { font-size: 17px; color: #334155; } .muted { color: var(--muted); } .small { font-size: 13px; }
+      .toc { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+      .toc a { display: block; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft); color: #1e293b; font-weight: 700; }
+      table { width: 100%; border-collapse: collapse; margin: 14px 0 20px; font-size: 13.5px; }
+      th, td { vertical-align: top; padding: 10px 12px; border: 1px solid var(--line); text-align: left; }
+      th { background: #f1f5f9; color: #334155; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+      code { padding: 2px 5px; border-radius: 6px; background: #e2e8f0; color: #0f172a; font-family: var(--mono); font-size: .9em; }
+      pre { margin: 12px 0; padding: 16px; border-radius: 14px; background: #0b1020; color: #e2e8f0; overflow: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; border: 1px solid #1e293b; }
+      pre code { background: transparent; color: inherit; padding: 0; }
+      .tok { color: #93c5fd; } .com { color: #64748b; font-style: italic; } .str { color: #86efac; } .kw { color: #c4b5fd; }
+      ul, ol { padding-left: 20px; margin: 8px 0 14px; } li { margin: 5px 0; }
+      .note { margin: 14px 0; padding: 14px 16px; border-left: 4px solid var(--brand); border-radius: 12px; background: var(--soft-blue); }
+      .note.warn { border-color: var(--warn); background: var(--soft-amber); }
+      .note.danger { border-color: var(--danger); background: var(--soft-red); }
+      .note.ok { border-color: var(--ok); background: var(--soft-green); }
+      .pill { display: inline-flex; gap: 6px; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+      .pill.blue { background: var(--soft-blue); color: #1d4ed8; } .pill.purple { background: var(--soft-purple); color: #5b21b6; }
+      .pill.green { background: var(--soft-green); color: #047857; } .pill.amber { background: var(--soft-amber); color: #92400e; } .pill.red { background: var(--soft-red); color: #991b1b; }
+      .badge { display: inline-block; padding: 2px 8px; border-radius: 8px; font-size: 12px; font-weight: 800; }
+      .badge.now { background: #dcfce7; color: #166534; } .badge.next { background: #fef9c3; color: #854d0e; } .badge.later { background: #e2e8f0; color: #334155; }
+      .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
+      .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 14px; }
+      .card { border: 1px solid var(--line); border-radius: 16px; background: var(--soft); overflow: hidden; }
+      .card .hd { padding: 13px 15px; background: linear-gradient(135deg, #f8fafc, #eef2ff); border-bottom: 1px solid var(--line); font-weight: 800; font-size: 14px; }
+      .card .bd { padding: 13px 15px; background: #fff; font-size: 13.5px; }
+      .layer { border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; margin: 10px 0; }
+      .layer.kernel { background: linear-gradient(135deg, #eff6ff, #f5f3ff); border-color: #c7d2fe; }
+      .layer.user { background: var(--soft); } .layer.generic { background: #f8fafc; }
+      .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+      .chip { padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: #fff; font-size: 13px; font-weight: 700; }
+      .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0; }
+      .flow .n { padding: 9px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft-blue); font-weight: 800; font-size: 12.5px; }
+      .flow .a { color: var(--muted); font-weight: 800; }
+      footer { padding: 30px; text-align: center; color: var(--muted); font-size: 13px; }
+      /* 左侧导航 */
+      .sidenav { position: fixed; top: 0; left: 0; width: 256px; height: 100vh; overflow-y: auto; z-index: 50;
+        background: #0b1020; color: #cbd5e1; border-right: 1px solid #1e293b; padding: 20px 14px 48px; }
+      .sidenav .nav-brand { font-weight: 800; color: #fff; font-size: 15px; line-height: 1.3; padding: 6px 10px 14px; border-bottom: 1px solid #1e293b; margin-bottom: 8px; }
+      .sidenav .nav-brand small { display: block; color: #7c8aa5; font-weight: 600; font-size: 11px; margin-top: 5px; text-transform: uppercase; letter-spacing: .08em; }
+      .sidenav a { display: block; padding: 7px 10px; margin: 1px 0; border-radius: 8px; color: #cbd5e1; font-size: 13px; line-height: 1.35; }
+      .sidenav a:hover { background: rgba(255,255,255,.06); color: #fff; text-decoration: none; }
+      .sidenav a.active { background: linear-gradient(135deg, rgba(37,99,235,.4), rgba(124,58,237,.32)); color: #fff; font-weight: 700; }
+      .sidenav a .num { display: inline-block; width: 22px; color: #64748b; font-variant-numeric: tabular-nums; }
+      .sidenav a.active .num { color: #bfdbfe; }
+      .nav-toggle { display: none; }
+      @media (min-width: 1024px) { body { padding-left: 256px; } }
+      @media (max-width: 1023px) {
+        .sidenav { transform: translateX(-100%); transition: transform .25s ease; width: 248px; box-shadow: 0 0 40px rgba(0,0,0,.55); }
+        .sidenav.open { transform: translateX(0); }
+        .nav-toggle { display: inline-flex; align-items: center; gap: 6px; position: fixed; top: 14px; left: 14px; z-index: 60;
+          padding: 8px 12px; border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 13px; color: #fff;
+          border: 1px solid rgba(255,255,255,.25); background: rgba(15,23,42,.85); backdrop-filter: blur(8px); }
+      }
+    </style>
+  </head>
+  <body>
+    <button class="nav-toggle" onclick="document.getElementById('sidenav').classList.toggle('open')">☰ 目录</button>
+    <nav class="sidenav" id="sidenav">
+      <div class="nav-brand">CoWork OS 完整设计规格<small>Complete Spec · B/S</small></div>
+      <a href="#meta"><span class="num">0</span>文档定位</a>
+      <a href="#toc"><span class="num">1</span>目录</a>
+      <a href="#tenets"><span class="num">2</span>设计基准</a>
+      <a href="#c4"><span class="num">3</span>总体架构 (C4)</a>
+      <a href="#topology"><span class="num">4</span>部署拓扑 (B/S)</a>
+      <a href="#stack"><span class="num">5</span>技术栈选型</a>
+      <a href="#modules"><span class="num">6</span>模块分解</a>
+      <a href="#domain"><span class="num">7</span>领域模型</a>
+      <a href="#data"><span class="num">8</span>数据与事件存储</a>
+      <a href="#eventbus"><span class="num">9</span>事件总线</a>
+      <a href="#consistency"><span class="num">10</span>一致性·事务·恢复</a>
+      <a href="#security"><span class="num">11</span>鉴权·多租户·安全</a>
+      <a href="#orchestration"><span class="num">12</span>编排与外部 Agent</a>
+      <a href="#memory"><span class="num">13</span>记忆与自学习</a>
+      <a href="#gateway"><span class="num">14</span>通道网关</a>
+      <a href="#api"><span class="num">15</span>API 契约（多端）</a>
+      <a href="#observability"><span class="num">16</span>可观测性</a>
+      <a href="#testing"><span class="num">17</span>测试与质量</a>
+      <a href="#roadmap"><span class="num">18</span>演进里程碑</a>
+      <a href="#risks"><span class="num">19</span>风险与未决</a>
+      <a href="#impact"><span class="num">20</span>B/S 功能影响</a>
+      <a href="#sources"><span class="num">21</span>来源与说明</a>
+    </nav>
+    <header class="hero">
+      <div class="hero-inner">
+        <p class="eyebrow">Complete Design Specification · B/S-First · Multi-Client · Implementation-Aware</p>
+        <h1>CoWork OS 完整设计规格</h1>
+        <p class="subtitle">
+          在「目标设计方案」的原则与领域对象之上，给出一份<strong>首先以 B/S（浏览器/服务端）模式落地</strong>、Web / 移动 / CLI 等多端可直接接入、且把<strong>技术实现</strong>考虑进去的完整规格：
+          部署拓扑、技术栈选型、模块分解、数据与事件存储、一致性与恢复机制、鉴权与多租户、安全内核、外部 Agent 会话、API 契约、可观测性、测试与演进里程碑。
+        </p>
+        <div class="hero-grid">
+          <div class="metric"><strong>B/S 多端</strong><span>Web / 移动 / CLI 统一接入</span></div>
+          <div class="metric"><strong>Event-Sourced</strong><span>事件存储 + 投影读模型</span></div>
+          <div class="metric"><strong>Capability + Auth</strong><span>鉴权 + 能力令牌 + Hook</span></div>
+          <div class="metric"><strong>5 阶段</strong><span>可增量演进里程碑</span></div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section id="meta">
+        <h2>0. 文档定位与三份文档关系</h2>
+        <table>
+          <thead><tr><th>文档</th><th>回答的问题</th><th>抽象层</th></tr></thead>
+          <tbody>
+            <tr><td><code>domain-driven-design-concept-model.html</code></td><td>现在的代码长什么样（现状基线）</td><td>What is（描述）</td></tr>
+            <tr><td><code>cowork-os-target-design-proposal.html</code></td><td>最优设计应该是什么（原则 + 领域对象）</td><td>What should be（方向）</td></tr>
+            <tr><td><strong>本文 <code>cowork-os-complete-design-spec.html</code></strong></td><td><strong>如何把目标设计做成可实现的系统</strong></td><td><strong>How to build（规格）</strong></td></tr>
+          </tbody>
+        </table>
+        <div class="note">
+          <strong>读者：</strong>架构师 / 后端 / 前端 / 平台工程。本文不绑定现有代码，技术选型按「B/S 服务端 + 多端瘦客户端」给出，可直接落地；所有选型都附<strong>备选与理由</strong>，团队可替换而不动设计骨架。
+        </div>
+        <div class="note ok">
+          <strong>架构决策 ADR-01（B/S 优先）：</strong>首要交付形态为 <strong>B/S</strong>——服务端集中承载内核与能力层，浏览器 / 移动 / CLI 作为瘦客户端经 HTTPS + WebSocket 接入，<strong>多端开箱即用、零安装</strong>、统一升级、便于协作。原「local-first 桌面（Electron）」降级为后续阶段（同一服务端可内嵌打包为单机版，见 §18 M5+）。本变更只影响<em>部署拓扑 / 技术栈 / API 面 / 鉴权与多租户 / 数据存储</em>；领域模型、事件溯源、一致性与安全内核设计<strong>传输无关，保持不变</strong>。
+        </div>
+        <div class="note warn">
+          <strong>非目标（Non-Goals）：</strong>不覆盖具体 UI 视觉、不锁定某个 LLM 供应商、第一阶段不做离线优先 / 本地端到端加密同步（留待桌面阶段）、不在本文给出逐行代码。
+        </div>
+      </section>
+
+      <section id="toc">
+        <h2>1. 目录</h2>
+        <div class="toc">
+          <a href="#tenets">设计基准</a>
+          <a href="#c4">总体架构 (C4)</a>
+          <a href="#topology">进程与部署拓扑</a>
+          <a href="#stack">技术栈选型</a>
+          <a href="#modules">模块分解与接口</a>
+          <a href="#domain">领域模型详化</a>
+          <a href="#data">数据与事件存储</a>
+          <a href="#eventbus">事件总线与契约</a>
+          <a href="#consistency">一致性·事务·恢复</a>
+          <a href="#security">鉴权·多租户·安全</a>
+          <a href="#orchestration">编排与外部 Agent</a>
+          <a href="#memory">记忆与自学习</a>
+          <a href="#gateway">通道网关</a>
+          <a href="#api">API 契约（多端）</a>
+          <a href="#observability">可观测性与运维</a>
+          <a href="#testing">测试与质量</a>
+          <a href="#roadmap">演进里程碑</a>
+          <a href="#impact">B/S 功能影响分析</a>
+          <a href="#risks">风险与未决</a>
+        </div>
+      </section>
+
+      <section id="tenets">
+        <h2>2. 设计基准（承接目标方案）</h2>
+        <p class="lead">本文继承目标方案的 7 条原则，并把它们翻译为可验证的技术约束。</p>
+        <table>
+          <thead><tr><th>原则</th><th>技术约束（可验证）</th></tr></thead>
+          <tbody>
+            <tr><td>P1 内核稳定 / 能力易变</td><td>内核包不得 import 用户态包；用依赖检查（如 dependency-cruiser / eslint-boundaries）在 CI 强制。</td></tr>
+            <tr><td>P2 执行即事实，事件即真相</td><td>所有状态变更必须先写 <code>event_log</code>；读模型只能由投影器写入，禁止直接 UPDATE 业务状态。</td></tr>
+            <tr><td>P3 默认零权限，按边界授予</td><td>Agent 启动时 capability set 为空；工具执行必须出示有效 capability token。</td></tr>
+            <tr><td>P4 单向依赖（DAG）</td><td>模块依赖图无环；跨上下文只经 event bus 或 repository 接口。</td></tr>
+            <tr><td>P5 边界即防腐层</td><td>MCP / ACP 各有独立 adapter 包，核心域不出现外部协议类型。</td></tr>
+            <tr><td>P6 失败显式</td><td>每类失败有 typed error + 补偿/对账任务；无静默 catch-return-null。</td></tr>
+            <tr><td>P7 人类在关键回路</td><td>现实副作用 / 记忆固化 / 技能发布须经 ApprovalRequest 或 Review 状态机。</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="c4">
+        <h2>3. 总体架构（C4 视图）</h2>
+        <h3>3.1 L1 系统上下文（B/S）</h3>
+        <div class="flow">
+          <span class="n">多端客户端<br/>(Web / 移动 / CLI)</span><span class="a">↔ HTTPS+WS</span>
+          <span class="n">CoWork OS 服务端</span><span class="a">↔</span>
+          <span class="n">LLM Providers</span>
+        </div>
+        <div class="flow">
+          <span class="n">远程消息通道<br/>(IM/Mail/…)</span><span class="a">→</span>
+          <span class="n">CoWork OS 服务端</span><span class="a">→</span>
+          <span class="n">外部工具 (MCP)<br/>外部 Agent (ACP/A2A)</span>
+        </div>
+        <h3>3.2 L2 容器视图（服务端 + 瘦客户端）</h3>
+        <div class="grid3">
+          <div class="card"><div class="hd">Web / 移动 / CLI 客户端</div><div class="bd"><strong>瘦客户端</strong>：渲染读模型投影 + 发命令 + 订阅事件流；不持有领域逻辑，可随时替换/多端并存。</div></div>
+          <div class="card"><div class="hd">API Gateway / BFF</div><div class="bd">TLS 终结、鉴权(JWT/session)、租户隔离、限流；HTTP(命令/查询) + WebSocket(事件推送)。</div></div>
+          <div class="card"><div class="hd">Kernel Service</div><div class="bd">Task Runtime、Event Store、Permission、Workspace 治理；系统事实源（服务端进程）。</div></div>
+          <div class="card"><div class="hd">Capability Services</div><div class="bd">编排、技能、网关、记忆；可独立伸缩/崩溃重启的用户态服务。</div></div>
+          <div class="card"><div class="hd">Connector / Agent Runner</div><div class="bd">MCP / ACP / channel adapter、computer-use 执行器，沙箱隔离的服务端子进程。</div></div>
+          <div class="card"><div class="hd">数据层</div><div class="bd">PostgreSQL（event_log + 读模型）+ pgvector（向量）+ 对象存储（工件文件）。</div></div>
+        </div>
+        <div class="note"><strong>瘦客户端原则：</strong>客户端只做「渲染 + 发命令 + 订阅事件」，所有领域逻辑、状态、安全都在服务端——这是「多端可直接使用」且行为一致的前提，新增端只需实现同一套 API/WS 协议。</div>
+        <h3>3.3 L3 服务端内核组件</h3>
+        <pre><code><span class="com"># Kernel Service 内部组件（单向依赖，自上而下）</span>
+API/WS ──▶ AuthN/AuthZ ──▶ CommandBus ──▶ TaskRuntime ──▶ EventStore(append-only)
+                                │                  │
+                                ▼                  ▼
+                         PermissionEngine     Projectors ──▶ ReadModels (tasks, timeline…)
+                                │                  │
+                                ▼                  ▼
+                         CapabilityIssuer     EventBus(out) ──▶ Capability Services / WS push</code></pre>
+      </section>
+
+      <section id="topology">
+        <h2>4. 进程与部署拓扑（B/S）</h2>
+        <p class="lead">服务端集中承载内核与能力层；浏览器 / 移动 / CLI 多端瘦客户端经 HTTPS + WebSocket 接入。进程隔离用于<strong>故障隔离 + 权限隔离</strong>；无状态服务可水平伸缩，事件存储为单一事实源。</p>
+        <table>
+          <thead><tr><th>部署单元</th><th>形态</th><th>职责</th><th>崩溃影响 / 伸缩</th></tr></thead>
+          <tbody>
+            <tr><td>客户端</td><td>Web SPA / 移动(PWA 或套壳) / CLI</td><td>渲染投影、发命令、订阅事件</td><td>仅本端；重连后从读模型恢复</td></tr>
+            <tr><td>API Gateway / BFF</td><td>无状态服务</td><td>TLS、鉴权、租户隔离、限流、WS 网关</td><td>无状态 → 多副本 + 负载均衡</td></tr>
+            <tr><td>Kernel Service</td><td>有状态(写)服务</td><td>事实源、命令处理、事件存储</td><td>单写者；崩溃不丢数据可重放；按租户/工作区分片扩展</td></tr>
+            <tr><td>Capability Services</td><td>无状态 / 可重启</td><td>编排 / 技能 / 网关 / 记忆</td><td>独立伸缩；崩溃不波及内核，断点续跑</td></tr>
+            <tr><td>Connector / Agent Runner</td><td>沙箱子进程 / 容器</td><td>MCP / ACP / channel、computer-use</td><td>熔断重连；租约失效释放</td></tr>
+            <tr><td>Local Agent Runner（可选）</td><td>装在用户设备上的轻量代理</td><td>代表用户操作其<strong>本地</strong>电脑 / 浏览器 / 文件</td><td>断线则本地能力降级（见 §20）</td></tr>
+          </tbody>
+        </table>
+        <div class="note ok"><strong>关键性质（不变）：</strong>内核仍是事件溯源，任何服务崩溃都不产生半状态——未提交命令视为未发生，已提交事件可重放。B/S 下额外获得「服务端重启不影响多端会话连续性」。</div>
+        <div class="note warn"><strong>本地能力的核心取舍：</strong>「操作用户本机」类能力（computer-use、本地文件、本地 shell）在纯服务端<strong>无法直达用户设备</strong>。两条路：①<strong>Local Agent Runner</strong>（装在用户电脑上，与服务端建反向安全通道）；②<strong>服务端云沙箱</strong>（语义从"操作我的电脑"变为"操作云端工作空间"）。详见 §20 功能影响分析。</div>
+        <h3>4.1 部署形态</h3>
+        <pre><code>self-host 单机:  docker compose（gateway + kernel + workers + postgres + minio）
+团队 / 云:       k8s（gateway 多副本 · kernel 按租户分片 · postgres 主从 · 对象存储）
+桌面单机(后续):  同一服务端内嵌打包（Tauri/Electron 壳本地起 server）→ 复用 B/S 代码</code></pre>
+      </section>
+
+      <section id="stack">
+        <h2>5. 技术栈选型（B/S，含备选与理由）</h2>
+        <table>
+          <thead><tr><th>关注点</th><th>推荐</th><th>理由</th><th>备选</th></tr></thead>
+          <tbody>
+            <tr><td>前端（多端同构）</td><td>React + Vite + TypeScript，<strong>响应式</strong></td><td>一套代码自适应手机/电脑；与后端共享类型。</td><td>Vue 3 / SvelteKit</td></tr>
+            <tr><td>移动端</td><td>PWA 优先（可安装/推送），需上架时 Capacitor 套壳</td><td>复用 Web 代码最快覆盖多端；原生能力按需补。</td><td>React Native（投入更大）</td></tr>
+            <tr><td>响应式策略</td><td>断点自适应 + <strong>移动端精简工作台</strong></td><td>手机与电脑信息密度差异大，需分别裁剪（见 §20）。</td><td>独立移动 App</td></tr>
+            <tr><td>服务端</td><td>Node.js + TypeScript + Fastify</td><td>前后端同语言/同类型；适配 LLM/MCP；高吞吐。</td><td>NestJS（更重）/ Go（性能）</td></tr>
+            <tr><td>实时推送</td><td>WebSocket（事件流）+ 断线重连 + 游标续传</td><td>多端实时一致；移动后台/弱网需重连补偿。</td><td>SSE（单向回退）</td></tr>
+            <tr><td>鉴权</td><td>OIDC/OAuth2 + 短期 JWT + 刷新令牌</td><td>多端统一身份；支持第三方登录。</td><td>session cookie（同源 Web）</td></tr>
+            <tr><td>持久化</td><td>PostgreSQL（事件存储 + 读模型，同库事务）</td><td>多端并发、强事务、运维成熟；append-only 事件天然契合。</td><td>SQLite（单用户/开发档）</td></tr>
+            <tr><td>向量检索</td><td>pgvector</td><td>与主库同实例，省一套服务。</td><td>独立向量库（量大时）</td></tr>
+            <tr><td>工件存储</td><td>对象存储（S3 兼容 / MinIO 自托管）</td><td>大文件不进库；多端经签名 URL 访问。</td><td>服务端文件系统（单机）</td></tr>
+            <tr><td>本地能力</td><td>Local Agent Runner（gRPC/WS 反向通道）</td><td>服务端模型下仍能操作用户本机（见 §20）。</td><td>云沙箱（无需装客户端）</td></tr>
+            <tr><td>外部协议</td><td>MCP（工具/数据）、ACP/A2A（Agent）</td><td>各自防腐层（P5）。</td><td>—</td></tr>
+            <tr><td>可观测性</td><td>OpenTelemetry + 结构化日志</td><td>统一 trace/metric；correlationId 贯穿。</td><td>—</td></tr>
+            <tr><td>测试</td><td>Vitest + 契约 + 重放 + E2E(Playwright 跨视口)</td><td>含多端响应式 E2E。</td><td>Jest</td></tr>
+          </tbody>
+        </table>
+        <div class="note"><strong>说明：</strong>选型从「B/S 多端最优」反推。领域 / 事件 / 一致性设计与传输无关——后续做桌面单机版时，把同一服务端内嵌打包、前端复用即可，不动核心。</div>
+      </section>
+
+      <section id="modules">
+        <h2>6. 模块分解与接口</h2>
+        <div class="layer kernel">
+          <h3>稳定内核包 <span class="pill blue">@cowork/kernel-*</span></h3>
+          <div class="chip-row">
+            <span class="chip">kernel-task（聚合 + 命令处理）</span>
+            <span class="chip">kernel-events（event store + 投影）</span>
+            <span class="chip">kernel-permission（能力授权 + hook）</span>
+            <span class="chip">kernel-workspace（治理边界）</span>
+            <span class="chip">kernel-session（运行态拥有者）</span>
+          </div>
+        </div>
+        <div class="layer user">
+          <h3>用户态能力包 <span class="pill purple">@cowork/cap-*</span></h3>
+          <div class="chip-row">
+            <span class="chip">cap-orchestration</span><span class="chip">cap-skills</span>
+            <span class="chip">cap-gateway</span><span class="chip">cap-memory</span>
+            <span class="chip">cap-workbench</span>
+          </div>
+        </div>
+        <div class="layer generic">
+          <h3>适配/防腐 + 通用 <span class="pill amber">@cowork/adapter-* / @cowork/shared-*</span></h3>
+          <div class="chip-row">
+            <span class="chip">adapter-mcp</span><span class="chip">adapter-acp</span>
+            <span class="chip">adapter-channel-*</span><span class="chip">shared-types</span>
+            <span class="chip">shared-telemetry</span>
+          </div>
+        </div>
+        <h3>6.1 内核对外的唯一接口（窄契约）</h3>
+        <pre><code><span class="kw">interface</span> <span class="tok">Kernel</span> {
+  <span class="com">// 写：所有变更经命令，返回已提交事件（或 typed error）</span>
+  dispatch(cmd: Command): Promise&lt;Result&lt;CommittedEvent[], DomainError&gt;&gt;;
+  <span class="com">// 读：只读投影，永不返回可变领域对象</span>
+  query&lt;T&gt;(q: Query&lt;T&gt;): Promise&lt;T&gt;;
+  <span class="com">// 订阅：用户态通过事件流协作（at-least-once + 幂等消费）</span>
+  subscribe(filter: EventFilter, from: Cursor): AsyncIterable&lt;CommittedEvent&gt;;
+}</code></pre>
+        <div class="note danger"><strong>边界纪律：</strong>用户态<strong>只能</strong>通过 <code>dispatch/query/subscribe</code> 触达内核。任何「直接读写内核数据库表」都是架构违例，CI 依赖检查拦截。</div>
+      </section>
+
+      <section id="domain">
+        <h2>7. 领域模型详化</h2>
+        <p class="lead">把目标方案的聚合落为带完整属性、不变量与命令/事件的规格。仅示核心域，支撑域同构。</p>
+        <h3>7.1 Task 聚合</h3>
+        <pre><code><span class="kw">type</span> <span class="tok">Task</span> = {
+  id: TaskId; workspaceId: WorkspaceId;
+  origin: <span class="str">'manual'|'cron'|'hook'|'api'|'channel'</span>;
+  canonicalPrompt: string;        <span class="com">// rawPrompt→userPrompt→prompt 解析后的不可变定义</span>
+  status: TaskStatus;             <span class="com">// 由事件投影，非直接写</span>
+  parentTaskId?: TaskId; sessionId?: SessionId;
+  agentConfig: AgentConfigRef; budget?: Budget; risk?: RiskTier;
+  version: number;               <span class="com">// 乐观并发</span>
+};
+<span class="com">// 命令 → 不变量校验 → 事件</span>
+Commands: CreateTask | PlanTask | StartTurn | RequestApproval | ResolveApproval
+        | AppendArtifact | CompleteTask | FailTask | CancelTask | DeriveChildTask
+Invariants:
+  - <span class="kw">INV-1</span> canonicalPrompt 一经创建不可变（技能只附加上下文）
+  - <span class="kw">INV-2</span> 终态(completed/failed/cancelled)后不可再 StartTurn
+  - <span class="kw">INV-3</span> 子任务必须携带 parentTaskId 且共享 workspace 治理</code></pre>
+        <h3>7.2 核心聚合速览</h3>
+        <table>
+          <thead><tr><th>聚合</th><th>关键不变量</th><th>主要命令</th><th>产出事件</th></tr></thead>
+          <tbody>
+            <tr><td>Workspace</td><td>能力优先：危险操作先过工作区能力</td><td>Create/Switch/UpdatePermissions</td><td>WorkspaceCreated/PermissionsChanged</td></tr>
+            <tr><td>ApprovalRequest</td><td>hard-deny 不可覆盖；data_export 独立通道</td><td>Request/Approve/Reject</td><td>ApprovalRequested/Resolved</td></tr>
+            <tr><td>OrchestrationGraph</td><td>远程节点以 remoteTaskId 收敛</td><td>Split/DispatchNode/MergeResult</td><td>NodeDispatched/NodeUpdated</td></tr>
+            <tr><td>ExternalAgentSession <span class="badge next">演进</span></td><td>Remote Agent ≠ Tool；委派前过审查</td><td>OpenSession/Enqueue/Heartbeat/Cancel</td><td>SessionOpened/RunUpdated/SessionStale</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="data">
+        <h2>8. 数据与事件存储（Schema）</h2>
+        <h3>8.1 事件存储（单写者：内核）</h3>
+        <pre><code><span class="com">-- append-only，永不 UPDATE/DELETE</span>
+<span class="kw">CREATE TABLE</span> event_log (
+  global_seq   <span class="tok">INTEGER PRIMARY KEY AUTOINCREMENT</span>,  <span class="com">-- 全局顺序</span>
+  stream_id    <span class="tok">TEXT NOT NULL</span>,      <span class="com">-- 聚合实例，如 task:&lt;id&gt;</span>
+  stream_seq   <span class="tok">INTEGER NOT NULL</span>,   <span class="com">-- 聚合内顺序（乐观并发）</span>
+  type         <span class="tok">TEXT NOT NULL</span>,      <span class="com">-- TaskCreated 等</span>
+  schema_ver   <span class="tok">INTEGER NOT NULL</span>,   <span class="com">-- payload 版本</span>
+  payload      <span class="tok">TEXT NOT NULL</span>,      <span class="com">-- JSON</span>
+  actor        <span class="tok">TEXT NOT NULL</span>,
+  correlation_id <span class="tok">TEXT</span>, causation_id <span class="tok">TEXT</span>,
+  occurred_at  <span class="tok">TEXT NOT NULL</span>,
+  <span class="kw">UNIQUE</span>(stream_id, stream_seq)        <span class="com">-- 并发写冲突 → 重试命令</span>
+);
+<span class="kw">CREATE TABLE</span> outbox (                  <span class="com">-- 事务性外发，保证至少一次投递</span>
+  global_seq INTEGER PRIMARY KEY, dispatched INTEGER DEFAULT 0
+);</code></pre>
+        <h3>8.2 读模型（投影，可重建）</h3>
+        <pre><code><span class="com">-- 由 Projector 消费 event_log 写入；可 DROP 后从事件重放重建</span>
+<span class="kw">CREATE TABLE</span> rm_tasks (id, workspace_id, status, title, updated_seq, ...);
+<span class="kw">CREATE TABLE</span> rm_timeline (task_id, seq, kind, summary, occurred_at);
+<span class="kw">CREATE TABLE</span> rm_artifacts (id, task_id, path, sha256, mime, size, created_at);
+<span class="kw">CREATE TABLE</span> rm_memory_vec (id, scope, kind, embedding, text, source_event);</code></pre>
+        <div class="note"><strong>关键模式：</strong>同库事务内「append event_log + 写 outbox」原子提交（Transactional Outbox），投影与外发都从 outbox/event_log 异步驱动；这把「Artifact 落盘成功但事件写失败」这类半状态从根上消除。</div>
+        <h3>8.3 迁移与版本</h3>
+        <ul>
+          <li><strong>读模型迁移</strong>：直接 DROP + replay，无需手写数据迁移（事件是真相）。</li>
+          <li><strong>事件 schema 演进</strong>：只增不改；老事件由 <code>upcaster</code>（schema_ver → 最新）在读取时升级。</li>
+        </ul>
+      </section>
+
+      <section id="eventbus">
+        <h2>9. 事件总线与契约</h2>
+        <h3>9.1 投递语义</h3>
+        <ul>
+          <li><strong>at-least-once</strong>：消费者必须幂等（按 <code>global_seq</code> 去重 / 按业务键幂等）。</li>
+          <li><strong>有序</strong>：单 stream 内严格有序；跨 stream 用 global_seq 全序。</li>
+          <li><strong>游标</strong>：每个消费者持久化自己的 <code>cursor</code>，崩溃后从断点续读。</li>
+        </ul>
+        <h3>9.2 事件目录（节选，含 payload 契约）</h3>
+        <pre><code>TaskCreated v1 { taskId, workspaceId, origin, canonicalPrompt, correlationId }
+ApprovalRequested v1 { taskId, kind: 'tool'|'data_export'|'shell'|..., risk, context }
+ArtifactCreated v1 { artifactId, taskId, path, sha256, mime, size }
+TaskCompleted v1 { taskId, result, metrics }
+RemoteAgentDelegated v1 { sessionId, agentId, requestId, scope }  <span class="badge next">演进</span></code></pre>
+        <div class="note warn"><strong>契约纪律：</strong>事件名 + payload schema 进版本库并做契约测试；新增字段必须可选；删除字段须先 deprecate 一个版本。消费者按 <code>schema_ver</code> 经 upcaster 读取。</div>
+      </section>
+
+      <section id="consistency">
+        <h2>10. 一致性、事务与恢复</h2>
+        <table>
+          <thead><tr><th>场景</th><th>机制</th><th>实现要点</th></tr></thead>
+          <tbody>
+            <tr><td>聚合内强一致</td><td>单库事务</td><td>命令处理在一个 Postgres 事务内校验不变量 + append 事件。</td></tr>
+            <tr><td>跨聚合最终一致</td><td>Transactional Outbox + 投影</td><td>事件提交后异步驱动投影与外发，消费幂等。</td></tr>
+            <tr><td>并发写冲突</td><td>乐观并发</td><td><code>UNIQUE(stream_id, stream_seq)</code> 冲突 → 重新加载 + 重试命令。</td></tr>
+            <tr><td>外部副作用（发送/部署）</td><td>幂等键 + saga 补偿</td><td>requestId 幂等；失败走补偿事件而非回滚已发生的现实动作。</td></tr>
+            <tr><td>崩溃恢复</td><td>snapshot + replay</td><td>定期对热聚合快照；恢复 = 加载快照 + 重放其后事件。</td></tr>
+            <tr><td>对账（reconciliation）</td><td>后台扫描</td><td>orphan artifact / 未投递 outbox / stale session 周期对账修复。</td></tr>
+          </tbody>
+        </table>
+        <pre><code><span class="com">// 命令处理统一骨架（伪代码）</span>
+<span class="kw">async function</span> handle(cmd) {
+  <span class="kw">const</span> agg = await load(cmd.streamId);          <span class="com">// snapshot + replay</span>
+  <span class="kw">const</span> events = agg.decide(cmd);                 <span class="com">// 纯函数：校验不变量→产出事件</span>
+  <span class="kw">await</span> tx(() =&gt; { append(events); enqueueOutbox(events); }); <span class="com">// 原子</span>
+  <span class="kw">return</span> ok(events);                             <span class="com">// 投影/外发异步发生</span>
+}</code></pre>
+      </section>
+
+      <section id="security">
+        <h2>11. 鉴权、多租户与安全内核</h2>
+        <div class="note danger"><strong>B/S 新增攻击面：</strong>系统从「单机本地」变为「网络暴露的服务端」，必须新增传输安全、身份认证、授权与租户隔离——这是 B/S 相对 local-first 最大的安全增量。</div>
+        <h3>11.0 鉴权与租户隔离（B/S 新增）</h3>
+        <table>
+          <thead><tr><th>层</th><th>机制</th></tr></thead>
+          <tbody>
+            <tr><td>传输</td><td>全程 TLS；WebSocket 同源 + token 鉴权。</td></tr>
+            <tr><td>认证 AuthN</td><td>OIDC/OAuth2 登录 → 短期 JWT + 刷新令牌；多端共享同一身份。</td></tr>
+            <tr><td>授权 AuthZ</td><td>每个命令/查询校验 user→workspace 角色与能力；<strong>事件订阅按 workspace/tenant 过滤</strong>，禁止越权读他人事件流。</td></tr>
+            <tr><td>租户隔离</td><td>数据带 tenant_id/owner_id；行级隔离（Postgres RLS 或强制查询条件）；工件签名 URL 限范围。</td></tr>
+            <tr><td>审计</td><td>登录、授权变更、data_export、审批决策均落事件，可追溯。</td></tr>
+          </tbody>
+        </table>
+        <div class="note"><strong>与能力模型的关系：</strong>身份(AuthN) 解决「你是谁」，能力令牌(§11.1) 解决「这次执行能做什么」。命令先过 AuthN/AuthZ，再由 CapabilityIssuer 在身份/工作区范围内授予最小能力。</div>
+        <h3>11.1 能力令牌（Capability Token）</h3>
+        <pre><code><span class="kw">type</span> <span class="tok">Capability</span> = {
+  subject: TaskId|AgentId; resource: <span class="str">'fs.write'|'net'|'shell'|'data_export'|'tool:&lt;name&gt;'</span>;
+  scope: { paths?: Glob[]; domains?: string[]; workspaceId: WorkspaceId };
+  constraints?: { maxCalls?: number; expiresAt?: string };
+  revocable: boolean;            <span class="com">// hard-deny 对应「不可铸造」的能力</span>
+};</code></pre>
+        <ul>
+          <li><strong>签发</strong>：Task/Agent 启动时由 <code>CapabilityIssuer</code> 依据 workspace 能力 + bounded context 授予最小集合。</li>
+          <li><strong>校验</strong>：工具执行前必须出示令牌；无令牌或越界 → deny。</li>
+          <li><strong>吊销</strong>：审批拒绝 / 风险升级 → 立即吊销，正在进行的调用被中断。</li>
+        </ul>
+        <h3>11.2 确定性 Hook 管线</h3>
+        <div class="flow">
+          <span class="n">PreToolUse Hook</span><span class="a">→</span>
+          <span class="n">Capability 校验</span><span class="a">→</span>
+          <span class="n">PermissionRule 匹配</span><span class="a">→</span>
+          <span class="n">allow / deny / ask</span><span class="a">→</span>
+          <span class="n">执行</span><span class="a">→</span>
+          <span class="n">PostToolUse Hook</span>
+        </div>
+        <pre><code>decision = PreHooks.run(ctx)               <span class="com">// 确定性、可审计，可直接 deny/transform</span>
+        ?? Capability.check(ctx)
+        ?? PermissionRules.match(ctx)       <span class="com">// allow|deny|ask</span>
+<span class="kw">if</span> (decision === <span class="str">'ask'</span>) emit ApprovalRequested(...)  <span class="com">// 人类在回路 (P7)</span></code></pre>
+        <div class="note danger"><strong>不可覆盖集：</strong>危险命令、hard guardrail、task restriction、显式 deny、data_export 不被 mode/fallback 覆盖；这些规则有<strong>规则级单测矩阵</strong>。</div>
+      </section>
+
+      <section id="orchestration">
+        <h2>12. 编排与外部 Agent 实现</h2>
+        <h3>12.1 编排图引擎</h3>
+        <p>OrchestrationGraph 是 DAG：节点 = 子任务或委派目标；引擎按依赖就绪调度，节点状态由事件回写。本地子代理与远程 Agent 用同一节点抽象，区别仅在 <code>dispatchTarget</code>。</p>
+        <h3>12.2 外部 Agent 持久会话（actor + 租约） <span class="badge next">演进</span></h3>
+        <pre><code>ExternalAgentSession (actor)
+  ├─ SessionOwnerLease { ttl, holder }     <span class="com">// 单写所有权，过期可接管</span>
+  ├─ RemoteRunQueue [ { requestId, ... } ] <span class="com">// 顺序执行 + 幂等</span>
+  ├─ Heartbeat (interval)                  <span class="com">// 丢失→ SessionStale 事件</span>
+  └─ StreamEvents → 规范化 → NodeUpdated   <span class="com">// 回写编排图</span>
+
+状态机: Discovered → Authorized → Open → Running ⇄ Idle → (Stale → Recover) → Closed</code></pre>
+        <div class="note"><strong>防腐层：</strong><code>adapter-acp</code> 把外部协议消息翻译为内核事件；核心域不出现 ACP 协议类型。MCP 同理走 <code>adapter-mcp</code>，仅暴露「工具调用 + 数据访问」语义。</div>
+      </section>
+
+      <section id="memory">
+        <h2>13. 记忆与自学习实现</h2>
+        <h3>13.1 分层记忆</h3>
+        <table>
+          <thead><tr><th>层</th><th>存储</th><th>写入时机</th><th>检索/注入</th></tr></thead>
+          <tbody>
+            <tr><td>session context</td><td>内存 + 快照</td><td>turn 过程</td><td>当前会话直接可用</td></tr>
+            <tr><td>persistent facts</td><td>rm_memory_vec</td><td>TaskCompleted → MemoryObservation</td><td>语义检索注入 prompt</td></tr>
+            <tr><td>procedural skills</td><td>skill 库 + 索引</td><td>SkillReview 通过</td><td>渐进加载（索引→全文）</td></tr>
+            <tr><td>reflection candidate</td><td>candidate 表</td><td>Dreaming / 反思</td><td>仅候选，待人工审核</td></tr>
+          </tbody>
+        </table>
+        <h3>13.2 自学习闭环（Review-First）</h3>
+        <div class="flow">
+          <span class="n">TaskCompleted</span><span class="a">→</span>
+          <span class="n">Reflection</span><span class="a">→</span>
+          <span class="n">SkillCandidate</span><span class="a">→</span>
+          <span class="n">SkillReview(人工)</span><span class="a">→</span>
+          <span class="n">PublishedSkill</span>
+        </div>
+        <h3>13.3 技能渐进式加载</h3>
+        <pre><code>注入 SkillIndexEntry[] (短索引)  →  模型/planner 命中  →  按需 load SKILL.md 全文
+ranking: 关键词 + 语义相似 + 上下文绑定(bounded context)；带可观测决策日志</code></pre>
+        <div class="note warn"><strong>不变量：</strong>Dreaming / SkillCandidate 只产候选，绝不静默写库；应用必经 Review 状态机（P7）。</div>
+      </section>
+
+      <section id="gateway">
+        <h2>14. 通道网关</h2>
+        <ul>
+          <li><strong>统一入口</strong>：每个通道一个 <code>adapter-channel-*</code> 子进程，归一化为 <code>InboundMessage</code> → 命令。</li>
+          <li><strong>specialization 路由</strong>：新任务按 specialization 选 workspace/role；<strong>已有任务 follow-up 粘住原语境</strong>（不中途换身份）。</li>
+          <li><strong>共享记忆 opt-in</strong>：群组/公共通道默认不注入共享记忆，除非 specialization 显式允许。</li>
+          <li><strong>会话绑定</strong>：ChannelSession 以 <code>taskId</code> 绑定当前任务，回流为 TaskEvent。</li>
+        </ul>
+      </section>
+
+      <section id="api">
+        <h2>15. API 契约（多端）</h2>
+        <h3>15.1 多端客户端 ↔ 服务端（HTTP + WebSocket）</h3>
+        <pre><code><span class="com"># 命令与查询：HTTP（带 Bearer JWT）</span>
+POST /v1/commands            { type, payload }   → Result&lt;CommittedEvent[]&gt; | DomainError
+GET  /v1/query/:name?...                          → ReadModel（按身份/租户过滤）
+
+<span class="com"># 实时事件：WebSocket（鉴权 + 按 workspace 过滤 + 游标续传）</span>
+WS   /v1/stream?cursor=...   ⇄ { event }          <span class="com">// 断线重连从 cursor 续读，幂等</span></code></pre>
+        <div class="note"><strong>多端一致：</strong>Web / 移动 / CLI 共用同一套命令/查询/事件协议，行为天然一致；新增端只需实现协议。移动端弱网/后台需处理 WS 重连 + cursor 续传（见 §20）。</div>
+        <h3>15.2 外部 API（Managed Sessions，给程序化调用）</h3>
+        <pre><code>POST /v1/sessions            → 创建 durable run（底层映射到 Task / AgentTeamRun）
+GET  /v1/sessions/:id        → 状态（读模型投影）
+GET  /v1/sessions/:id/events → SSE 事件流
+POST /v1/sessions/:id/cancel → 取消（命令）</code></pre>
+        <div class="note"><strong>不变量：</strong>ManagedSession 不直接执行，必映射到 Task/AgentTeamRun；对外只暴露命令 + 事件投影，与内核保持同一契约风格。</div>
+      </section>
+
+      <section id="observability">
+        <h2>16. 可观测性与运维</h2>
+        <div class="grid2">
+          <div class="card"><div class="hd">Tracing</div><div class="bd">OpenTelemetry span 贯穿命令→事件→投影→外发；统一 <code>correlationId</code>（taskId/runId/heartbeatRunId）。</div></div>
+          <div class="card"><div class="hd">Metrics</div><div class="bd">命令延迟、事件堆积、outbox 未投递数、连接器熔断率、审批等待时长。</div></div>
+          <div class="card"><div class="hd">熔断与预算</div><div class="bd">连接器熔断；Heartbeat Dispatch 速率限制；单位时间任务/外发上限（失控保护）。</div></div>
+          <div class="card"><div class="hd">"3am" 可调试性</div><div class="bd">每个失败事件含 typed error + 上下文 + correlationId；时间线可回放定位。</div></div>
+        </div>
+      </section>
+
+      <section id="testing">
+        <h2>17. 测试与质量策略</h2>
+        <table>
+          <thead><tr><th>类型</th><th>对象</th><th>为何高价值</th></tr></thead>
+          <tbody>
+            <tr><td>规则级单测</td><td>PermissionRule / Capability / HeartbeatPulse / ChannelSpecialization</td><td>安全与路由是高风险策略点。</td></tr>
+            <tr><td>聚合不变量测试</td><td>Task/Workspace/Approval 的 decide() 纯函数</td><td>不变量是设计的核心资产。</td></tr>
+            <tr><td>契约测试</td><td>事件 payload schema + upcaster</td><td>防 payload 语义漂移。</td></tr>
+            <tr><td>事件重放测试</td><td>读模型重建 = 黄金快照</td><td>保证投影可重建、恢复正确。</td></tr>
+            <tr><td>混沌测试</td><td>kill 进程 / 断连接器 / 心跳丢失</td><td>验证「崩溃不产生半状态」。</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="roadmap">
+        <h2>18. 演进里程碑（可增量、可验证）</h2>
+        <table>
+          <thead><tr><th>阶段</th><th>目标</th><th>交付/验收</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge now">M0 契约固化</span></td><td>事件目录 + 一致性边界 + MCP/ACP 边界 + 依赖检查</td><td>契约测试 + CI 边界守卫绿。</td></tr>
+            <tr><td><span class="badge now">M1 B/S 内核 + 多端骨架</span></td><td>服务端 event_log/outbox/投影 + 命令骨架 + 鉴权/租户 + <strong>响应式 Web（手机/电脑）</strong> + WS 推送</td><td>多端登录可用；重放重建读模型一致；<strong>跨视口 E2E 通过</strong>。</td></tr>
+            <tr><td><span class="badge next">M2 能力授权</span></td><td>Capability 签发/校验/吊销 + Pre/PostToolUse Hook</td><td>越权用例被拒；hard-deny 不可覆盖测试通过。</td></tr>
+            <tr><td><span class="badge next">M3 本地能力通道</span></td><td>Local Agent Runner（computer-use/本地文件/shell）或云沙箱二选一</td><td>本地操作经安全反向通道可用且受权限治理（见 §20）。</td></tr>
+            <tr><td><span class="badge next">M4 外部 Agent + 自学习</span></td><td>Session+Lease+Queue+Heartbeat；Reflection→Candidate→Review→Published</td><td>断连可恢复、幂等；候选必经审核。</td></tr>
+            <tr><td><span class="badge later">M5 桌面单机 + 范式收敛</span></td><td>同服务端内嵌打包为桌面版；Event Store 全量为源</td><td>桌面复用 B/S 代码；所有状态可由事件重建。</td></tr>
+          </tbody>
+        </table>
+        <div class="note ok"><strong>采纳策略：</strong>M0/M1 是纯契约与内核骨架，风险低、价值高，先行；M2–M4 按需推进；M5 在前置阶段稳定后收口，避免一次性大重构。</div>
+      </section>
+
+      <section id="risks">
+        <h2>19. 风险与未决问题</h2>
+        <table>
+          <thead><tr><th>风险 / 未决</th><th>影响</th><th>缓解 / 待定</th></tr></thead>
+          <tbody>
+            <tr><td>事件溯源学习曲线</td><td>团队上手成本</td><td>M0/M1 提供命令处理骨架与模板；先在 Task 单聚合落地。</td></tr>
+            <tr><td>内核单写吞吐（Postgres）</td><td>高并发命令排队</td><td>单写是设计选择；按租户/workspace 分片；批量提交 + 连接池。</td></tr>
+            <tr><td>本地能力不可达（B/S 核心难点）</td><td>computer-use/本地文件/shell 无法直达用户机</td><td>Local Agent Runner 或云沙箱；明确语义边界（§20）。</td></tr>
+            <tr><td>网络暴露攻击面</td><td>鉴权/越权/多租户泄露</td><td>TLS + OIDC + RLS + 审计；最小权限能力令牌。</td></tr>
+            <tr><td>移动端弱网/后台</td><td>WS 断连、长任务推送丢失</td><td>cursor 续传 + 推送通知补偿 + 离线只读缓存。</td></tr>
+            <tr><td>数据离开本机</td><td>隐私合规（原 local-first 卖点）</td><td>自托管部署 + 端到端加密(后续) + 区域化存储。</td></tr>
+            <tr><td>服务端算力成本</td><td>所有 Agent/LLM 走服务端</td><td>按租户配额 + 速率限制 + 模型分级。</td></tr>
+            <tr><td>能力令牌粒度</td><td>过细→繁琐，过粗→越权</td><td>以 bounded context 为默认粒度，逐步细化高风险资源。</td></tr>
+            <tr><td>外部 Agent 协议差异</td><td>ACP/A2A 实现碎片</td><td>防腐层吸收差异；能力声明标准化。</td></tr>
+            <tr><td>读模型重建耗时</td><td>事件量大时重放慢</td><td>快照 + 增量投影；冷读模型按需重建。</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="impact">
+        <h2>20. B/S 模式功能影响分析（哪些功能会有问题）</h2>
+        <p class="lead">从 local-first 桌面转为 B/S 服务端后，<strong>领域逻辑全部可平移</strong>，但「依赖用户本机环境」与「桌面原生/移动端」的能力会受影响。下表按严重度列出受影响功能、问题本质与缓解方案。</p>
+        <div class="note danger">
+          <strong>头号问题（必须先决策）：</strong>CoWork OS 的「computer use / 浏览器自动化 / 本地文件 / 本地 shell」本质是<strong>操作用户自己的电脑</strong>。纯服务端摸不到用户设备，这是 B/S 化最大的功能断点。推荐方案：把 <strong>Local Agent Runner 作为一等组件</strong>（用户设备上装轻量代理，与服务端建反向安全通道），并在产品上<strong>明确区分两种工作空间语义</strong>——「☁️ 云端工作空间」（服务端沙箱，开箱即用）与「💻 我的电脑」（需 Local Runner，操作本机）。
+        </div>
+
+        <h3>20.1 受影响功能总表</h3>
+        <table>
+          <thead><tr><th>功能</th><th>B/S 下的问题</th><th>严重度</th><th>缓解方案</th></tr></thead>
+          <tbody>
+            <tr><td>Computer Use / 浏览器自动化</td><td>服务端无法控制用户本机的浏览器/桌面</td><td><span class="pill red">高</span></td><td>Local Agent Runner 在本机执行；或云端无头浏览器（语义=云端而非本机）</td></tr>
+            <tr><td>本地文件系统 / Workspace 本地路径</td><td><code>workspace.path</code> 指向用户磁盘，服务端不可达</td><td><span class="pill red">高</span></td><td>云端工作空间(对象存储)；或 Local Runner 映射本地目录；workspace 语义二分</td></tr>
+            <tr><td>本地 Shell / 终端</td><td>服务端 shell ≠ 用户机；且共享服务端 shell 有越权风险</td><td><span class="pill red">高</span></td><td>每租户隔离的云沙箱；本机 shell 经 Local Runner + 能力令牌治理</td></tr>
+            <tr><td>本地 MCP 工具 / 本地连接器</td><td>装在用户机上的工具服务端调不到</td><td><span class="pill amber">中</span></td><td>Local Runner 转发；或迁为服务端托管连接器</td></tr>
+            <tr><td>本地优先 / 隐私</td><td>数据上云，敏感内容离开设备（原卖点）</td><td><span class="pill amber">中</span></td><td>自托管部署 + 区域化存储 + 端到端加密(后续) + data_export 审批</td></tr>
+            <tr><td>离线使用</td><td>B/S 强依赖网络</td><td><span class="pill amber">中</span></td><td>客户端只读缓存 + 离线排队命令，联网后重放</td></tr>
+            <tr><td>桌面原生集成（托盘/全局热键/本地通知/剪贴板/拖拽）</td><td>浏览器沙箱受限</td><td><span class="pill amber">中</span></td><td>PWA 通知 + 文件 API；强需求项交由 Local Runner / 桌面壳(M5)</td></tr>
+            <tr><td>长任务结果送达</td><td>WS 断开（移动后台/锁屏）会漏掉完成事件</td><td><span class="pill amber">中</span></td><td>cursor 续传补拉 + Web Push/系统推送通知</td></tr>
+            <tr><td>大工件预览 / 流式输出</td><td>大文件与 token 流经网络，延迟/带宽</td><td><span class="pill blue">低</span></td><td>签名 URL 直传对象存储 + 分块/缩略 + 流式增量</td></tr>
+            <tr><td>多租户共享服务端</td><td>一个租户的工具/shell 不能触达另一个</td><td><span class="pill amber">中</span></td><td>每租户沙箱隔离 + RLS + 能力令牌限定 workspace</td></tr>
+          </tbody>
+        </table>
+
+        <h3>20.2 移动端 + 电脑端「同时支持」的专项影响</h3>
+        <p>前端要一套代码同时服务手机与电脑，差异不只是屏幕宽度，还包括能力与交互：</p>
+        <div class="grid2">
+          <div class="card"><div class="hd">布局与信息密度</div><div class="bd">编排图 / 时间线 / 多面板工作台在手机上放不下 → 移动端改为<strong>单列 + 抽屉 + 摘要优先</strong>，复杂可视化降级为只读概览或延后到平板/桌面。</div></div>
+          <div class="card"><div class="hd">实时连接</div><div class="bd">移动端后台会杀 WS/限网 → 必须 cursor 续传 + 推送通知；桌面端长连接稳定，可全量实时。</div></div>
+          <div class="card"><div class="hd">输入与文件</div><div class="bd">手机无终端、文件系统受限、以触控为主 → 终端/批量文件操作在移动端隐藏或转交云沙箱；桌面端保留完整能力。</div></div>
+          <div class="card"><div class="hd">本地能力</div><div class="bd">手机几乎无法装 Local Runner 操作"本机" → 移动端默认只用云端工作空间；"操作我的电脑"主要在桌面端可用。</div></div>
+          <div class="card"><div class="hd">通知与后台</div><div class="bd">移动用 Web Push/系统推送做异步送达；桌面可用 PWA 通知或桌面壳通知。</div></div>
+          <div class="card"><div class="hd">性能</div><div class="bd">移动端算力/内存有限 → 大列表虚拟化、按需加载、减少前端计算（领域逻辑本就在服务端，利好移动端）。</div></div>
+        </div>
+        <div class="note ok"><strong>结论：</strong>采用「响应式同构 + 能力分级」策略——同一套 React 代码，按<strong>视口 + 设备能力</strong>裁剪：移动端聚焦「监控/审批/对话/简报」，桌面端解锁「完整工作台/编排/终端/本机操作」。这与 B/S「领域逻辑在服务端」天然契合，移动端因此可以很薄。</div>
+
+        <h3>20.3 移动端 vs 桌面端功能矩阵</h3>
+        <p class="small muted">图例：<strong>✓ 可用</strong> · <strong>◐ 降级</strong>（精简/只读/转云沙箱） · <strong>✕ 隐藏</strong>（该端不提供）。一套响应式代码按视口 + 设备能力裁剪。</p>
+        <table>
+          <thead><tr><th>功能</th><th>移动端</th><th>桌面端</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>对话 / 提任务</td><td>✓</td><td>✓</td><td>核心入口，两端一致。</td></tr>
+            <tr><td>任务监控 / 时间线</td><td>◐</td><td>✓</td><td>移动端摘要优先、单列；桌面端完整事件流。</td></tr>
+            <tr><td>审批决策</td><td>✓</td><td>✓</td><td>高频移动场景（随时批/拒），重点优化。</td></tr>
+            <tr><td>简报 / 通知</td><td>✓</td><td>✓</td><td>移动端走 Web Push / 系统推送。</td></tr>
+            <tr><td>Everything Workbench（工件）</td><td>◐</td><td>✓</td><td>移动端只读预览/缩略；桌面端完整编辑。</td></tr>
+            <tr><td>编排图可视化</td><td>◐</td><td>✓</td><td>移动端只读概览；桌面端交互式 DAG。</td></tr>
+            <tr><td>终端 / Shell</td><td>✕</td><td>✓</td><td>移动端隐藏；桌面端云沙箱或本机(Runner)。</td></tr>
+            <tr><td>本地文件操作（我的电脑）</td><td>✕</td><td>✓</td><td>需 Local Runner，移动端基本不具备。</td></tr>
+            <tr><td>Computer use / 浏览器自动化</td><td>✕</td><td>✓</td><td>同上，依赖桌面 Local Runner。</td></tr>
+            <tr><td>云端工作空间</td><td>✓</td><td>✓</td><td>服务端沙箱，两端开箱即用。</td></tr>
+            <tr><td>技能管理 / 审核</td><td>◐</td><td>✓</td><td>移动端浏览/批准；桌面端编辑发布。</td></tr>
+            <tr><td>连接器 / 设置配置</td><td>◐</td><td>✓</td><td>移动端基础项；复杂配置在桌面端。</td></tr>
+            <tr><td>实时流式输出</td><td>◐</td><td>✓</td><td>移动端弱网/后台降级为补拉；桌面端全量实时。</td></tr>
+          </tbody>
+        </table>
+        <div class="note"><strong>读法：</strong>移动端聚焦「监控 / 审批 / 对话 / 简报」这条高频轻量主线；桌面端解锁「完整工作台 / 编排 / 终端 / 操作本机」。因领域逻辑都在服务端，移动端可以做得很薄。</div>
+
+        <h3>20.4 Local Agent Runner 反向安全通道（时序）</h3>
+        <p class="small muted">解决头号难点「服务端如何操作用户本机」：Runner 装在用户电脑上，<strong>仅出站</strong>连服务端（无需开放入站端口/防火墙），建立持久反向隧道，受能力令牌 + 本地策略双重治理。</p>
+        <pre><code>Client(浏览器/桌面)     Server(Kernel + Permission)        Local Agent Runner(用户电脑)
+     │                        │                                   │
+     │                        │   ① 启动：出站连接 + 鉴权(mTLS/OIDC)      │
+     │                        │ ◀──────────────────────────────────│  反向隧道(仅出站)
+     │                        │   ② 注册本机能力(fs / shell / browser)  │
+     │                        │ ◀──────────────────────────────────│
+     │ ③ 发命令“操作我的电脑”      │                                   │
+     │ ──────────────────────▶│                                   │
+     │                        │ ④ AuthZ + 签发能力令牌(限本设备/限路径/TTL) │
+     │                        │   ⑤ LocalActionRequested(token) 经隧道下发 │
+     │                        │ ──────────────────────────────────▶│
+     │                        │                                   │ ⑥ 校验 token + 本地策略
+     │                        │                                   │   (高风险动作可弹本机确认)
+     │                        │                                   │ ⑦ 本地执行(读写文件/shell/浏览器)
+     │                        │   ⑧ 流式结果 / 事件 ◀────────────────│
+     │                        │ ⑨ 规范化为 TaskEvent + 投影 + 审计       │
+     │ ⑩ WS 推送时间线更新       │                                   │
+     │ ◀──────────────────────│                                   │
+     │                        │   ◇ 心跳续租；断线→能力降级 + SessionStale  │</code></pre>
+        <div class="grid2">
+          <div class="card"><div class="hd">为何反向出站</div><div class="bd">用户机多在 NAT/防火墙后；出站隧道免开端口，部署摩擦最低，攻击面更小。</div></div>
+          <div class="card"><div class="hd">安全治理</div><div class="bd">能力令牌限定「本设备 + 路径/域名范围 + TTL + 可吊销」；本地策略可对危险动作二次确认；全程落审计事件。</div></div>
+          <div class="card"><div class="hd">可靠性</div><div class="bd">租约 + 心跳；断线进入 stale，本地能力优雅降级，恢复后续跑（复用 §12 外部会话机制）。</div></div>
+          <div class="card"><div class="hd">语义边界</div><div class="bd">有 Runner = 可选「💻 我的电脑」；无 Runner（如手机）= 仅「☁️ 云端工作空间」，行为清晰不混淆。</div></div>
+        </div>
+
+        <h3>20.5 不受影响（平移即可）</h3>
+        <p class="small muted">
+          Task 执行与编排、事件溯源时间线、记忆与自学习、审批与权限治理、外部 Agent 协作、通道网关、Managed Sessions、可观测性——这些是传输无关的领域能力，B/S 下逻辑不变，反而因「服务端常驻」更适合长任务与多端协作。
+        </p>
+      </section>
+
+      <section id="sources">
+        <h2>21. 来源与说明</h2>
+        <p class="muted small">
+          承接 <code>cowork-os-target-design-proposal.html</code> 的原则与领域对象。技术范式（事件溯源 / CQRS / Transactional Outbox / Saga 补偿 / capability-based security / actor+lease）为通用、可核实的工程实践。
+          具体第三方 Agent 产品仅作灵感参考，不作为设计依据。本文为设计规格，不含逐行代码，落地以 §18 里程碑增量推进。
+        </p>
+      </section>
+    </main>
+    <footer>CoWork OS Complete Design Specification · Code-independent &amp; Implementation-aware · Owner: architecture / platform engineering</footer>
+    <script>
+      (function () {
+        var links = Array.prototype.slice.call(document.querySelectorAll('.sidenav a'));
+        var map = {};
+        links.forEach(function (a) { map[a.getAttribute('href').slice(1)] = a; });
+        var obs = new IntersectionObserver(function (entries) {
+          entries.forEach(function (e) {
+            if (!e.isIntersecting) return;
+            links.forEach(function (l) { l.classList.remove('active'); });
+            var a = map[e.target.id];
+            if (a) a.classList.add('active');
+          });
+        }, { rootMargin: '-45% 0px -50% 0px', threshold: 0 });
+        document.querySelectorAll('main section[id]').forEach(function (s) { obs.observe(s); });
+        links.forEach(function (a) {
+          a.addEventListener('click', function () {
+            if (window.innerWidth < 1024) document.getElementById('sidenav').classList.remove('open');
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>
