@@ -1,8 +1,20 @@
 # Event catalog: the authoritative index of event types.
 # Each entry maps an event type to its payload schema, current version, the
 # command that produces it, and the aggregate stream it belongs to.
-# Contract tests assert that every command produces a catalogued event and that
-# every events/*.schema.json file is listed here (no orphans).
+#
+# Contract tests assert:
+#   - every command produces a catalogued event;
+#   - every business event schema under events/ is listed here (no orphans),
+#     EXCLUDING meta schemas: _envelope.schema.json (underscore-prefixed) and
+#     ../capability.schema.json are not events and are not catalogued.
+#
+# Scope (M0): only the Task aggregate is catalogued, sufficient for the M1
+# walking skeleton. The Workspace, ApprovalRequest, OrchestrationGraph, and
+# ExternalAgentSession aggregates (spec 7.2) are added in M2+.
+#
+# Decision (approval modeling): ApprovalRequested/Resolved currently live in the
+# task stream for M1 simplicity. They may graduate to a standalone
+# ApprovalRequest aggregate in M2 if approvals need an independent lifecycle.
 
 version: 0.1.0
 

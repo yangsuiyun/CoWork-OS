@@ -21,6 +21,7 @@ CREATE TABLE rm_tasks (
 CREATE INDEX rm_tasks_ws_idx ON rm_tasks (tenant_id, workspace_id, status);
 
 CREATE TABLE rm_timeline (
+  tenant_id   TEXT        NOT NULL,                      -- carried for direct RLS, not via join
   task_id     TEXT        NOT NULL,
   seq         BIGINT      NOT NULL,
   kind        TEXT        NOT NULL,
@@ -31,6 +32,7 @@ CREATE TABLE rm_timeline (
 
 CREATE TABLE rm_artifacts (
   id         TEXT        NOT NULL,
+  tenant_id  TEXT        NOT NULL,                       -- carried for direct RLS, not via join
   task_id    TEXT        NOT NULL,
   path       TEXT        NOT NULL,
   sha256     TEXT        NOT NULL,
@@ -44,6 +46,9 @@ CREATE TABLE rm_artifacts (
 -- payload; the projector only copies them in. Projectors stay deterministic and
 -- never call a model during replay (spec review fix A).
 CREATE EXTENSION IF NOT EXISTS vector;
+-- Decision: VECTOR(1536) targets OpenAI text-embedding-3-small as the default.
+-- Changing the embedding model requires a new migration (dimension is fixed per
+-- column). If multiple models must coexist, split per-model tables/columns.
 CREATE TABLE rm_memory_vec (
   id           TEXT        NOT NULL,
   tenant_id    TEXT        NOT NULL,
@@ -55,15 +60,31 @@ CREATE TABLE rm_memory_vec (
   PRIMARY KEY (id)
 );
 
+-- All read models enforce tenant isolation in-DB (USING gates reads,
+-- WITH CHECK gates projector writes).
 ALTER TABLE rm_tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rm_tasks FORCE ROW LEVEL SECURITY;
 CREATE POLICY rm_tasks_tenant_isolation ON rm_tasks
-  USING (tenant_id = current_setting('app.tenant_id', true));
+  USING (tenant_id = current_setting('app.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
+
+ALTER TABLE rm_timeline ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rm_timeline FORCE ROW LEVEL SECURITY;
+CREATE POLICY rm_timeline_tenant_isolation ON rm_timeline
+  USING (tenant_id = current_setting('app.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
+
+ALTER TABLE rm_artifacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rm_artifacts FORCE ROW LEVEL SECURITY;
+CREATE POLICY rm_artifacts_tenant_isolation ON rm_artifacts
+  USING (tenant_id = current_setting('app.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 
 ALTER TABLE rm_memory_vec ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rm_memory_vec FORCE ROW LEVEL SECURITY;
 CREATE POLICY rm_memory_vec_tenant_isolation ON rm_memory_vec
-  USING (tenant_id = current_setting('app.tenant_id', true));
+  USING (tenant_id = current_setting('app.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 
 -- +goose StatementEnd
 

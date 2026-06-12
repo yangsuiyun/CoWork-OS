@@ -87,6 +87,10 @@ paths:
         (workspaceIds, types) and a resume cursor. Server pushes CommittedEvent
         frames, fan-out across gateway replicas via PubSub. On reconnect the
         client resumes from its persisted cursor (idempotent, at-least-once).
+        Token refresh: the short-lived JWT may expire mid-connection; the client
+        sends a `reauth` control frame with a fresh token before expiry, and the
+        server closes the socket (4401) if no valid token is presented in time,
+        prompting the client to reconnect-and-resume.
         Not a plain HTTP GET; expressed here for documentation only.
       parameters:
         - { name: cursor, in: query, required: false, schema: { $ref: '#/components/schemas/Cursor' } }

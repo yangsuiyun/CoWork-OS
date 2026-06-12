@@ -42,18 +42,39 @@ CREATE TABLE consumer_offset (
   PRIMARY KEY (consumer)
 );
 
+-- Command idempotency: dedup safe client retries and saga requestIds (spec 10).
+-- The command handler checks/records the key in the SAME transaction as append,
+-- so a retried command returns the prior result instead of re-executing.
+CREATE TABLE processed_command (
+  tenant_id       TEXT        NOT NULL,
+  idempotency_key TEXT        NOT NULL,
+  command_type    TEXT        NOT NULL,
+  result_seqs     BIGINT[]    NOT NULL,                 -- global_seqs produced by the original run
+  processed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, idempotency_key)
+);
+ALTER TABLE processed_command ENABLE ROW LEVEL SECURITY;
+ALTER TABLE processed_command FORCE ROW LEVEL SECURITY;
+CREATE POLICY processed_command_tenant_isolation ON processed_command
+  USING (tenant_id = current_setting('app.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
+
 -- Row-level security: tenant isolation enforced in DB (spec 11.0).
 -- The kernel sets `SET LOCAL app.tenant_id = '<tenant>'` per request transaction;
 -- a missing/empty setting matches nothing (default-deny, never full-table).
+-- USING gates reads; WITH CHECK gates appends (explicit, not relying on the
+-- implicit USING-as-check fallback).
 ALTER TABLE event_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE event_log FORCE ROW LEVEL SECURITY;
 CREATE POLICY event_log_tenant_isolation ON event_log
-  USING (tenant_id = current_setting('app.tenant_id', true));
+  USING (tenant_id = current_setting('app.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
+DROP TABLE IF EXISTS processed_command;
 DROP TABLE IF EXISTS consumer_offset;
 DROP TABLE IF EXISTS outbox;
 DROP SEQUENCE IF EXISTS event_global_seq;
