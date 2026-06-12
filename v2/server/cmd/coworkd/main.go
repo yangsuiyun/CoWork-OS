@@ -37,6 +37,13 @@ func main() {
 	}
 	defer pool.Close()
 
+	projPool, err := pgxpool.New(ctx, cfg.ProjectorDatabaseURL)
+	if err != nil {
+		logger.Error("projector db pool init failed", "err", err)
+		os.Exit(1)
+	}
+	defer projPool.Close()
+
 	e := echo.New()
 	e.HideBanner = true
 	e.Use(middleware.Recover())
@@ -56,7 +63,7 @@ func main() {
 
 	projCtx, projCancel := context.WithCancel(ctx)
 	defer projCancel()
-	go projector.New(pool).Run(projCtx, 500*time.Millisecond)
+	go projector.New(projPool).Run(projCtx, 500*time.Millisecond)
 
 	go func() {
 		if err := e.Start(cfg.Addr); err != nil && !errors.Is(err, http.ErrServerClosed) {

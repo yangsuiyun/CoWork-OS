@@ -18,13 +18,22 @@ func setup(t *testing.T) (*pgxpool.Pool, *app.Service, *projector.Projector, con
 	if dsn == "" {
 		t.Skip("COWORK_DATABASE_URL not set; skipping integration test")
 	}
+	projDSN := os.Getenv("COWORK_PROJECTOR_DATABASE_URL")
+	if projDSN == "" {
+		projDSN = dsn
+	}
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	return pool, app.New(pool), projector.New(pool), ctx
+	projPool, err := pgxpool.New(ctx, projDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(projPool.Close)
+	return pool, app.New(pool), projector.New(projPool), ctx
 }
 
 // readTask reads a single task's status from rm_tasks (RLS-scoped to tenant).
@@ -91,4 +100,47 @@ func TestProjectionAndDeterministicRebuild(t *testing.T) {
 	if status3 != status || seq3 != seq {
 		t.Fatalf("rebuild not deterministic: (%s,%d) != (%s,%d)", status3, seq3, status, seq)
 	}
+}
+
+// TestTenantIsolation proves RLS: a task created under tenant A is invisible to
+// a query scoped to tenant B. This only holds when DatabaseURL uses the
+// RLS-scoped cowork_app role (a superuser DSN bypasses RLS and this fails).
+func TestTenantIsolation(t *testing.T) {
+	_, svc, proj, ctx := setup(t)
+	tenantA := fmt.Sprintf("A-%d", os.Getpid())
+	tenantB := fmt.Sprintf("B-%d", os.Getpid())
+	id := fmt.Sprintf("iso-%d", os.Getpid())
+
+	if _, err := svc.Handle(ctx, tenantA, "u", "CreateTask",
+		[]byte(fmt.Sprintf(`{"taskId":%q,"workspaceId":"w","canonicalPrompt":"secret","risk":"low"}`, id))); err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	if _, err := proj.RunOnce(ctx); err != nil {
+		t.Fatalf("project: %v", err)
+	}
+
+	aTasks, err := svc.QueryTasks(ctx, tenantA, 100)
+	if err != nil {
+		t.Fatalf("query A: %v", err)
+	}
+	if !containsTask(aTasks, id) {
+		t.Fatalf("tenant A must see its own task %s", id)
+	}
+
+	bTasks, err := svc.QueryTasks(ctx, tenantB, 100)
+	if err != nil {
+		t.Fatalf("query B: %v", err)
+	}
+	if containsTask(bTasks, id) {
+		t.Fatalf("RLS breach: tenant B can see tenant A's task %s", id)
+	}
+}
+
+func containsTask(tasks []app.TaskView, id string) bool {
+	for _, v := range tasks {
+		if v.ID == id {
+			return true
+		}
+	}
+	return false
 }
