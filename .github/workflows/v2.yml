@@ -1,0 +1,46 @@
+name: v2
+
+on:
+  push:
+    paths:
+      - 'v2/**'
+      - '.github/workflows/v2.yml'
+  pull_request:
+    paths:
+      - 'v2/**'
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Validate contracts (OpenAPI 3.1 + JSON Schema)
+        working-directory: v2
+        run: make contracts-validate
+
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22' }
+      - name: Boundary guard + vet (depguard enforces kernel/cap/adapter DAG)
+        working-directory: v2/server
+        run: |
+          go vet ./...
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+          golangci-lint run ./...
+
+  codegen-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Fail if generated types drift from contracts
+        working-directory: v2
+        run: make codegen-check

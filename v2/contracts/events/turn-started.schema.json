@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/turn-started.schema.json",
+  "title": "TurnStarted",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["taskId", "turnId"],
+  "properties": {
+    "taskId": { "type": "string" },
+    "turnId": { "type": "string" },
+    "inputSummary": { "type": "string" }
+  }
+}

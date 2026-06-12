@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/approval-requested.schema.json",
+  "title": "ApprovalRequested",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["taskId", "approvalId", "kind", "risk"],
+  "properties": {
+    "taskId": { "type": "string" },
+    "approvalId": { "type": "string" },
+    "kind": { "type": "string", "enum": ["tool", "data_export", "shell", "fs_write", "net"] },
+    "risk": { "type": "string", "enum": ["low", "medium", "high"] },
+    "context": { "type": "object", "description": "What is being requested (resource, scope, preview)." }
+  }
+}

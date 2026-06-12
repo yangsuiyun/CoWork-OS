@@ -1,0 +1,52 @@
+# Event catalog: the authoritative index of event types.
+# Each entry maps an event type to its payload schema, current version, the
+# command that produces it, and the aggregate stream it belongs to.
+# Contract tests assert that every command produces a catalogued event and that
+# every events/*.schema.json file is listed here (no orphans).
+
+version: 0.1.0
+
+aggregates:
+  task:
+    streamPrefix: "task:"
+    events:
+      - type: TaskCreated
+        schemaVer: 1
+        schema: events/task-created.schema.json
+        producedBy: CreateTask
+      - type: TaskPlanned
+        schemaVer: 1
+        schema: events/task-planned.schema.json
+        producedBy: PlanTask
+      - type: TurnStarted
+        schemaVer: 1
+        schema: events/turn-started.schema.json
+        producedBy: StartTurn
+      - type: TurnCompleted
+        schemaVer: 1
+        schema: events/turn-completed.schema.json
+        producedBy: StartTurn
+      - type: ApprovalRequested
+        schemaVer: 1
+        schema: events/approval-requested.schema.json
+        producedBy: RequestApproval
+      - type: ApprovalResolved
+        schemaVer: 1
+        schema: events/approval-resolved.schema.json
+        producedBy: ResolveApproval
+      - type: ArtifactCreated
+        schemaVer: 1
+        schema: events/artifact-created.schema.json
+        producedBy: AppendArtifact
+      - type: TaskCompleted
+        schemaVer: 1
+        schema: events/task-completed.schema.json
+        producedBy: CompleteTask
+      - type: TaskFailed
+        schemaVer: 1
+        schema: events/task-failed.schema.json
+        producedBy: FailTask
+      - type: TaskCancelled
+        schemaVer: 1
+        schema: events/task-cancelled.schema.json
+        producedBy: CancelTask

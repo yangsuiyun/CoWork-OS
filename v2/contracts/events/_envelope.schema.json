@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/_envelope.schema.json",
+  "title": "CommittedEventEnvelope",
+  "description": "Transport/storage envelope for every committed event. The `payload` is validated separately against the schema named by `type`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["globalSeq", "tenantId", "streamId", "streamSeq", "type", "schemaVer", "payload", "actor", "occurredAt"],
+  "properties": {
+    "globalSeq": {
+      "type": "integer",
+      "description": "Per-shard monotonic VISIBLE sequence assigned at commit (see spec 8.1). Cross-stream ordering holds only within a shard."
+    },
+    "tenantId": { "type": "string" },
+    "streamId": { "type": "string", "description": "Aggregate instance id, e.g. task:<uuid>" },
+    "streamSeq": { "type": "integer", "description": "Per-stream sequence; basis of optimistic concurrency via UNIQUE(stream_id, stream_seq)." },
+    "type": { "type": "string", "description": "Event type, must match a catalog entry." },
+    "schemaVer": { "type": "integer", "minimum": 1 },
+    "payload": { "type": "object" },
+    "actor": { "type": "string", "description": "Who caused this event (user/agent/system id)." },
+    "correlationId": { "type": ["string", "null"] },
+    "causationId": { "type": ["string", "null"] },
+    "occurredAt": { "type": "string", "format": "date-time" }
+  }
+}

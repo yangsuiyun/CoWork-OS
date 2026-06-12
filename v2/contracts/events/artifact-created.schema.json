@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/artifact-created.schema.json",
+  "title": "ArtifactCreated",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId", "taskId", "path", "sha256", "mime", "size"],
+  "properties": {
+    "artifactId": { "type": "string" },
+    "taskId": { "type": "string" },
+    "path": { "type": "string" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "mime": { "type": "string" },
+    "size": { "type": "integer", "minimum": 0 }
+  }
+}

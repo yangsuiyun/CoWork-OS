@@ -1,0 +1,30 @@
+# Architectural boundary enforcement (spec P1/P4).
+# Go's internal/ only blocks imports from OUTSIDE the module; it does NOT stop
+# internal/cap from importing internal/kernel internals. depguard enforces the
+# DAG: kernel (lowest) <- cap <- adapter. Lower layers must not import upper.
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - depguard
+
+linters-settings:
+  depguard:
+    rules:
+      kernel-no-upward:
+        list-mode: lax
+        files:
+          - "**/internal/kernel/**"
+        deny:
+          - pkg: "github.com/coworkos/cowork-os/v2/server/internal/cap"
+            desc: "kernel must not import user-space cap (P1: stable kernel, volatile capabilities)"
+          - pkg: "github.com/coworkos/cowork-os/v2/server/internal/adapter"
+            desc: "kernel must not import adapters (P4/P5: anti-corruption is a boundary, not a dependency of the core)"
+      cap-no-adapter:
+        list-mode: lax
+        files:
+          - "**/internal/cap/**"
+        deny:
+          - pkg: "github.com/coworkos/cowork-os/v2/server/internal/adapter"
+            desc: "cap must not depend on adapters; cross boundaries via the kernel event bus / repository interfaces"

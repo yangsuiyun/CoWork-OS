@@ -1,0 +1,57 @@
+# Permission rule matrix (M0 deliverable).
+# Evaluated by the deterministic hook pipeline (spec 11.2) in this order:
+#   1. PreHooks  -> may deny/transform only (never grants a skip)
+#   2. Capability.check -> MUST pass; never skippable
+#   3. PermissionRules.match (this file) -> allow | deny | ask
+#   4. uncoverable set -> always deny regardless of mode/fallback
+# Each rule has a rule-level unit test (spec 17). Keep this list exhaustive.
+
+version: 0.1.0
+
+# Rules that can NEVER be overridden by mode, fallback, or an allow hook.
+# Matching any of these forces a hard deny (capability is non-revocable=false).
+uncoverable:
+  - id: U1
+    description: Explicit user/admin deny rule.
+    match: { decision: deny, source: explicit }
+  - id: U2
+    description: Hard guardrail on destructive filesystem ops outside scope.
+    match: { resource: "fs.write", outsideScope: true }
+  - id: U3
+    description: Raw shell without a granted shell capability.
+    match: { resource: "shell", capability: absent }
+  - id: U4
+    description: data_export always requires approval and audit; never auto-allowed.
+    match: { resource: "data_export" }
+    forced: ask
+
+# Ordered allow/deny/ask rules; first match wins.
+rules:
+  - id: R1
+    description: Read within workspace scope is allowed.
+    when: { resource: "fs.read", inScope: true }
+    decision: allow
+  - id: R2
+    description: Write within scope and risk<=low is allowed.
+    when: { resource: "fs.write", inScope: true, riskAtMost: low }
+    decision: allow
+  - id: R3
+    description: Write within scope at medium/high risk asks for approval.
+    when: { resource: "fs.write", inScope: true, riskAtLeast: medium }
+    decision: ask
+  - id: R4
+    description: Network egress to allow-listed domains is allowed.
+    when: { resource: "net", domainAllowListed: true }
+    decision: allow
+  - id: R5
+    description: Network egress to non-listed domains asks.
+    when: { resource: "net", domainAllowListed: false }
+    decision: ask
+  - id: R6
+    description: Tool calls require a matching tool:<name> capability.
+    when: { resourcePrefix: "tool:", capability: present }
+    decision: allow
+  - id: R7
+    description: Default for anything unmatched.
+    when: { default: true }
+    decision: deny

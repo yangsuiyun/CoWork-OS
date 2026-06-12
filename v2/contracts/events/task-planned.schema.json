@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/task-planned.schema.json",
+  "title": "TaskPlanned",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["taskId", "plan"],
+  "properties": {
+    "taskId": { "type": "string" },
+    "plan": {
+      "type": "array",
+      "description": "Ordered plan steps the agent intends to execute.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stepId", "summary"],
+        "properties": {
+          "stepId": { "type": "string" },
+          "summary": { "type": "string" }
+        }
+      }
+    }
+  }
+}

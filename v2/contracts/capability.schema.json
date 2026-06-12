@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/capability.schema.json",
+  "title": "Capability",
+  "description": "Capability token claims. Issued by the kernel CapabilityIssuer at minimal scope; verified at tool-execution time. The token carrier is a server-signed envelope; revocation is enforced by checking tokenId/version at use-time (see spec 11.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tokenId", "version", "subject", "resource", "scope", "revocable"],
+  "properties": {
+    "tokenId": { "type": "string", "description": "Unique id; checked against the revocation store on every use." },
+    "version": { "type": "integer", "minimum": 1, "description": "Monotonic; bumped on re-issue, validated at use-time." },
+    "subject": { "type": "string", "description": "TaskId or AgentId this capability is bound to." },
+    "resource": {
+      "type": "string",
+      "description": "Resource class. tool:<name> is a parameterized form.",
+      "pattern": "^(fs\\.read|fs\\.write|net|shell|data_export|tool:[a-zA-Z0-9_.-]+)$"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceId"],
+      "properties": {
+        "workspaceId": { "type": "string" },
+        "paths": { "type": "array", "items": { "type": "string" }, "description": "Glob allow-list for fs.* resources." },
+        "domains": { "type": "array", "items": { "type": "string" }, "description": "Host allow-list for net." },
+        "deviceId": { "type": ["string", "null"], "description": "When bound to a specific Local Agent Runner device." }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxCalls": { "type": "integer", "minimum": 1 },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "revocable": {
+      "type": "boolean",
+      "description": "false means a hard-deny capability that can never be minted (uncoverable set)."
+    }
+  }
+}

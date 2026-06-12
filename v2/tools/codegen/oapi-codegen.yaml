@@ -1,0 +1,9 @@
+# oapi-codegen config: OpenAPI -> Go server types (ADR-02).
+package: contracts
+output: ../../server/pkg/contracts/openapi_gen.go
+generate:
+  models: true
+  echo-server: true
+  strict-server: true
+output-options:
+  skip-prune: false

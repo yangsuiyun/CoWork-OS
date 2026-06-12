@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/task-created.schema.json",
+  "title": "TaskCreated",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["taskId", "workspaceId", "origin", "canonicalPrompt", "risk"],
+  "properties": {
+    "taskId": { "type": "string" },
+    "workspaceId": { "type": "string" },
+    "parentTaskId": { "type": ["string", "null"] },
+    "origin": { "type": "string", "enum": ["manual", "cron", "hook", "api", "channel"] },
+    "canonicalPrompt": { "type": "string", "description": "Immutable once created (INV-1)." },
+    "risk": { "type": "string", "enum": ["low", "medium", "high"] },
+    "agentConfigRef": { "type": ["string", "null"] }
+  }
+}

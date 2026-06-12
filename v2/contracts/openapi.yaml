@@ -1,0 +1,248 @@
+openapi: 3.1.0
+info:
+  title: CoWork OS API
+  version: 0.1.0
+  description: >
+    Single source of truth for client <-> server contracts (ADR-02, Contract-First).
+    Commands and queries go over HTTP; the realtime event stream uses WebSocket
+    (documented under /v1/stream, not fully expressible in OpenAPI).
+    Go and TypeScript types are codegen'd from this file plus the event JSON
+    Schemas under contracts/events/. Do not hand-write these types.
+servers:
+  - url: /
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/commands:
+    post:
+      operationId: dispatchCommand
+      summary: Dispatch a command (the only write path into the kernel)
+      description: >
+        All state changes go through commands. The kernel validates invariants
+        in a single Postgres transaction and appends events. Returns the
+        committed events, or a typed DomainError (fail-fast, no silent nulls).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Command'
+      responses:
+        '200':
+          description: Command accepted; events committed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CommittedEvent'
+        '409':
+          description: Optimistic concurrency conflict; reload and retry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainError' }
+        '422':
+          description: Domain invariant violated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainError' }
+        '403':
+          description: AuthZ / capability denied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainError' }
+
+  /v1/query/{name}:
+    get:
+      operationId: runQuery
+      summary: Read-only projection query (never returns mutable domain objects)
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+        - { name: cursor, in: query, required: false, schema: { $ref: '#/components/schemas/Cursor' } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+      responses:
+        '200':
+          description: Read model page, filtered by identity/tenant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadModelPage' }
+        '404':
+          description: Unknown query name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainError' }
+
+  /v1/stream:
+    get:
+      operationId: subscribeStream
+      summary: 'WebSocket event stream (Upgrade required; see description)'
+      description: >
+        WebSocket endpoint. Client connects with Bearer token, sends a filter
+        (workspaceIds, types) and a resume cursor. Server pushes CommittedEvent
+        frames, fan-out across gateway replicas via PubSub. On reconnect the
+        client resumes from its persisted cursor (idempotent, at-least-once).
+        Not a plain HTTP GET; expressed here for documentation only.
+      parameters:
+        - { name: cursor, in: query, required: false, schema: { $ref: '#/components/schemas/Cursor' } }
+      responses:
+        '101':
+          description: Switching Protocols (WebSocket).
+
+  /v1/sessions:
+    post:
+      operationId: createManagedSession
+      summary: External programmatic API - create a durable run (maps to Task/AgentTeamRun)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt: { type: string }
+                workspaceId: { type: string }
+                budget: { $ref: '#/components/schemas/Budget' }
+      responses:
+        '201':
+          description: Session created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedSession' }
+
+  /v1/sessions/{id}:
+    get:
+      operationId: getManagedSession
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Session state (read-model projection).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedSession' }
+
+  /v1/sessions/{id}/events:
+    get:
+      operationId: streamManagedSessionEvents
+      summary: SSE event stream for a managed session
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: text/event-stream of CommittedEvent.
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /v1/sessions/{id}/cancel:
+    post:
+      operationId: cancelManagedSession
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Cancel command accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/CommittedEvent' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Cursor:
+      description: Opaque resume position; encodes the per-shard monotonic visible global_seq.
+      type: string
+
+    Command:
+      type: object
+      required: [type, payload]
+      properties:
+        type:
+          type: string
+          description: Command name, e.g. CreateTask, StartTurn, ResolveApproval.
+        payload:
+          type: object
+          description: Command-specific fields (validated against the command schema).
+          additionalProperties: true
+        idempotencyKey:
+          type: string
+          description: Dedup key for safe client retries.
+        expectedStreamSeq:
+          type: integer
+          format: int64
+          description: Optimistic concurrency guard; reject if the stream advanced.
+
+    CommittedEvent:
+      description: >
+        Event envelope as appended to event_log. The payload conforms to the
+        JSON Schema named by `type` under contracts/events/.
+      type: object
+      required: [globalSeq, tenantId, streamId, streamSeq, type, schemaVer, payload, actor, occurredAt]
+      properties:
+        globalSeq: { type: integer, format: int64 }
+        tenantId: { type: string }
+        streamId: { type: string, description: 'Aggregate instance, e.g. task:<id>' }
+        streamSeq: { type: integer, format: int64 }
+        type: { type: string }
+        schemaVer: { type: integer }
+        payload: { type: object, additionalProperties: true }
+        actor: { type: string }
+        correlationId: { type: string }
+        causationId: { type: string }
+        occurredAt: { type: string, format: date-time }
+
+    DomainError:
+      description: Typed, fail-fast error. One handling site per error class.
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine code, e.g. concurrency_conflict, invariant_violated, capability_denied.
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+        correlationId: { type: string }
+
+    ReadModelPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { type: object, additionalProperties: true }
+        nextCursor: { $ref: '#/components/schemas/Cursor' }
+
+    Budget:
+      type: object
+      properties:
+        maxTokens: { type: integer }
+        maxCostUsd: { type: number }
+        maxWallClockSec: { type: integer }
+
+    ManagedSession:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string }
+        taskId: { type: string }
+        status:
+          type: string
+          enum: [pending, running, awaiting_approval, completed, failed, cancelled]
+        result: { type: object, additionalProperties: true }

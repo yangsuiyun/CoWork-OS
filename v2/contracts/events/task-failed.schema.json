@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/task-failed.schema.json",
+  "title": "TaskFailed",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["taskId", "errorCode", "message"],
+  "properties": {
+    "taskId": { "type": "string" },
+    "errorCode": { "type": "string", "description": "Typed error class (fail-fast, spec P6)." },
+    "message": { "type": "string" },
+    "compensating": { "type": "boolean", "description": "True if a saga compensation was emitted instead of rollback." }
+  }
+}

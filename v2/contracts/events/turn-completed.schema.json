@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/turn-completed.schema.json",
+  "title": "TurnCompleted",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["taskId", "turnId", "outcome"],
+  "properties": {
+    "taskId": { "type": "string" },
+    "turnId": { "type": "string" },
+    "outcome": { "type": "string", "enum": ["ok", "needs_approval", "error"] },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tokens": { "type": "integer" },
+        "costUsd": { "type": "number" },
+        "wallClockMs": { "type": "integer" }
+      }
+    }
+  }
+}

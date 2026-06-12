@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/approval-resolved.schema.json",
+  "title": "ApprovalResolved",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["taskId", "approvalId", "decision", "resolvedBy"],
+  "properties": {
+    "taskId": { "type": "string" },
+    "approvalId": { "type": "string" },
+    "decision": { "type": "string", "enum": ["approve", "reject"] },
+    "resolvedBy": { "type": "string", "description": "Human actor id (P7: human in the loop)." },
+    "reason": { "type": "string" }
+  }
+}

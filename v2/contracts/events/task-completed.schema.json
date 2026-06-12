@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/task-completed.schema.json",
+  "title": "TaskCompleted",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["taskId"],
+  "properties": {
+    "taskId": { "type": "string" },
+    "result": { "type": "object", "description": "Final structured result." },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tokens": { "type": "integer" },
+        "costUsd": { "type": "number" },
+        "wallClockMs": { "type": "integer" }
+      }
+    }
+  }
+}
