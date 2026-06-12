@@ -14,6 +14,7 @@ import (
 	httpapi "github.com/coworkos/cowork-os/v2/server/internal/adapter/http"
 	"github.com/coworkos/cowork-os/v2/server/internal/config"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/app"
+	"github.com/coworkos/cowork-os/v2/server/internal/kernel/projector"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -52,6 +53,10 @@ func main() {
 	})
 
 	httpapi.Register(e, app.New(pool), cfg.JWTSecret)
+
+	projCtx, projCancel := context.WithCancel(ctx)
+	defer projCancel()
+	go projector.New(pool).Run(projCtx, 500*time.Millisecond)
 
 	go func() {
 		if err := e.Start(cfg.Addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
