@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/permissions-changed.schema.json",
+  "title": "PermissionsChanged",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspaceId", "version", "permissions"],
+  "properties": {
+    "workspaceId": { "type": "string" },
+    "version": { "type": "integer", "description": "Monotonic permissions version (capability-first, spec 7.2)." },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "paths": { "type": "array", "items": { "type": "string" } },
+        "domains": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

@@ -431,6 +431,49 @@ func (j *EnvelopeSchemaJson) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+type PermissionsChangedSchemaJson struct {
+	// Permissions corresponds to the JSON schema field "permissions".
+	Permissions PermissionsChangedSchemaJsonPermissions `json:"permissions" yaml:"permissions" mapstructure:"permissions"`
+
+	// Monotonic permissions version (capability-first, spec 7.2).
+	Version int `json:"version" yaml:"version" mapstructure:"version"`
+
+	// WorkspaceId corresponds to the JSON schema field "workspaceId".
+	WorkspaceId string `json:"workspaceId" yaml:"workspaceId" mapstructure:"workspaceId"`
+}
+
+type PermissionsChangedSchemaJsonPermissions struct {
+	// Domains corresponds to the JSON schema field "domains".
+	Domains []string `json:"domains,omitempty" yaml:"domains,omitempty" mapstructure:"domains,omitempty"`
+
+	// Paths corresponds to the JSON schema field "paths".
+	Paths []string `json:"paths,omitempty" yaml:"paths,omitempty" mapstructure:"paths,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *PermissionsChangedSchemaJson) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["permissions"]; raw != nil && !ok {
+		return fmt.Errorf("field permissions in PermissionsChangedSchemaJson: required")
+	}
+	if _, ok := raw["version"]; raw != nil && !ok {
+		return fmt.Errorf("field version in PermissionsChangedSchemaJson: required")
+	}
+	if _, ok := raw["workspaceId"]; raw != nil && !ok {
+		return fmt.Errorf("field workspaceId in PermissionsChangedSchemaJson: required")
+	}
+	type Plain PermissionsChangedSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = PermissionsChangedSchemaJson(plain)
+	return nil
+}
+
 type TaskCancelledSchemaJson struct {
 	// CancelledBy corresponds to the JSON schema field "cancelledBy".
 	CancelledBy string `json:"cancelledBy" yaml:"cancelledBy" mapstructure:"cancelledBy"`
@@ -833,5 +876,34 @@ func (j *TurnStartedSchemaJson) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*j = TurnStartedSchemaJson(plain)
+	return nil
+}
+
+type WorkspaceCreatedSchemaJson struct {
+	// Name corresponds to the JSON schema field "name".
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
+
+	// WorkspaceId corresponds to the JSON schema field "workspaceId".
+	WorkspaceId string `json:"workspaceId" yaml:"workspaceId" mapstructure:"workspaceId"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *WorkspaceCreatedSchemaJson) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in WorkspaceCreatedSchemaJson: required")
+	}
+	if _, ok := raw["workspaceId"]; raw != nil && !ok {
+		return fmt.Errorf("field workspaceId in WorkspaceCreatedSchemaJson: required")
+	}
+	type Plain WorkspaceCreatedSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = WorkspaceCreatedSchemaJson(plain)
 	return nil
 }
