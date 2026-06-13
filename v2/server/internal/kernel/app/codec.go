@@ -17,6 +17,58 @@ var ErrUnknownCommand = errors.New("app: unknown command type")
 
 func streamID(taskID string) string { return "task:" + taskID }
 
+// reduceFn replays an aggregate's history and decides the events to append.
+// It captures the decoded command + actor, keeping Service aggregate-agnostic.
+type reduceFn func(history []events.Committed) ([]events.ToAppend, error)
+
+// planCommand routes a wire command to its owning aggregate, returning the
+// target stream and a reducer. New aggregates add a case here only.
+func planCommand(cmdType, actor string, payload []byte) (string, reduceFn, error) {
+	switch cmdType {
+	case "CreateWorkspace", "UpdatePermissions":
+		cmd, stream, err := decodeWorkspaceCommand(cmdType, payload)
+		if err != nil {
+			return "", nil, err
+		}
+		return stream, func(h []events.Committed) ([]events.ToAppend, error) {
+			return workspaceReduce(cmd, actor, h)
+		}, nil
+	default:
+		cmd, stream, err := decodeCommand(cmdType, payload)
+		if err != nil {
+			return "", nil, err
+		}
+		return stream, func(h []events.Committed) ([]events.ToAppend, error) {
+			return taskReduce(cmd, actor, h)
+		}, nil
+	}
+}
+
+// taskReduce replays the Task history, decides, and encodes new events.
+func taskReduce(cmd task.Command, actor string, history []events.Committed) ([]events.ToAppend, error) {
+	domainHist := make([]task.Event, 0, len(history))
+	for _, c := range history {
+		de, err := committedToEvent(c)
+		if err != nil {
+			return nil, err
+		}
+		domainHist = append(domainHist, de)
+	}
+	newEvents, err := task.Load(domainHist).Decide(cmd) // fail-fast
+	if err != nil {
+		return nil, err
+	}
+	out := make([]events.ToAppend, 0, len(newEvents))
+	for _, e := range newEvents {
+		ta, err := eventToAppend(e, actor, nil)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ta)
+	}
+	return out, nil
+}
+
 // decodeCommand maps a wire command (type + JSON payload) to a domain command
 // and its target stream. This is the boundary between contract JSON (camelCase)
 // and the domain types; PI-7 codegen will replace the hand-written DTOs.

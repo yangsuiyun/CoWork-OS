@@ -11,6 +11,7 @@ import (
 
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/events"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/task"
+	"github.com/coworkos/cowork-os/v2/server/internal/kernel/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -34,7 +35,7 @@ func New(pool *pgxpool.Pool) *Service {
 // Handle processes a command end-to-end: load stream -> rebuild aggregate ->
 // decide (invariants) -> append events + outbox, all in one tenant tx.
 func (s *Service) Handle(ctx context.Context, tenant, actor, cmdType string, payload []byte) ([]events.Committed, error) {
-	cmd, stream, err := decodeCommand(cmdType, payload)
+	stream, reduce, err := planCommand(cmdType, actor, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -45,28 +46,11 @@ func (s *Service) Handle(ctx context.Context, tenant, actor, cmdType string, pay
 		if err != nil {
 			return err
 		}
-		domainHist := make([]task.Event, 0, len(history))
-		for _, c := range history {
-			de, err := committedToEvent(c)
-			if err != nil {
-				return err
-			}
-			domainHist = append(domainHist, de)
-		}
-
-		agg := task.Load(domainHist)
-		newEvents, err := agg.Decide(cmd) // domain error propagates (fail-fast)
+		// The reducer replays the aggregate's history and decides new events
+		// (per-aggregate, fail-fast). The service stays aggregate-agnostic.
+		toAppend, err := reduce(history)
 		if err != nil {
 			return err
-		}
-
-		toAppend := make([]events.ToAppend, 0, len(newEvents))
-		for _, e := range newEvents {
-			ta, err := eventToAppend(e, actor, nil)
-			if err != nil {
-				return err
-			}
-			toAppend = append(toAppend, ta)
 		}
 
 		var expectedSeq int64
@@ -150,6 +134,38 @@ func (s *Service) QueryTasks(ctx context.Context, tenant string, limit int) ([]T
 	return out, err
 }
 
+// WorkspaceView is a read-model row for the Workspace aggregate.
+type WorkspaceView struct {
+	ID                 string         `json:"id"`
+	Name               string         `json:"name"`
+	Permissions        map[string]any `json:"permissions"`
+	PermissionsVersion int            `json:"permissionsVersion"`
+	UpdatedSeq         int64          `json:"updatedSeq"`
+}
+
+// QueryWorkspaces returns the tenant's workspaces from the read model.
+func (s *Service) QueryWorkspaces(ctx context.Context, tenant string, limit int) ([]WorkspaceView, error) {
+	var out []WorkspaceView
+	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT id, name, permissions, permissions_version, updated_seq
+			FROM rm_workspaces ORDER BY updated_seq DESC LIMIT $1`, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var v WorkspaceView
+			if err := rows.Scan(&v.ID, &v.Name, &v.Permissions, &v.PermissionsVersion, &v.UpdatedSeq); err != nil {
+				return err
+			}
+			out = append(out, v)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // QueryTask returns a single task view by id, or found=false if absent.
 func (s *Service) QueryTask(ctx context.Context, tenant, id string) (TaskView, bool, error) {
 	var v TaskView
@@ -182,7 +198,9 @@ func ErrorCode(err error) (code string, category string) {
 	case errors.Is(err, task.ErrAlreadyExists),
 		errors.Is(err, task.ErrNotFound),
 		errors.Is(err, task.ErrTerminal),
-		errors.Is(err, task.ErrNoParent):
+		errors.Is(err, task.ErrNoParent),
+		errors.Is(err, workspace.ErrAlreadyExists),
+		errors.Is(err, workspace.ErrNotFound):
 		return "invariant_violated", "unprocessable"
 	default:
 		return "internal", "internal"
