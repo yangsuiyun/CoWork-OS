@@ -15,6 +15,7 @@ import (
 	"github.com/coworkos/cowork-os/v2/server/internal/config"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/app"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/projector"
+	"github.com/coworkos/cowork-os/v2/server/internal/realtime"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -59,11 +60,17 @@ func main() {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	httpapi.Register(e, app.New(pool), cfg.JWTSecret)
+	hub := realtime.NewHub(pool)
+	httpapi.Register(e, app.New(pool), hub, cfg.JWTSecret)
 
-	projCtx, projCancel := context.WithCancel(ctx)
-	defer projCancel()
-	go projector.New(projPool).Run(projCtx, 500*time.Millisecond)
+	bgCtx, bgCancel := context.WithCancel(ctx)
+	defer bgCancel()
+	go projector.New(projPool).Run(bgCtx, 500*time.Millisecond)
+	go func() {
+		if err := hub.Run(bgCtx); err != nil && bgCtx.Err() == nil {
+			logger.Error("realtime hub stopped", "err", err)
+		}
+	}()
 
 	go func() {
 		if err := e.Start(cfg.Addr); err != nil && !errors.Is(err, http.ErrServerClosed) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/app"
+	"github.com/coworkos/cowork-os/v2/server/internal/realtime"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
@@ -43,7 +44,7 @@ func newServer(t *testing.T) (*echo.Echo, string) {
 	}
 	t.Cleanup(pool.Close)
 	e := echo.New()
-	Register(e, app.New(pool), testSecret)
+	Register(e, app.New(pool), realtime.NewHub(pool), testSecret)
 	return e, token(t, fmt.Sprintf("tenant-%d", time.Now().UnixNano()), "user-1")
 }
 

@@ -7,12 +7,18 @@ package app
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/events"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/task"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// NotifyChannel is the Postgres LISTEN/NOTIFY channel for committed events.
+// The payload is the highest global_seq of the batch; listeners re-query their
+// own tenant's events since their cursor (spec realtime fan-out).
+const NotifyChannel = "cowork_events"
 
 // Service handles commands and queries against the kernel.
 type Service struct {
@@ -68,12 +74,45 @@ func (s *Service) Handle(ctx context.Context, tenant, actor, cmdType string, pay
 			expectedSeq = history[n-1].StreamSeq
 		}
 		committed, err = s.store.Append(ctx, tx, tenant, stream, expectedSeq, toAppend)
+		if err != nil {
+			return err
+		}
+		// Transactional NOTIFY: delivered on commit, wakes WS fan-out.
+		if n := len(committed); n > 0 {
+			_, err = tx.Exec(ctx, "SELECT pg_notify($1, $2)", NotifyChannel,
+				strconv.FormatInt(committed[n-1].GlobalSeq, 10))
+		}
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return committed, nil
+}
+
+// EventsSince returns the tenant's events with global_seq greater than fromSeq,
+// ordered ascending. RLS scopes the read to the tenant (no cross-tenant leak).
+func (s *Service) EventsSince(ctx context.Context, tenant string, fromSeq int64, limit int) ([]events.Committed, error) {
+	var out []events.Committed
+	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT global_seq, tenant_id, stream_id, stream_seq, type, schema_ver, payload, actor, correlation_id, causation_id, occurred_at
+			FROM event_log WHERE global_seq > $1 ORDER BY global_seq LIMIT $2`, fromSeq, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c events.Committed
+			if err := rows.Scan(&c.GlobalSeq, &c.TenantID, &c.StreamID, &c.StreamSeq, &c.Type, &c.SchemaVer,
+				&c.Payload, &c.Actor, &c.CorrelationID, &c.CausationID, &c.OccurredAt); err != nil {
+				return err
+			}
+			out = append(out, c)
+		}
+		return rows.Err()
+	})
+	return out, err
 }
 
 // TaskView is a read-model row returned by queries.

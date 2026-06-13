@@ -4,29 +4,46 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/app"
+	"github.com/coworkos/cowork-os/v2/server/internal/kernel/events"
+	"github.com/coworkos/cowork-os/v2/server/internal/realtime"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 )
 
-// Register mounts the /v1 command and query routes with auth middleware.
-func Register(e *echo.Echo, svc *app.Service, jwtSecret string) {
+var upgrader = websocket.Upgrader{
+	// Origin checks are enforced upstream (reverse proxy / CORS); the JWT in the
+	// query/header is the actual authorization gate.
+	CheckOrigin: func(*http.Request) bool { return true },
+}
+
+// Register mounts the /v1 command, query, and stream routes with auth.
+func Register(e *echo.Echo, svc *app.Service, hub *realtime.Hub, jwtSecret string) {
 	g := e.Group("/v1", authMiddleware(jwtSecret))
 	g.POST("/commands", dispatchCommand(svc))
 	g.GET("/query/:name", runQuery(svc))
+	g.GET("/stream", streamEvents(svc, hub))
 }
 
 // authMiddleware verifies a short-lived HS256 JWT and extracts tenant/actor.
+// The token comes from the Authorization header, or a ?token= query param as a
+// fallback for browser WebSocket clients (which cannot set custom headers).
 func authMiddleware(secret string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			raw := c.Request().Header.Get("Authorization")
 			tok := strings.TrimPrefix(raw, "Bearer ")
 			if tok == raw || tok == "" {
+				tok = c.QueryParam("token")
+			}
+			if tok == "" {
 				return echo.NewHTTPError(http.StatusUnauthorized, "missing bearer token")
 			}
 			claims := jwt.MapClaims{}
@@ -80,13 +97,17 @@ func dispatchCommand(svc *app.Service) echo.HandlerFunc {
 
 		out := make([]eventDTO, 0, len(committed))
 		for _, e := range committed {
-			out = append(out, eventDTO{
-				GlobalSeq: e.GlobalSeq, StreamID: e.StreamID, StreamSeq: e.StreamSeq,
-				Type: e.Type, SchemaVer: e.SchemaVer, Payload: json.RawMessage(e.Payload),
-				OccurredAt: e.OccurredAt.Format("2006-01-02T15:04:05.000Z07:00"),
-			})
+			out = append(out, toEventDTO(e))
 		}
 		return c.JSON(http.StatusOK, map[string]any{"events": out})
+	}
+}
+
+func toEventDTO(e events.Committed) eventDTO {
+	return eventDTO{
+		GlobalSeq: e.GlobalSeq, StreamID: e.StreamID, StreamSeq: e.StreamSeq,
+		Type: e.Type, SchemaVer: e.SchemaVer, Payload: json.RawMessage(e.Payload),
+		OccurredAt: e.OccurredAt.Format("2006-01-02T15:04:05.000Z07:00"),
 	}
 }
 
@@ -102,6 +123,70 @@ func runQuery(svc *app.Service) echo.HandlerFunc {
 			return c.JSON(http.StatusOK, map[string]any{"items": items})
 		default:
 			return echo.NewHTTPError(http.StatusNotFound, "unknown query")
+		}
+	}
+}
+
+// streamEvents upgrades to WebSocket and streams the tenant's events from the
+// ?from=<globalSeq> cursor: it backfills missed events, then live-streams as
+// the hub pokes it on each new commit. Reads are RLS-scoped to the tenant.
+func streamEvents(svc *app.Service, hub *realtime.Hub) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		tenant, _ := c.Get("tenant").(string)
+		from, _ := strconv.ParseInt(c.QueryParam("from"), 10, 64)
+
+		ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+		if err != nil {
+			return err
+		}
+		defer ws.Close()
+
+		poke, release := hub.Subscribe()
+		defer release()
+
+		ctx, cancel := context.WithCancel(c.Request().Context())
+		defer cancel()
+		// Detect client close/error by reading; control frames are handled here.
+		go func() {
+			for {
+				if _, _, err := ws.ReadMessage(); err != nil {
+					cancel()
+					return
+				}
+			}
+		}()
+
+		cursor := from
+		drain := func() error {
+			for {
+				evs, err := svc.EventsSince(ctx, tenant, cursor, 200)
+				if err != nil || len(evs) == 0 {
+					return err
+				}
+				for _, e := range evs {
+					if err := ws.WriteJSON(toEventDTO(e)); err != nil {
+						return err
+					}
+					cursor = e.GlobalSeq
+				}
+			}
+		}
+
+		if err := drain(); err != nil {
+			return nil
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case _, ok := <-poke:
+				if !ok {
+					return nil
+				}
+				if err := drain(); err != nil {
+					return nil
+				}
+			}
 		}
 	}
 }
