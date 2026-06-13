@@ -55,6 +55,10 @@ Detailed progress: [`PROGRESS.md`](PROGRESS.md).
   auth/tenant/RLS.
 - **M2** ✅ Capability authorization + Pre/PostToolUse hooks + external
   `/v1/sessions` API + React thin client.
-- **M3** ⏳ Local Agent Runner or cloud sandbox.
-- **M4** 🚧 Orchestration + external agents + self-learning (Workspace aggregate done).
+- **M3** 🚧 Contract layer done: LocalRunnerSession aggregate (register / heartbeat
+  / stale). Runtime (reverse channel vs cloud sandbox) is a separate project
+  pending the spec 20 decision.
+- **M4** 🚧 Orchestration + external agents + self-learning. Workspace, Approval,
+  OrchestrationGraph, and SkillCandidate aggregates done; ExternalAgentSession
+  awaits its runtime.
 - **M5** ⏳ Desktop convergence.
