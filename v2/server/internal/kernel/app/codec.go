@@ -49,6 +49,14 @@ func planCommand(cmdType, actor string, payload []byte) (string, reduceFn, error
 		return stream, func(h []events.Committed) ([]events.ToAppend, error) {
 			return graphReduce(cmd, actor, h)
 		}, nil
+	case "ProposeSkillCandidate", "ApproveSkillCandidate", "RejectSkillCandidate":
+		cmd, stream, err := decodeSkillCandidateCommand(cmdType, payload)
+		if err != nil {
+			return "", nil, err
+		}
+		return stream, func(h []events.Committed) ([]events.ToAppend, error) {
+			return skillCandidateReduce(cmd, actor, h)
+		}, nil
 	default:
 		cmd, stream, err := decodeCommand(cmdType, payload)
 		if err != nil {

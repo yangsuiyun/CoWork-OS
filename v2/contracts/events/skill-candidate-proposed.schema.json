@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/skill-candidate-proposed.schema.json",
+  "title": "SkillCandidateProposed",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidateId", "name"],
+  "properties": {
+    "candidateId": { "type": "string" },
+    "name": { "type": "string", "description": "Proposed skill name (kebab-case)." },
+    "sourceTaskId": { "type": "string", "description": "Task whose reflection produced this candidate (spec 13.2)." },
+    "summary": { "type": "string", "description": "What the candidate skill does." }
+  }
+}

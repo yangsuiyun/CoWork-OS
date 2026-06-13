@@ -119,6 +119,10 @@ func (p *Projector) RunOnce(ctx context.Context) (int, error) {
 			if err := applyToGraph(ctx, tx, r.seq, r.tenant, r.typ, r.payload, r.occurredAt); err != nil {
 				return 0, err
 			}
+		case strings.HasPrefix(r.stream, "skillcandidate:"):
+			if err := applyToSkillCandidates(ctx, tx, r.seq, r.tenant, r.typ, r.payload, r.occurredAt); err != nil {
+				return 0, err
+			}
 		}
 		last = r.seq
 	}
@@ -138,7 +142,7 @@ func (p *Projector) RunOnce(ctx context.Context) (int, error) {
 // Rebuild truncates the task read model, resets the offset, and replays the
 // whole log. Proves the read model is a pure function of the event log.
 func (p *Projector) Rebuild(ctx context.Context) error {
-	if _, err := p.pool.Exec(ctx, "TRUNCATE rm_tasks, rm_timeline, rm_artifacts, rm_workspaces, rm_approvals, rm_graph_nodes"); err != nil {
+	if _, err := p.pool.Exec(ctx, "TRUNCATE rm_tasks, rm_timeline, rm_artifacts, rm_workspaces, rm_approvals, rm_graph_nodes, rm_skill_candidates"); err != nil {
 		return err
 	}
 	if _, err := p.pool.Exec(ctx,
@@ -388,6 +392,59 @@ func applyToGraph(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ string,
 	case "ResultMerged":
 		// Merge is terminal at the graph level; node rows already carry outcomes.
 		// No per-node write needed (the graph aggregate enforces the invariant).
+	}
+	return nil
+}
+
+// applyToSkillCandidates maintains rm_skill_candidates for the SkillCandidate
+// aggregate (Review-First). Proposed seeds a row; publish/reject advance status
+// under a monotonic guard so replays are idempotent.
+func applyToSkillCandidates(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ string, payload []byte, occurredAt time.Time) error {
+	switch typ {
+	case "SkillCandidateProposed":
+		var p struct {
+			CandidateID  string `json:"candidateId"`
+			Name         string `json:"name"`
+			SourceTaskID string `json:"sourceTaskId"`
+			Summary      string `json:"summary"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO rm_skill_candidates (id, tenant_id, name, source_task_id, summary, status, updated_seq, updated_at)
+			VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),'proposed',$6,$7) ON CONFLICT (id) DO NOTHING`,
+			p.CandidateID, tenant, p.Name, p.SourceTaskID, p.Summary, seq, occurredAt); err != nil {
+			return err
+		}
+	case "SkillCandidatePublished":
+		var p struct {
+			CandidateID string `json:"candidateId"`
+			ReviewedBy  string `json:"reviewedBy"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE rm_skill_candidates SET status = 'published', reviewed_by = $2, updated_seq = $3, updated_at = $4
+			WHERE id = $1 AND updated_seq < $3`,
+			p.CandidateID, p.ReviewedBy, seq, occurredAt); err != nil {
+			return err
+		}
+	case "SkillCandidateRejected":
+		var p struct {
+			CandidateID string `json:"candidateId"`
+			ReviewedBy  string `json:"reviewedBy"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE rm_skill_candidates SET status = 'rejected', reviewed_by = $2, updated_seq = $3, updated_at = $4
+			WHERE id = $1 AND updated_seq < $3`,
+			p.CandidateID, p.ReviewedBy, seq, occurredAt); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/approval"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/events"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/graph"
+	"github.com/coworkos/cowork-os/v2/server/internal/kernel/skillcandidate"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/task"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/workspace"
 	"github.com/jackc/pgx/v5"
@@ -238,6 +239,40 @@ func (s *Service) QueryGraphNodes(ctx context.Context, tenant string, limit int)
 	return out, err
 }
 
+// SkillCandidateView is a read-model row for the SkillCandidate aggregate.
+type SkillCandidateView struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	SourceTaskID string `json:"sourceTaskId"`
+	Summary      string `json:"summary"`
+	Status       string `json:"status"`
+	ReviewedBy   string `json:"reviewedBy"`
+	UpdatedSeq   int64  `json:"updatedSeq"`
+}
+
+// QuerySkillCandidates returns the tenant's skill candidates from the read model.
+func (s *Service) QuerySkillCandidates(ctx context.Context, tenant string, limit int) ([]SkillCandidateView, error) {
+	var out []SkillCandidateView
+	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT id, name, COALESCE(source_task_id,''), COALESCE(summary,''), status, COALESCE(reviewed_by,''), updated_seq
+			FROM rm_skill_candidates ORDER BY updated_seq DESC LIMIT $1`, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var v SkillCandidateView
+			if err := rows.Scan(&v.ID, &v.Name, &v.SourceTaskID, &v.Summary, &v.Status, &v.ReviewedBy, &v.UpdatedSeq); err != nil {
+				return err
+			}
+			out = append(out, v)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // QueryTask returns a single task view by id, or found=false if absent.
 func (s *Service) QueryTask(ctx context.Context, tenant, id string) (TaskView, bool, error) {
 	var v TaskView
@@ -281,7 +316,10 @@ func ErrorCode(err error) (code string, category string) {
 		errors.Is(err, graph.ErrNoNode),
 		errors.Is(err, graph.ErrNodeTerminal),
 		errors.Is(err, graph.ErrMerged),
-		errors.Is(err, graph.ErrEmpty):
+		errors.Is(err, graph.ErrEmpty),
+		errors.Is(err, skillcandidate.ErrAlreadyExists),
+		errors.Is(err, skillcandidate.ErrNotFound),
+		errors.Is(err, skillcandidate.ErrReviewed):
 		return "invariant_violated", "unprocessable"
 	default:
 		return "internal", "internal"

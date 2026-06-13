@@ -137,6 +137,12 @@ func runQuery(svc *app.Service) echo.HandlerFunc {
 				return c.JSON(http.StatusInternalServerError, contracts.DomainError{Code: "internal", Message: err.Error()})
 			}
 			return c.JSON(http.StatusOK, contracts.ReadModelPage{Items: toItemMaps(items)})
+		case "skillCandidates":
+			items, err := svc.QuerySkillCandidates(c.Request().Context(), tenant, 50)
+			if err != nil {
+				return c.JSON(http.StatusInternalServerError, contracts.DomainError{Code: "internal", Message: err.Error()})
+			}
+			return c.JSON(http.StatusOK, contracts.ReadModelPage{Items: toItemMaps(items)})
 		default:
 			return echo.NewHTTPError(http.StatusNotFound, "unknown query")
 		}

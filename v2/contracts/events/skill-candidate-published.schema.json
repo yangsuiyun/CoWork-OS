@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/skill-candidate-published.schema.json",
+  "title": "SkillCandidatePublished",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidateId", "reviewedBy"],
+  "properties": {
+    "candidateId": { "type": "string" },
+    "reviewedBy": { "type": "string", "description": "Human reviewer who approved publication (Review-First, spec 13.2)." }
+  }
+}
