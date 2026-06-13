@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strconv"
 
+	"github.com/coworkos/cowork-os/v2/server/internal/kernel/approval"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/events"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/task"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/workspace"
@@ -166,6 +167,40 @@ func (s *Service) QueryWorkspaces(ctx context.Context, tenant string, limit int)
 	return out, err
 }
 
+// ApprovalView is a read-model row for the ApprovalRequest aggregate.
+type ApprovalView struct {
+	ID         string `json:"id"`
+	TaskID     string `json:"taskId"`
+	Kind       string `json:"kind"`
+	Risk       string `json:"risk"`
+	Status     string `json:"status"`
+	ResolvedBy string `json:"resolvedBy"`
+	UpdatedSeq int64  `json:"updatedSeq"`
+}
+
+// QueryApprovals returns the tenant's approvals from the read model.
+func (s *Service) QueryApprovals(ctx context.Context, tenant string, limit int) ([]ApprovalView, error) {
+	var out []ApprovalView
+	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT id, task_id, kind, risk, status, COALESCE(resolved_by,''), updated_seq
+			FROM rm_approvals ORDER BY updated_seq DESC LIMIT $1`, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var v ApprovalView
+			if err := rows.Scan(&v.ID, &v.TaskID, &v.Kind, &v.Risk, &v.Status, &v.ResolvedBy, &v.UpdatedSeq); err != nil {
+				return err
+			}
+			out = append(out, v)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // QueryTask returns a single task view by id, or found=false if absent.
 func (s *Service) QueryTask(ctx context.Context, tenant, id string) (TaskView, bool, error) {
 	var v TaskView
@@ -200,7 +235,10 @@ func ErrorCode(err error) (code string, category string) {
 		errors.Is(err, task.ErrTerminal),
 		errors.Is(err, task.ErrNoParent),
 		errors.Is(err, workspace.ErrAlreadyExists),
-		errors.Is(err, workspace.ErrNotFound):
+		errors.Is(err, workspace.ErrNotFound),
+		errors.Is(err, approval.ErrAlreadyExists),
+		errors.Is(err, approval.ErrNotFound),
+		errors.Is(err, approval.ErrResolved):
 		return "invariant_violated", "unprocessable"
 	default:
 		return "internal", "internal"

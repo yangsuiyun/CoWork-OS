@@ -65,28 +65,6 @@ func TestCanonicalPromptImmutable(t *testing.T) {
 	}
 }
 
-func TestApprovalLifecycle(t *testing.T) {
-	agg := Load([]Event{TaskCreated{TaskID: "1", WorkspaceID: "w", CanonicalPrompt: "p", Risk: "low"}})
-
-	evs, err := agg.Decide(RequestApproval{TaskID: "1", ApprovalID: "a1", Kind: "shell", Risk: "high"})
-	if err != nil {
-		t.Fatalf("request approval: %v", err)
-	}
-	agg.Apply(evs[0])
-	if agg.Status != StatusAwaitingApproval {
-		t.Fatalf("want awaiting_approval, got %s", agg.Status)
-	}
-
-	evs, err = agg.Decide(ResolveApproval{TaskID: "1", ApprovalID: "a1", Decision: "approve", ResolvedBy: "human"})
-	if err != nil {
-		t.Fatalf("resolve approval: %v", err)
-	}
-	agg.Apply(evs[0])
-	if agg.Status != StatusPending {
-		t.Fatalf("want pending after resolve, got %s", agg.Status)
-	}
-}
-
 func TestAppendArtifactKeepsStatus(t *testing.T) {
 	agg := Load([]Event{
 		TaskCreated{TaskID: "1", WorkspaceID: "w", CanonicalPrompt: "p", Risk: "low"},
@@ -102,16 +80,6 @@ func TestAppendArtifactKeepsStatus(t *testing.T) {
 	agg.Apply(evs[0])
 	if agg.Status != StatusPlanned {
 		t.Fatalf("artifact must not change status, got %s", agg.Status)
-	}
-}
-
-func TestApprovalRejectedOnTerminal(t *testing.T) {
-	agg := Load([]Event{
-		TaskCreated{TaskID: "1", CanonicalPrompt: "p", Risk: "low"},
-		TaskCancelled{TaskID: "1"},
-	})
-	if _, err := agg.Decide(RequestApproval{TaskID: "1", ApprovalID: "a1", Kind: "tool", Risk: "low"}); !errors.Is(err, ErrTerminal) {
-		t.Fatalf("expected ErrTerminal, got %v", err)
 	}
 }
 

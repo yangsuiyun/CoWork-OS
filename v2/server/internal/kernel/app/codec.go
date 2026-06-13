@@ -33,6 +33,14 @@ func planCommand(cmdType, actor string, payload []byte) (string, reduceFn, error
 		return stream, func(h []events.Committed) ([]events.ToAppend, error) {
 			return workspaceReduce(cmd, actor, h)
 		}, nil
+	case "RequestApproval", "ApproveApproval", "RejectApproval":
+		cmd, stream, err := decodeApprovalCommand(cmdType, payload)
+		if err != nil {
+			return "", nil, err
+		}
+		return stream, func(h []events.Committed) ([]events.ToAppend, error) {
+			return approvalReduce(cmd, actor, h)
+		}, nil
 	default:
 		cmd, stream, err := decodeCommand(cmdType, payload)
 		if err != nil {
@@ -138,33 +146,6 @@ func decodeCommand(cmdType string, payload []byte) (task.Command, string, error)
 			return nil, "", err
 		}
 		return task.CancelTask{TaskID: p.TaskID, CancelledBy: p.CancelledBy}, streamID(p.TaskID), nil
-	case "RequestApproval":
-		var p struct {
-			TaskID     string         `json:"taskId"`
-			ApprovalID string         `json:"approvalId"`
-			Kind       string         `json:"kind"`
-			Risk       string         `json:"risk"`
-			Context    map[string]any `json:"context"`
-		}
-		if err := json.Unmarshal(payload, &p); err != nil {
-			return nil, "", err
-		}
-		if p.ApprovalID == "" {
-			p.ApprovalID = uuid.NewString()
-		}
-		return task.RequestApproval{TaskID: p.TaskID, ApprovalID: p.ApprovalID, Kind: p.Kind, Risk: p.Risk, Context: p.Context}, streamID(p.TaskID), nil
-	case "ResolveApproval":
-		var p struct {
-			TaskID     string `json:"taskId"`
-			ApprovalID string `json:"approvalId"`
-			Decision   string `json:"decision"`
-			ResolvedBy string `json:"resolvedBy"`
-			Reason     string `json:"reason"`
-		}
-		if err := json.Unmarshal(payload, &p); err != nil {
-			return nil, "", err
-		}
-		return task.ResolveApproval{TaskID: p.TaskID, ApprovalID: p.ApprovalID, Decision: p.Decision, ResolvedBy: p.ResolvedBy, Reason: p.Reason}, streamID(p.TaskID), nil
 	case "AppendArtifact":
 		var p struct {
 			TaskID     string `json:"taskId"`
@@ -221,18 +202,6 @@ func eventPayload(e task.Event) any {
 		return map[string]any{"taskId": ev.TaskID, "errorCode": ev.ErrorCode, "message": ev.Message}
 	case task.TaskCancelled:
 		return map[string]any{"taskId": ev.TaskID, "cancelledBy": ev.CancelledBy}
-	case task.ApprovalRequested:
-		m := map[string]any{"taskId": ev.TaskID, "approvalId": ev.ApprovalID, "kind": ev.Kind, "risk": ev.Risk}
-		if ev.Context != nil {
-			m["context"] = ev.Context
-		}
-		return m
-	case task.ApprovalResolved:
-		m := map[string]any{"taskId": ev.TaskID, "approvalId": ev.ApprovalID, "decision": ev.Decision, "resolvedBy": ev.ResolvedBy}
-		if ev.Reason != "" {
-			m["reason"] = ev.Reason
-		}
-		return m
 	case task.ArtifactCreated:
 		return map[string]any{"artifactId": ev.ArtifactID, "taskId": ev.TaskID, "path": ev.Path, "sha256": ev.SHA256, "mime": ev.Mime, "size": ev.Size}
 	default:
@@ -294,26 +263,6 @@ func committedToEvent(c events.Committed) (task.Event, error) {
 		}
 		_ = json.Unmarshal(c.Payload, &raw)
 		return task.TaskCancelled{TaskID: raw.TaskID, CancelledBy: raw.CancelledBy}, nil
-	case "ApprovalRequested":
-		var raw struct {
-			TaskID     string         `json:"taskId"`
-			ApprovalID string         `json:"approvalId"`
-			Kind       string         `json:"kind"`
-			Risk       string         `json:"risk"`
-			Context    map[string]any `json:"context"`
-		}
-		_ = json.Unmarshal(c.Payload, &raw)
-		return task.ApprovalRequested{TaskID: raw.TaskID, ApprovalID: raw.ApprovalID, Kind: raw.Kind, Risk: raw.Risk, Context: raw.Context}, nil
-	case "ApprovalResolved":
-		var raw struct {
-			TaskID     string `json:"taskId"`
-			ApprovalID string `json:"approvalId"`
-			Decision   string `json:"decision"`
-			ResolvedBy string `json:"resolvedBy"`
-			Reason     string `json:"reason"`
-		}
-		_ = json.Unmarshal(c.Payload, &raw)
-		return task.ApprovalResolved{TaskID: raw.TaskID, ApprovalID: raw.ApprovalID, Decision: raw.Decision, ResolvedBy: raw.ResolvedBy, Reason: raw.Reason}, nil
 	case "ArtifactCreated":
 		var raw struct {
 			ArtifactID string `json:"artifactId"`

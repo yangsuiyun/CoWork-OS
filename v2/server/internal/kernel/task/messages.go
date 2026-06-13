@@ -33,20 +33,6 @@ type CancelTask struct {
 	TaskID      string
 	CancelledBy string
 }
-type RequestApproval struct {
-	TaskID     string
-	ApprovalID string
-	Kind       string
-	Risk       string
-	Context    map[string]any
-}
-type ResolveApproval struct {
-	TaskID     string
-	ApprovalID string
-	Decision   string
-	ResolvedBy string
-	Reason     string
-}
 type AppendArtifact struct {
 	TaskID     string
 	ArtifactID string
@@ -61,10 +47,8 @@ func (PlanTask) CommandType() string        { return "PlanTask" }
 func (StartTurn) CommandType() string       { return "StartTurn" }
 func (CompleteTask) CommandType() string    { return "CompleteTask" }
 func (FailTask) CommandType() string        { return "FailTask" }
-func (CancelTask) CommandType() string      { return "CancelTask" }
-func (RequestApproval) CommandType() string { return "RequestApproval" }
-func (ResolveApproval) CommandType() string { return "ResolveApproval" }
-func (AppendArtifact) CommandType() string  { return "AppendArtifact" }
+func (CancelTask) CommandType() string     { return "CancelTask" }
+func (AppendArtifact) CommandType() string { return "AppendArtifact" }
 
 // --- Events --- (payloads mirror contracts/events/*.schema.json)
 
@@ -96,20 +80,6 @@ type TaskCancelled struct {
 	TaskID      string
 	CancelledBy string
 }
-type ApprovalRequested struct {
-	TaskID     string
-	ApprovalID string
-	Kind       string
-	Risk       string
-	Context    map[string]any
-}
-type ApprovalResolved struct {
-	TaskID     string
-	ApprovalID string
-	Decision   string
-	ResolvedBy string
-	Reason     string
-}
 type ArtifactCreated struct {
 	ArtifactID string
 	TaskID     string
@@ -125,7 +95,5 @@ func (TurnStarted) EventType() string       { return "TurnStarted" }
 func (TurnCompleted) EventType() string     { return "TurnCompleted" }
 func (TaskCompleted) EventType() string     { return "TaskCompleted" }
 func (TaskFailed) EventType() string        { return "TaskFailed" }
-func (TaskCancelled) EventType() string     { return "TaskCancelled" }
-func (ApprovalRequested) EventType() string { return "ApprovalRequested" }
-func (ApprovalResolved) EventType() string  { return "ApprovalResolved" }
-func (ArtifactCreated) EventType() string   { return "ArtifactCreated" }
+func (TaskCancelled) EventType() string   { return "TaskCancelled" }
+func (ArtifactCreated) EventType() string { return "ArtifactCreated" }
