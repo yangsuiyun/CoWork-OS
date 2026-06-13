@@ -15,6 +15,7 @@ import type {
 import "./mail-compose-frame.css";
 
 const SAVE_DEBOUNCE_MS = 550;
+const SEND_POLL_INTERVAL_MS = 2_500;
 
 type MailComposeFrameProps = {
   frame: ChatInlineFrame;
@@ -94,6 +95,10 @@ export const extractAssistantMailDraft = extractMailboxComposeDraftInputFromText
 
 function draftStatusIsLocked(status: MailboxComposeDraftStatus): boolean {
   return status === "queued" || status === "scheduled" || status === "sending" || status === "sent";
+}
+
+function draftStatusIsTransient(status: MailboxComposeDraftStatus): boolean {
+  return status === "queued" || status === "scheduled" || status === "sending";
 }
 
 function providerLabel(provider?: MailboxProvider): string {
@@ -191,6 +196,14 @@ export const MailComposeFrame = memo(function MailComposeFrame({ frame }: MailCo
   useEffect(() => {
     void loadDraft();
   }, [loadDraft]);
+
+  useEffect(() => {
+    if (!draft || !draftStatusIsTransient(draft.status)) return undefined;
+    const interval = window.setInterval(() => {
+      void loadDraft();
+    }, SEND_POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [draft?.status, loadDraft]);
 
   const account = useMemo(() => findAccount(frame, draft, clientState), [clientState, draft, frame]);
   const identities = useMemo(() => identitiesForAccount(account, clientState), [account, clientState]);
