@@ -123,6 +123,10 @@ func (p *Projector) RunOnce(ctx context.Context) (int, error) {
 			if err := applyToSkillCandidates(ctx, tx, r.seq, r.tenant, r.typ, r.payload, r.occurredAt); err != nil {
 				return 0, err
 			}
+		case strings.HasPrefix(r.stream, "runner:"):
+			if err := applyToRunners(ctx, tx, r.seq, r.tenant, r.typ, r.payload, r.occurredAt); err != nil {
+				return 0, err
+			}
 		}
 		last = r.seq
 	}
@@ -142,7 +146,7 @@ func (p *Projector) RunOnce(ctx context.Context) (int, error) {
 // Rebuild truncates the task read model, resets the offset, and replays the
 // whole log. Proves the read model is a pure function of the event log.
 func (p *Projector) Rebuild(ctx context.Context) error {
-	if _, err := p.pool.Exec(ctx, "TRUNCATE rm_tasks, rm_timeline, rm_artifacts, rm_workspaces, rm_approvals, rm_graph_nodes, rm_skill_candidates"); err != nil {
+	if _, err := p.pool.Exec(ctx, "TRUNCATE rm_tasks, rm_timeline, rm_artifacts, rm_workspaces, rm_approvals, rm_graph_nodes, rm_skill_candidates, rm_runners"); err != nil {
 		return err
 	}
 	if _, err := p.pool.Exec(ctx,
@@ -443,6 +447,59 @@ func applyToSkillCandidates(ctx context.Context, tx pgx.Tx, seq int64, tenant, t
 			UPDATE rm_skill_candidates SET status = 'rejected', reviewed_by = $2, updated_seq = $3, updated_at = $4
 			WHERE id = $1 AND updated_seq < $3`,
 			p.CandidateID, p.ReviewedBy, seq, occurredAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applyToRunners maintains rm_runners for the LocalRunnerSession aggregate (M3).
+// Register seeds/recovers the row as active; heartbeat advances last_pulse;
+// stale flips status. The monotonic guard keeps replays idempotent. Register
+// uses upsert because a stale runner may re-register (recovery).
+func applyToRunners(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ string, payload []byte, occurredAt time.Time) error {
+	switch typ {
+	case "RunnerRegistered":
+		var p struct {
+			RunnerID    string `json:"runnerId"`
+			WorkspaceID string `json:"workspaceId"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO rm_runners (id, tenant_id, workspace_id, status, last_pulse, updated_seq, updated_at)
+			VALUES ($1,$2,$3,'active',0,$4,$5)
+			ON CONFLICT (id) DO UPDATE SET status = 'active', last_pulse = 0, updated_seq = $4, updated_at = $5
+			WHERE rm_runners.updated_seq < $4`,
+			p.RunnerID, tenant, p.WorkspaceID, seq, occurredAt); err != nil {
+			return err
+		}
+	case "RunnerHeartbeat":
+		var p struct {
+			RunnerID string `json:"runnerId"`
+			Pulse    int64  `json:"pulse"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE rm_runners SET last_pulse = $2, updated_seq = $3, updated_at = $4
+			WHERE id = $1 AND updated_seq < $3`,
+			p.RunnerID, p.Pulse, seq, occurredAt); err != nil {
+			return err
+		}
+	case "RunnerStale":
+		var p struct {
+			RunnerID string `json:"runnerId"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE rm_runners SET status = 'stale', updated_seq = $2, updated_at = $3
+			WHERE id = $1 AND updated_seq < $2`,
+			p.RunnerID, seq, occurredAt); err != nil {
 			return err
 		}
 	}

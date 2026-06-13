@@ -12,6 +12,7 @@ import (
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/approval"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/events"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/graph"
+	"github.com/coworkos/cowork-os/v2/server/internal/kernel/runner"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/skillcandidate"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/task"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/workspace"
@@ -273,6 +274,38 @@ func (s *Service) QuerySkillCandidates(ctx context.Context, tenant string, limit
 	return out, err
 }
 
+// RunnerView is a read-model row for the LocalRunnerSession aggregate (M3).
+type RunnerView struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspaceId"`
+	Status      string `json:"status"`
+	LastPulse   int64  `json:"lastPulse"`
+	UpdatedSeq  int64  `json:"updatedSeq"`
+}
+
+// QueryRunners returns the tenant's local-runner sessions from the read model.
+func (s *Service) QueryRunners(ctx context.Context, tenant string, limit int) ([]RunnerView, error) {
+	var out []RunnerView
+	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT id, workspace_id, status, last_pulse, updated_seq
+			FROM rm_runners ORDER BY updated_seq DESC LIMIT $1`, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var v RunnerView
+			if err := rows.Scan(&v.ID, &v.WorkspaceID, &v.Status, &v.LastPulse, &v.UpdatedSeq); err != nil {
+				return err
+			}
+			out = append(out, v)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // QueryTask returns a single task view by id, or found=false if absent.
 func (s *Service) QueryTask(ctx context.Context, tenant, id string) (TaskView, bool, error) {
 	var v TaskView
@@ -319,7 +352,11 @@ func ErrorCode(err error) (code string, category string) {
 		errors.Is(err, graph.ErrEmpty),
 		errors.Is(err, skillcandidate.ErrAlreadyExists),
 		errors.Is(err, skillcandidate.ErrNotFound),
-		errors.Is(err, skillcandidate.ErrReviewed):
+		errors.Is(err, skillcandidate.ErrReviewed),
+		errors.Is(err, runner.ErrAlreadyExists),
+		errors.Is(err, runner.ErrNotFound),
+		errors.Is(err, runner.ErrStale),
+		errors.Is(err, runner.ErrStalePulse):
 		return "invariant_violated", "unprocessable"
 	default:
 		return "internal", "internal"

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/runner-heartbeat.schema.json",
+  "title": "RunnerHeartbeat",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["runnerId", "pulse"],
+  "properties": {
+    "runnerId": { "type": "string" },
+    "pulse": { "type": "integer", "description": "Monotonic heartbeat sequence; the latest pulse wins (spec 16 heartbeat)." }
+  }
+}

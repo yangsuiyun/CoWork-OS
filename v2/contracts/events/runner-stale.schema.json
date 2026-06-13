@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/runner-stale.schema.json",
+  "title": "RunnerStale",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["runnerId"],
+  "properties": {
+    "runnerId": { "type": "string" },
+    "reason": { "type": "string", "description": "Why the runner was marked stale (e.g. heartbeat_lost)." }
+  }
+}

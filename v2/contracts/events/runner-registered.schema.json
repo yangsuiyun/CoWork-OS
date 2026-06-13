@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/runner-registered.schema.json",
+  "title": "RunnerRegistered",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["runnerId", "workspaceId"],
+  "properties": {
+    "runnerId": { "type": "string" },
+    "workspaceId": { "type": "string", "description": "Workspace this Local Agent Runner serves (spec 20.4)." },
+    "capabilities": { "type": "array", "items": { "type": "string" }, "description": "Local capability kinds offered (computer_use, fs, shell, mcp)." }
+  }
+}
