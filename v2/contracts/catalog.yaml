@@ -8,8 +8,10 @@
 #     EXCLUDING meta schemas: _envelope.schema.json (underscore-prefixed) and
 #     ../capability.schema.json are not events and are not catalogued.
 #
-# Scope: the Task, Workspace, and ApprovalRequest aggregates are catalogued.
-# OrchestrationGraph and ExternalAgentSession (spec 7.2) are added later.
+# Scope: the Task, Workspace, ApprovalRequest, OrchestrationGraph (M4),
+# SkillCandidate (M4 self-learning), and LocalRunnerSession (M3 contract layer)
+# aggregates are catalogued. ExternalAgentSession (spec 12.2) is added later
+# alongside its runtime (actor + lease + heartbeat + ACP/MCP anti-corruption).
 #
 # Decision (approval modeling): ApprovalRequested/Resolved graduated out of the
 # task stream into a standalone ApprovalRequest aggregate (approval:<id>), so
@@ -78,3 +80,63 @@ aggregates:
         schemaVer: 1
         schema: events/approval-resolved.schema.json
         producedBy: ApproveApproval, RejectApproval
+
+  # OrchestrationGraph (M4, spec 12.1): a DAG of sub-task / delegation nodes;
+  # remote nodes converge via remoteTaskId. Local sub-agents and remote Agents
+  # share one node abstraction; the only difference is dispatchTarget.
+  graph:
+    streamPrefix: "graph:"
+    events:
+      - type: GraphSplit
+        schemaVer: 1
+        schema: events/graph-split.schema.json
+        producedBy: SplitGraph
+      - type: NodeDispatched
+        schemaVer: 1
+        schema: events/node-dispatched.schema.json
+        producedBy: DispatchNode
+      - type: NodeUpdated
+        schemaVer: 1
+        schema: events/node-updated.schema.json
+        producedBy: UpdateNode
+      - type: ResultMerged
+        schemaVer: 1
+        schema: events/result-merged.schema.json
+        producedBy: MergeResult
+
+  # SkillCandidate (M4 self-learning, spec 13.2): Review-First. Reflection only
+  # proposes candidates; nothing is published without explicit human review.
+  skillcandidate:
+    streamPrefix: "skillcandidate:"
+    events:
+      - type: SkillCandidateProposed
+        schemaVer: 1
+        schema: events/skill-candidate-proposed.schema.json
+        producedBy: ProposeSkillCandidate
+      - type: SkillCandidatePublished
+        schemaVer: 1
+        schema: events/skill-candidate-published.schema.json
+        producedBy: ApproveSkillCandidate
+      - type: SkillCandidateRejected
+        schemaVer: 1
+        schema: events/skill-candidate-rejected.schema.json
+        producedBy: RejectSkillCandidate
+
+  # LocalRunnerSession (M3 contract layer, spec 20.4): a Local Agent Runner
+  # registers via an outbound reverse channel and heartbeats; lost heartbeat ->
+  # stale. The real reverse gRPC/WS tunnel is a separate runtime project.
+  runner:
+    streamPrefix: "runner:"
+    events:
+      - type: RunnerRegistered
+        schemaVer: 1
+        schema: events/runner-registered.schema.json
+        producedBy: RegisterRunner
+      - type: RunnerHeartbeat
+        schemaVer: 1
+        schema: events/runner-heartbeat.schema.json
+        producedBy: RunnerHeartbeat
+      - type: RunnerStale
+        schemaVer: 1
+        schema: events/runner-stale.schema.json
+        producedBy: MarkRunnerStale

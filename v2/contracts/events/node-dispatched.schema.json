@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/node-dispatched.schema.json",
+  "title": "NodeDispatched",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["graphId", "nodeId", "dispatchTarget"],
+  "properties": {
+    "graphId": { "type": "string" },
+    "nodeId": { "type": "string" },
+    "dispatchTarget": { "type": "string", "enum": ["local", "remote"] },
+    "remoteTaskId": { "type": "string", "description": "When dispatchTarget=remote, the converging remote task id (spec 12.1)." }
+  }
+}

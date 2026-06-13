@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/node-updated.schema.json",
+  "title": "NodeUpdated",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["graphId", "nodeId", "status"],
+  "properties": {
+    "graphId": { "type": "string" },
+    "nodeId": { "type": "string" },
+    "status": { "type": "string", "enum": ["done", "failed"], "description": "Terminal node outcome written back from local/remote execution." },
+    "outcome": { "type": "string", "description": "Optional normalized outcome summary." }
+  }
+}

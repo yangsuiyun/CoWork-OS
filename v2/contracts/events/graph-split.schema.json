@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/graph-split.schema.json",
+  "title": "GraphSplit",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["graphId", "taskId", "nodes"],
+  "properties": {
+    "graphId": { "type": "string" },
+    "taskId": { "type": "string", "description": "Owning task whose work this graph orchestrates." },
+    "nodes": {
+      "type": "array",
+      "description": "DAG nodes; each is a sub-task or delegation target (spec 12.1).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["nodeId", "dispatchTarget"],
+        "properties": {
+          "nodeId": { "type": "string" },
+          "dispatchTarget": { "type": "string", "enum": ["local", "remote"], "description": "local sub-agent vs remote external Agent (same node abstraction)." },
+          "dependsOn": { "type": "array", "items": { "type": "string" }, "description": "nodeIds that must complete first." }
+        }
+      }
+    }
+  }
+}

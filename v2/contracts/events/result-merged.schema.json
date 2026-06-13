@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cowork.os/contracts/events/result-merged.schema.json",
+  "title": "ResultMerged",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["graphId", "taskId"],
+  "properties": {
+    "graphId": { "type": "string" },
+    "taskId": { "type": "string" },
+    "outcome": { "type": "string", "description": "Merged outcome propagated back to the owning task." }
+  }
+}
