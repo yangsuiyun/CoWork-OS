@@ -109,6 +109,30 @@ func TestCommandLifecycleOverHTTP(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCommandsOverHTTP(t *testing.T) {
+	e, jwtTok := newServer(t)
+	wsID := fmt.Sprintf("ws-%d", time.Now().UnixNano())
+
+	rec, out := do(t, e, jwtTok, fmt.Sprintf(`{"type":"CreateWorkspace","payload":{"workspaceId":%q,"name":"Default"}}`, wsID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create workspace want 200 got %d: %v", rec.Code, out)
+	}
+	if evs, _ := out["events"].([]any); len(evs) != 1 {
+		t.Fatalf("expected 1 event, got %v", out)
+	}
+
+	rec, out = do(t, e, jwtTok, fmt.Sprintf(`{"type":"UpdatePermissions","payload":{"workspaceId":%q,"permissions":{"paths":["/repo"]}}}`, wsID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update permissions want 200 got %d: %v", rec.Code, out)
+	}
+
+	// Updating a non-existent workspace is an invariant violation (422).
+	rec, out = do(t, e, jwtTok, `{"type":"UpdatePermissions","payload":{"workspaceId":"nope","permissions":{}}}`)
+	if rec.Code != http.StatusUnprocessableEntity || out["code"] != "invariant_violated" {
+		t.Fatalf("update missing want 422 invariant_violated, got %d: %v", rec.Code, out)
+	}
+}
+
 func TestUnknownCommand(t *testing.T) {
 	e, jwtTok := newServer(t)
 	rec, out := do(t, e, jwtTok, `{"type":"Frobnicate","payload":{}}`)

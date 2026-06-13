@@ -101,8 +101,16 @@ func (p *Projector) RunOnce(ctx context.Context) (int, error) {
 
 	last := offset
 	for _, r := range batch {
-		if err := applyToTasks(ctx, tx, r.seq, r.tenant, r.stream, r.typ, r.payload, r.occurredAt); err != nil {
-			return 0, err
+		// Route by aggregate kind (stream prefix). Unknown streams are skipped.
+		switch {
+		case strings.HasPrefix(r.stream, "task:"):
+			if err := applyToTasks(ctx, tx, r.seq, r.tenant, r.stream, r.typ, r.payload, r.occurredAt); err != nil {
+				return 0, err
+			}
+		case strings.HasPrefix(r.stream, "workspace:"):
+			if err := applyToWorkspaces(ctx, tx, r.seq, r.tenant, r.stream, r.typ, r.payload, r.occurredAt); err != nil {
+				return 0, err
+			}
 		}
 		last = r.seq
 	}
@@ -122,7 +130,7 @@ func (p *Projector) RunOnce(ctx context.Context) (int, error) {
 // Rebuild truncates the task read model, resets the offset, and replays the
 // whole log. Proves the read model is a pure function of the event log.
 func (p *Projector) Rebuild(ctx context.Context) error {
-	if _, err := p.pool.Exec(ctx, "TRUNCATE rm_tasks, rm_timeline, rm_artifacts"); err != nil {
+	if _, err := p.pool.Exec(ctx, "TRUNCATE rm_tasks, rm_timeline, rm_artifacts, rm_workspaces"); err != nil {
 		return err
 	}
 	if _, err := p.pool.Exec(ctx,
@@ -217,6 +225,43 @@ func applyToTasks(ctx context.Context, tx pgx.Tx, seq int64, tenant, stream, typ
 		VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (task_id, seq) DO NOTHING`,
 		tenant, taskID, seq, typ, typ, occurredAt); err != nil {
 		return err
+	}
+	return nil
+}
+
+func applyToWorkspaces(ctx context.Context, tx pgx.Tx, seq int64, tenant, stream, typ string, payload []byte, occurredAt time.Time) error {
+	wsID := strings.TrimPrefix(stream, "workspace:")
+
+	switch typ {
+	case "WorkspaceCreated":
+		var p struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO rm_workspaces (id, tenant_id, name, permissions, permissions_version, updated_seq, updated_at)
+			VALUES ($1,$2,$3,'{}'::jsonb,0,$4,$5)
+			ON CONFLICT (id) DO NOTHING`,
+			wsID, tenant, p.Name, seq, occurredAt); err != nil {
+			return err
+		}
+	case "PermissionsChanged":
+		var p struct {
+			Version     int             `json:"version"`
+			Permissions json.RawMessage `json:"permissions"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		// Monotonic guard: ignore stale/replayed events (idempotent).
+		if _, err := tx.Exec(ctx, `
+			UPDATE rm_workspaces SET permissions = $2, permissions_version = $3, updated_seq = $4, updated_at = $5
+			WHERE id = $1 AND updated_seq < $4`,
+			wsID, []byte(p.Permissions), p.Version, seq, occurredAt); err != nil {
+			return err
+		}
 	}
 	return nil
 }
