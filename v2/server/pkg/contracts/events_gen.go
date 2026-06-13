@@ -431,6 +431,239 @@ func (j *EnvelopeSchemaJson) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+type GraphSplitSchemaJson struct {
+	// GraphId corresponds to the JSON schema field "graphId".
+	GraphId string `json:"graphId" yaml:"graphId" mapstructure:"graphId"`
+
+	// DAG nodes; each is a sub-task or delegation target (spec 12.1).
+	Nodes []GraphSplitSchemaJsonNodesElem `json:"nodes" yaml:"nodes" mapstructure:"nodes"`
+
+	// Owning task whose work this graph orchestrates.
+	TaskId string `json:"taskId" yaml:"taskId" mapstructure:"taskId"`
+}
+
+type GraphSplitSchemaJsonNodesElem struct {
+	// nodeIds that must complete first.
+	DependsOn []string `json:"dependsOn,omitempty" yaml:"dependsOn,omitempty" mapstructure:"dependsOn,omitempty"`
+
+	// local sub-agent vs remote external Agent (same node abstraction).
+	DispatchTarget GraphSplitSchemaJsonNodesElemDispatchTarget `json:"dispatchTarget" yaml:"dispatchTarget" mapstructure:"dispatchTarget"`
+
+	// NodeId corresponds to the JSON schema field "nodeId".
+	NodeId string `json:"nodeId" yaml:"nodeId" mapstructure:"nodeId"`
+}
+
+type GraphSplitSchemaJsonNodesElemDispatchTarget string
+
+const GraphSplitSchemaJsonNodesElemDispatchTargetLocal GraphSplitSchemaJsonNodesElemDispatchTarget = "local"
+const GraphSplitSchemaJsonNodesElemDispatchTargetRemote GraphSplitSchemaJsonNodesElemDispatchTarget = "remote"
+
+var enumValues_GraphSplitSchemaJsonNodesElemDispatchTarget = []interface{}{
+	"local",
+	"remote",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *GraphSplitSchemaJsonNodesElemDispatchTarget) UnmarshalJSON(b []byte) error {
+	var v string
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_GraphSplitSchemaJsonNodesElemDispatchTarget {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_GraphSplitSchemaJsonNodesElemDispatchTarget, v)
+	}
+	*j = GraphSplitSchemaJsonNodesElemDispatchTarget(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *GraphSplitSchemaJsonNodesElem) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["dispatchTarget"]; raw != nil && !ok {
+		return fmt.Errorf("field dispatchTarget in GraphSplitSchemaJsonNodesElem: required")
+	}
+	if _, ok := raw["nodeId"]; raw != nil && !ok {
+		return fmt.Errorf("field nodeId in GraphSplitSchemaJsonNodesElem: required")
+	}
+	type Plain GraphSplitSchemaJsonNodesElem
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = GraphSplitSchemaJsonNodesElem(plain)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *GraphSplitSchemaJson) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["graphId"]; raw != nil && !ok {
+		return fmt.Errorf("field graphId in GraphSplitSchemaJson: required")
+	}
+	if _, ok := raw["nodes"]; raw != nil && !ok {
+		return fmt.Errorf("field nodes in GraphSplitSchemaJson: required")
+	}
+	if _, ok := raw["taskId"]; raw != nil && !ok {
+		return fmt.Errorf("field taskId in GraphSplitSchemaJson: required")
+	}
+	type Plain GraphSplitSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = GraphSplitSchemaJson(plain)
+	return nil
+}
+
+type NodeDispatchedSchemaJson struct {
+	// DispatchTarget corresponds to the JSON schema field "dispatchTarget".
+	DispatchTarget NodeDispatchedSchemaJsonDispatchTarget `json:"dispatchTarget" yaml:"dispatchTarget" mapstructure:"dispatchTarget"`
+
+	// GraphId corresponds to the JSON schema field "graphId".
+	GraphId string `json:"graphId" yaml:"graphId" mapstructure:"graphId"`
+
+	// NodeId corresponds to the JSON schema field "nodeId".
+	NodeId string `json:"nodeId" yaml:"nodeId" mapstructure:"nodeId"`
+
+	// When dispatchTarget=remote, the converging remote task id (spec 12.1).
+	RemoteTaskId *string `json:"remoteTaskId,omitempty" yaml:"remoteTaskId,omitempty" mapstructure:"remoteTaskId,omitempty"`
+}
+
+type NodeDispatchedSchemaJsonDispatchTarget string
+
+const NodeDispatchedSchemaJsonDispatchTargetLocal NodeDispatchedSchemaJsonDispatchTarget = "local"
+const NodeDispatchedSchemaJsonDispatchTargetRemote NodeDispatchedSchemaJsonDispatchTarget = "remote"
+
+var enumValues_NodeDispatchedSchemaJsonDispatchTarget = []interface{}{
+	"local",
+	"remote",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *NodeDispatchedSchemaJsonDispatchTarget) UnmarshalJSON(b []byte) error {
+	var v string
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_NodeDispatchedSchemaJsonDispatchTarget {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_NodeDispatchedSchemaJsonDispatchTarget, v)
+	}
+	*j = NodeDispatchedSchemaJsonDispatchTarget(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *NodeDispatchedSchemaJson) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["dispatchTarget"]; raw != nil && !ok {
+		return fmt.Errorf("field dispatchTarget in NodeDispatchedSchemaJson: required")
+	}
+	if _, ok := raw["graphId"]; raw != nil && !ok {
+		return fmt.Errorf("field graphId in NodeDispatchedSchemaJson: required")
+	}
+	if _, ok := raw["nodeId"]; raw != nil && !ok {
+		return fmt.Errorf("field nodeId in NodeDispatchedSchemaJson: required")
+	}
+	type Plain NodeDispatchedSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = NodeDispatchedSchemaJson(plain)
+	return nil
+}
+
+type NodeUpdatedSchemaJson struct {
+	// GraphId corresponds to the JSON schema field "graphId".
+	GraphId string `json:"graphId" yaml:"graphId" mapstructure:"graphId"`
+
+	// NodeId corresponds to the JSON schema field "nodeId".
+	NodeId string `json:"nodeId" yaml:"nodeId" mapstructure:"nodeId"`
+
+	// Optional normalized outcome summary.
+	Outcome *string `json:"outcome,omitempty" yaml:"outcome,omitempty" mapstructure:"outcome,omitempty"`
+
+	// Terminal node outcome written back from local/remote execution.
+	Status NodeUpdatedSchemaJsonStatus `json:"status" yaml:"status" mapstructure:"status"`
+}
+
+type NodeUpdatedSchemaJsonStatus string
+
+const NodeUpdatedSchemaJsonStatusDone NodeUpdatedSchemaJsonStatus = "done"
+const NodeUpdatedSchemaJsonStatusFailed NodeUpdatedSchemaJsonStatus = "failed"
+
+var enumValues_NodeUpdatedSchemaJsonStatus = []interface{}{
+	"done",
+	"failed",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *NodeUpdatedSchemaJsonStatus) UnmarshalJSON(b []byte) error {
+	var v string
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_NodeUpdatedSchemaJsonStatus {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_NodeUpdatedSchemaJsonStatus, v)
+	}
+	*j = NodeUpdatedSchemaJsonStatus(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *NodeUpdatedSchemaJson) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["graphId"]; raw != nil && !ok {
+		return fmt.Errorf("field graphId in NodeUpdatedSchemaJson: required")
+	}
+	if _, ok := raw["nodeId"]; raw != nil && !ok {
+		return fmt.Errorf("field nodeId in NodeUpdatedSchemaJson: required")
+	}
+	if _, ok := raw["status"]; raw != nil && !ok {
+		return fmt.Errorf("field status in NodeUpdatedSchemaJson: required")
+	}
+	type Plain NodeUpdatedSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = NodeUpdatedSchemaJson(plain)
+	return nil
+}
+
 type PermissionsChangedSchemaJson struct {
 	// Permissions corresponds to the JSON schema field "permissions".
 	Permissions PermissionsChangedSchemaJsonPermissions `json:"permissions" yaml:"permissions" mapstructure:"permissions"`
@@ -471,6 +704,221 @@ func (j *PermissionsChangedSchemaJson) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*j = PermissionsChangedSchemaJson(plain)
+	return nil
+}
+
+type ResultMergedSchemaJson struct {
+	// GraphId corresponds to the JSON schema field "graphId".
+	GraphId string `json:"graphId" yaml:"graphId" mapstructure:"graphId"`
+
+	// Merged outcome propagated back to the owning task.
+	Outcome *string `json:"outcome,omitempty" yaml:"outcome,omitempty" mapstructure:"outcome,omitempty"`
+
+	// TaskId corresponds to the JSON schema field "taskId".
+	TaskId string `json:"taskId" yaml:"taskId" mapstructure:"taskId"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *ResultMergedSchemaJson) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["graphId"]; raw != nil && !ok {
+		return fmt.Errorf("field graphId in ResultMergedSchemaJson: required")
+	}
+	if _, ok := raw["taskId"]; raw != nil && !ok {
+		return fmt.Errorf("field taskId in ResultMergedSchemaJson: required")
+	}
+	type Plain ResultMergedSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = ResultMergedSchemaJson(plain)
+	return nil
+}
+
+type RunnerHeartbeatSchemaJson struct {
+	// Monotonic heartbeat sequence; the latest pulse wins (spec 16 heartbeat).
+	Pulse int `json:"pulse" yaml:"pulse" mapstructure:"pulse"`
+
+	// RunnerId corresponds to the JSON schema field "runnerId".
+	RunnerId string `json:"runnerId" yaml:"runnerId" mapstructure:"runnerId"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *RunnerHeartbeatSchemaJson) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["pulse"]; raw != nil && !ok {
+		return fmt.Errorf("field pulse in RunnerHeartbeatSchemaJson: required")
+	}
+	if _, ok := raw["runnerId"]; raw != nil && !ok {
+		return fmt.Errorf("field runnerId in RunnerHeartbeatSchemaJson: required")
+	}
+	type Plain RunnerHeartbeatSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = RunnerHeartbeatSchemaJson(plain)
+	return nil
+}
+
+type RunnerRegisteredSchemaJson struct {
+	// Local capability kinds offered (computer_use, fs, shell, mcp).
+	Capabilities []string `json:"capabilities,omitempty" yaml:"capabilities,omitempty" mapstructure:"capabilities,omitempty"`
+
+	// RunnerId corresponds to the JSON schema field "runnerId".
+	RunnerId string `json:"runnerId" yaml:"runnerId" mapstructure:"runnerId"`
+
+	// Workspace this Local Agent Runner serves (spec 20.4).
+	WorkspaceId string `json:"workspaceId" yaml:"workspaceId" mapstructure:"workspaceId"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *RunnerRegisteredSchemaJson) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["runnerId"]; raw != nil && !ok {
+		return fmt.Errorf("field runnerId in RunnerRegisteredSchemaJson: required")
+	}
+	if _, ok := raw["workspaceId"]; raw != nil && !ok {
+		return fmt.Errorf("field workspaceId in RunnerRegisteredSchemaJson: required")
+	}
+	type Plain RunnerRegisteredSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = RunnerRegisteredSchemaJson(plain)
+	return nil
+}
+
+type RunnerStaleSchemaJson struct {
+	// Why the runner was marked stale (e.g. heartbeat_lost).
+	Reason *string `json:"reason,omitempty" yaml:"reason,omitempty" mapstructure:"reason,omitempty"`
+
+	// RunnerId corresponds to the JSON schema field "runnerId".
+	RunnerId string `json:"runnerId" yaml:"runnerId" mapstructure:"runnerId"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *RunnerStaleSchemaJson) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["runnerId"]; raw != nil && !ok {
+		return fmt.Errorf("field runnerId in RunnerStaleSchemaJson: required")
+	}
+	type Plain RunnerStaleSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = RunnerStaleSchemaJson(plain)
+	return nil
+}
+
+type SkillCandidateProposedSchemaJson struct {
+	// CandidateId corresponds to the JSON schema field "candidateId".
+	CandidateId string `json:"candidateId" yaml:"candidateId" mapstructure:"candidateId"`
+
+	// Proposed skill name (kebab-case).
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
+
+	// Task whose reflection produced this candidate (spec 13.2).
+	SourceTaskId *string `json:"sourceTaskId,omitempty" yaml:"sourceTaskId,omitempty" mapstructure:"sourceTaskId,omitempty"`
+
+	// What the candidate skill does.
+	Summary *string `json:"summary,omitempty" yaml:"summary,omitempty" mapstructure:"summary,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *SkillCandidateProposedSchemaJson) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["candidateId"]; raw != nil && !ok {
+		return fmt.Errorf("field candidateId in SkillCandidateProposedSchemaJson: required")
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in SkillCandidateProposedSchemaJson: required")
+	}
+	type Plain SkillCandidateProposedSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = SkillCandidateProposedSchemaJson(plain)
+	return nil
+}
+
+type SkillCandidatePublishedSchemaJson struct {
+	// CandidateId corresponds to the JSON schema field "candidateId".
+	CandidateId string `json:"candidateId" yaml:"candidateId" mapstructure:"candidateId"`
+
+	// Human reviewer who approved publication (Review-First, spec 13.2).
+	ReviewedBy string `json:"reviewedBy" yaml:"reviewedBy" mapstructure:"reviewedBy"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *SkillCandidatePublishedSchemaJson) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["candidateId"]; raw != nil && !ok {
+		return fmt.Errorf("field candidateId in SkillCandidatePublishedSchemaJson: required")
+	}
+	if _, ok := raw["reviewedBy"]; raw != nil && !ok {
+		return fmt.Errorf("field reviewedBy in SkillCandidatePublishedSchemaJson: required")
+	}
+	type Plain SkillCandidatePublishedSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = SkillCandidatePublishedSchemaJson(plain)
+	return nil
+}
+
+type SkillCandidateRejectedSchemaJson struct {
+	// CandidateId corresponds to the JSON schema field "candidateId".
+	CandidateId string `json:"candidateId" yaml:"candidateId" mapstructure:"candidateId"`
+
+	// Reason corresponds to the JSON schema field "reason".
+	Reason *string `json:"reason,omitempty" yaml:"reason,omitempty" mapstructure:"reason,omitempty"`
+
+	// ReviewedBy corresponds to the JSON schema field "reviewedBy".
+	ReviewedBy string `json:"reviewedBy" yaml:"reviewedBy" mapstructure:"reviewedBy"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *SkillCandidateRejectedSchemaJson) UnmarshalJSON(b []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["candidateId"]; raw != nil && !ok {
+		return fmt.Errorf("field candidateId in SkillCandidateRejectedSchemaJson: required")
+	}
+	if _, ok := raw["reviewedBy"]; raw != nil && !ok {
+		return fmt.Errorf("field reviewedBy in SkillCandidateRejectedSchemaJson: required")
+	}
+	type Plain SkillCandidateRejectedSchemaJson
+	var plain Plain
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return err
+	}
+	*j = SkillCandidateRejectedSchemaJson(plain)
 	return nil
 }
 

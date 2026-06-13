@@ -1,7 +1,7 @@
 # CoWork OS v2 — 开发进度
 
 > 权威设计：`../docs/cowork-os-complete-design-spec.html`。本文件记录实现进度，
-> 随每个里程碑更新。最后更新：2026-06-13。
+> 随每个里程碑更新。最后更新：2026-06-13（M3 契约层 + M4 编排/自学习聚合落地）。
 
 ## 总览
 
@@ -10,8 +10,8 @@
 | M0 | 契约冻结（OpenAPI + 事件/能力 Schema + 读模型 DDL + 权限矩阵 + codegen + 边界守卫） | ✅ 完成 |
 | M1 | Walking Skeleton：Task 聚合端到端（命令 → event_log/outbox → 投影 → 读模型 → WS 推送 → 瘦客户端）+ 鉴权/租户/RLS | ✅ 完成 |
 | M2 | 能力授权 + Pre/PostToolUse Hook + 外部会话 API + 前端瘦客户端 | ✅ 完成 |
-| M3 | 本地 Agent Runner / 云沙箱执行 | ⏳ 未开始（需运行时决策） |
-| M4 | 编排 + 外部 Agent + 自学习 | 🚧 进行中（Workspace + ApprovalRequest 聚合已落地） |
+| M3 | 本地 Agent Runner / 云沙箱执行 | 🚧 契约层完成（LocalRunnerSession 聚合）；运行时（反向通道/沙箱）独立立项，待二选一决策 |
+| M4 | 编排 + 外部 Agent + 自学习 | 🚧 进行中（Workspace + ApprovalRequest + OrchestrationGraph + SkillCandidate 聚合已落地；ExternalAgentSession 待运行时） |
 | M5 | 桌面端收敛 | ⏳ 未开始 |
 
 ## 已完成明细
@@ -43,29 +43,42 @@
 - **外部 API** `/v1/sessions`：create / get / cancel + SSE 事件流，会话即 Task。
 - **前端** `web/`：React + Vite + TS 瘦客户端（任务列表、创建、WS 实时流），TS 类型由契约生成。
 
-### M4 进行中 — Workspace + ApprovalRequest 聚合
-- 事件契约：`WorkspaceCreated` / `PermissionsChanged`；`ApprovalRequested` / `ApprovalResolved` 由 `catalog.yaml` 归属至独立 `approval:` 流。
-- 读模型：`rm_workspaces`（`migrations/0005`）、`rm_approvals`（`migrations/0006`，含 `task_id`），均 RLS + 最小权限授权。
-- 聚合：`internal/kernel/workspace`（`CreateWorkspace` / `UpdatePermissions`，权限单调版本化）；`internal/kernel/approval`（`RequestApproval` / `ApproveApproval` / `RejectApproval`，已决议终态——hard-deny 不可覆盖）。
-- 应用层：`Service.Handle` 按聚合分派的 reducer 闭包（聚合无关）；`QueryWorkspaces` / `QueryApprovals`。
-- 投影：projector 按 stream 前缀路由；`applyToWorkspaces`；`applyToApprovals` 写 `rm_approvals` 并跨聚合按 `taskId` 更新 `rm_tasks.status`（`awaiting_approval` / `pending`）。
-- 查询：`/v1/query/workspaces`、`/v1/query/approvals`。
-- 设计决策：审批全量迁出 Task（pre-v1.0 无兼容层），单一权威事件源；`Switch` 命令属会话态、不产生聚合事件，暂缓。
+### M4 进行中 — Workspace + ApprovalRequest + OrchestrationGraph + SkillCandidate 聚合
+- 事件契约：`WorkspaceCreated` / `PermissionsChanged`；`ApprovalRequested` / `ApprovalResolved`（独立 `approval:` 流）；`GraphSplit` / `NodeDispatched` / `NodeUpdated` / `ResultMerged`（`graph:` 流）；`SkillCandidateProposed` / `SkillCandidatePublished` / `SkillCandidateRejected`（`skillcandidate:` 流）。
+- 读模型：`rm_workspaces`（`0005`）、`rm_approvals`（`0006`，含 `task_id`）、`rm_graph_nodes`（`0007`，每节点一行）、`rm_skill_candidates`（`0008`），均 RLS + 最小权限授权。
+- 聚合：
+  - `internal/kernel/workspace`（`CreateWorkspace` / `UpdatePermissions`，权限单调版本化）。
+  - `internal/kernel/approval`（`RequestApproval` / `ApproveApproval` / `RejectApproval`，已决议终态——hard-deny 不可覆盖）。
+  - `internal/kernel/graph`（编排 DAG，spec 12.1）：本地子代理与远程 Agent 共用节点抽象，仅 `dispatchTarget` 不同；远程节点以 `remoteTaskId` 收敛；不变量——节点终态不可改、已 merge 图关闭。
+  - `internal/kernel/skillcandidate`（自学习 Review-First，spec 13.2）：反思只产候选，须人工 review 才发布；review 决议终态不可覆盖。
+- 应用层：`Service.Handle` 按聚合分派的 reducer 闭包（聚合无关）；`QueryWorkspaces` / `QueryApprovals` / `QueryGraphNodes` / `QuerySkillCandidates`。
+- 投影：projector 按 stream 前缀路由；新增 `applyToGraph` / `applyToSkillCandidates`，均单调幂等。
+- 查询：`/v1/query/{workspaces,approvals,graphNodes,skillCandidates}`。
+- 设计决策：审批全量迁出 Task（pre-v1.0 无兼容层），单一权威事件源；`Switch` 命令属会话态、不产生聚合事件，暂缓；ExternalAgentSession（actor+租约+心跳+ACP/MCP 防腐）依赖运行时与外部协议，与 M3 运行时一并独立立项。
+
+### M3 契约层 — LocalRunnerSession 聚合
+- 事件契约：`RunnerRegistered` / `RunnerHeartbeat` / `RunnerStale`（`runner:` 流，spec 20.4）。
+- 读模型：`rm_runners`（`0009`，跟踪最新心跳脉冲与存活态），RLS + 最小权限授权。
+- 聚合：`internal/kernel/runner`（`RegisterRunner` / `RunnerHeartbeat` / `MarkRunnerStale`）：心跳脉冲单调；心跳/置 stale 须运行中；stale 后须重新注册（注册即恢复）。
+- 投影 `applyToRunners`（register 用 upsert 支持恢复）；查询 `/v1/query/runners`。
+- 设计决策：仅落地会话生命周期的事件契约 + 聚合纯函数；真实反向 gRPC/WS 隧道与存活看门狗独立立项，待「Local Agent Runner vs 云沙箱」二选一决策（spec 20）。
 
 ## 代码规模（快照）
 
-- Go 源文件 37（测试 14），SQL 迁移 6，事件 Schema 13。
-- kernel 包：`app` / `events` / `projector` / `task` / `workspace` / `approval`。
+- SQL 迁移 9，事件 Schema 24（含 Graph 4 / SkillCandidate 3 / Runner 3）。
+- kernel 包：`app` / `events` / `projector` / `task` / `workspace` / `approval` / `graph` / `skillcandidate` / `runner`。
 - 用户态：`cap`（能力、撤销、权限引擎、Hook、Guard）。
 - 适配器：`adapter/http`（commands / query / stream / actions / sessions）。
-- 测试：聚合纯函数单测 + 投影/RLS/会话/动作集成测试（需 Postgres）。
+- 测试：聚合纯函数单测（task/workspace/approval/graph/skillcandidate/runner）+ 投影/RLS/会话/动作集成测试（需 Postgres）。
+- 契约 codegen：`server/pkg/contracts/events_gen.go` 已随新增 Schema 重新生成（`make codegen-check` 零漂移）。
 
 ## 待办（按 spec 顺序）
 
-1. **OrchestrationGraph**：`Split/DispatchNode/MergeResult`，远程节点以 `remoteTaskId` 收敛（需先定契约）。
-2. **ExternalAgentSession**：`OpenSession/Enqueue/Heartbeat/Cancel`（演进，需先定契约）。
-3. **M3 本地 Agent Runner**：执行运行时（LLM / 沙箱）— 需单独立项定契约。
-4. **前端**：工作区视图、审批交互、会话面板。
+1. **ExternalAgentSession**：`OpenSession/Enqueue/Heartbeat/Cancel`（演进，spec 12.2）；依赖运行时 + ACP/MCP 防腐适配器，需单独立项。
+2. **M3 运行时**：在「Local Agent Runner 反向通道」与「服务端云沙箱」间二选一并实现真实执行器（spec 20，头号架构决策）。
+3. **M4 编排运行时**：依赖就绪调度引擎（消费 `rm_graph_nodes`，驱动 `DispatchNode`/`UpdateNode`），与外部 Agent 节点收敛。
+4. **M4 自学习运行时**：Reflection / Dreaming 产候选（驱动 `ProposeSkillCandidate`）+ 渐进式技能加载索引。
+5. **前端**：工作区视图、审批交互、编排图视图、候选 review 面板、Runner 状态面板。
 
 ## 本地开发
 
