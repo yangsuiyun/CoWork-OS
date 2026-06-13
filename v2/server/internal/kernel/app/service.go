@@ -150,6 +150,27 @@ func (s *Service) QueryTasks(ctx context.Context, tenant string, limit int) ([]T
 	return out, err
 }
 
+// QueryTask returns a single task view by id, or found=false if absent.
+func (s *Service) QueryTask(ctx context.Context, tenant, id string) (TaskView, bool, error) {
+	var v TaskView
+	found := false
+	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx, `
+			SELECT id, workspace_id, status, COALESCE(title,''), risk, origin, updated_seq
+			FROM rm_tasks WHERE id = $1`, id)
+		switch err := row.Scan(&v.ID, &v.WorkspaceID, &v.Status, &v.Title, &v.Risk, &v.Origin, &v.UpdatedSeq); {
+		case err == nil:
+			found = true
+			return nil
+		case errors.Is(err, pgx.ErrNoRows):
+			return nil
+		default:
+			return err
+		}
+	})
+	return v, found, err
+}
+
 // ErrorCode classifies a Handle error into a stable contract code + HTTP-ish
 // category for the adapter (single mapping site, spec P6).
 func ErrorCode(err error) (code string, category string) {

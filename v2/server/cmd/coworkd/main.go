@@ -63,7 +63,9 @@ func main() {
 
 	hub := realtime.NewHub(pool)
 	verifier := cap.NewVerifier(cap.NewIssuer(cfg.JWTSecret), cap.NewRevocationStore(pool))
-	httpapi.Register(e, app.New(pool), hub, verifier, cfg.JWTSecret)
+	// PreHooks may deny/transform but never grant; no org policy hooks by default.
+	guard := cap.NewGuard(verifier, cap.NewHookPipeline(nil, nil))
+	httpapi.Register(e, app.New(pool), hub, guard, cfg.JWTSecret)
 
 	bgCtx, bgCancel := context.WithCancel(ctx)
 	defer bgCancel()

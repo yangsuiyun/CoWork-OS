@@ -35,7 +35,8 @@ func newActionServer(t *testing.T) (e *echo.Echo, issuer *cap.Issuer, rev *cap.R
 	rev = cap.NewRevocationStore(pool)
 	e = echo.New()
 	svc := app.New(pool)
-	Register(e, svc, realtime.NewHub(pool), cap.NewVerifier(issuer, rev), testSecret)
+	guard := cap.NewGuard(cap.NewVerifier(issuer, rev), cap.NewHookPipeline(nil, nil))
+	Register(e, svc, realtime.NewHub(pool), guard, testSecret)
 
 	tenant = fmt.Sprintf("act-%d", time.Now().UnixNano())
 	jwtTok = token(t, tenant, "u")

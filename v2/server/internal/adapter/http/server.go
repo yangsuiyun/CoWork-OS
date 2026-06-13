@@ -26,13 +26,15 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(*http.Request) bool { return true },
 }
 
-// Register mounts the /v1 command, query, stream, and action routes with auth.
-func Register(e *echo.Echo, svc *app.Service, hub *realtime.Hub, verifier *cap.Verifier, jwtSecret string) {
+// Register mounts the /v1 command, query, stream, action, and session routes
+// with auth.
+func Register(e *echo.Echo, svc *app.Service, hub *realtime.Hub, guard *cap.Guard, jwtSecret string) {
 	g := e.Group("/v1", authMiddleware(jwtSecret))
 	g.POST("/commands", dispatchCommand(svc))
 	g.GET("/query/:name", runQuery(svc))
 	g.GET("/stream", streamEvents(svc, hub))
-	g.POST("/actions", authorizeAction(svc, verifier))
+	g.POST("/actions", authorizeAction(svc, guard))
+	registerSessions(g, svc, hub)
 }
 
 // authMiddleware verifies a short-lived HS256 JWT and extracts tenant/actor.

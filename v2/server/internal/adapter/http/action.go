@@ -11,10 +11,10 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// authorizeAction runs the capability + permission pipeline (spec 11.2):
-// verify the presented capability, evaluate the rule matrix, then allow / ask
-// (emit ApprovalRequested) / deny.
-func authorizeAction(svc *app.Service, verifier *cap.Verifier) echo.HandlerFunc {
+// authorizeAction runs the full decision pipeline (spec 11.2): pre-hooks
+// (deny/transform) -> mandatory capability check -> permission rule matrix ->
+// post-hooks. Result: allow / ask (emit ApprovalRequested) / deny.
+func authorizeAction(svc *app.Service, guard *cap.Guard) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		var req contracts.ActionRequest
 		if err := c.Bind(&req); err != nil {
@@ -24,11 +24,21 @@ func authorizeAction(svc *app.Service, verifier *cap.Verifier) echo.HandlerFunc 
 		actor, _ := c.Get("actor").(string)
 		ctx := c.Request().Context()
 
-		// Capability check (mandatory; never skippable). A token is "present"
+		// 1. Pre-hooks may deny or transform (never grant).
+		hc := &cap.HookContext{Actor: actor, TaskID: req.TaskId, Resource: req.Resource, Risk: deref(req.Risk), Context: derefMap(req.Context)}
+		outcome, err := guard.RunPre(ctx, hc)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, contracts.DomainError{Code: "internal", Message: err.Error()})
+		}
+		if outcome.Denied {
+			return c.JSON(http.StatusForbidden, contracts.DomainError{Code: "hook_denied", Message: outcome.Reason})
+		}
+
+		// 2. Capability check (mandatory; never skippable). A token is "present"
 		// only if it verifies AND its resource matches the requested resource.
 		capabilityPresent := false
 		if req.CapabilityToken != nil && *req.CapabilityToken != "" {
-			token, err := verifier.Verify(ctx, tenant, *req.CapabilityToken)
+			token, err := guard.Verify(ctx, tenant, *req.CapabilityToken)
 			if err != nil {
 				switch {
 				case errors.Is(err, cap.ErrRevoked), errors.Is(err, cap.ErrExpired), errors.Is(err, cap.ErrInvalidToken):
@@ -40,6 +50,7 @@ func authorizeAction(svc *app.Service, verifier *cap.Verifier) echo.HandlerFunc 
 			capabilityPresent = token.Resource == req.Resource
 		}
 
+		// 3. Permission rule matrix (includes uncoverable overrides).
 		decision := cap.Decide(cap.Request{
 			Resource:          req.Resource,
 			Risk:              deref(req.Risk),
@@ -48,6 +59,8 @@ func authorizeAction(svc *app.Service, verifier *cap.Verifier) echo.HandlerFunc 
 			DomainAllowListed: derefBool(req.DomainAllowListed),
 			CapabilityPresent: capabilityPresent,
 		})
+		// 4. Post-hooks observe the decision (audit); failure is non-fatal here.
+		_ = guard.RunPost(ctx, hc, decision.Decision)
 
 		switch decision.Decision {
 		case cap.Allow:

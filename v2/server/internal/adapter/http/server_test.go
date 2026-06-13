@@ -19,8 +19,9 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-func testVerifier(pool *pgxpool.Pool) *cap.Verifier {
-	return cap.NewVerifier(cap.NewIssuer(testSecret), cap.NewRevocationStore(pool))
+func testGuard(pool *pgxpool.Pool) *cap.Guard {
+	verifier := cap.NewVerifier(cap.NewIssuer(testSecret), cap.NewRevocationStore(pool))
+	return cap.NewGuard(verifier, cap.NewHookPipeline(nil, nil))
 }
 
 const testSecret = "test-secret"
@@ -49,7 +50,7 @@ func newServer(t *testing.T) (*echo.Echo, string) {
 	}
 	t.Cleanup(pool.Close)
 	e := echo.New()
-	Register(e, app.New(pool), realtime.NewHub(pool), testVerifier(pool), testSecret)
+	Register(e, app.New(pool), realtime.NewHub(pool), testGuard(pool), testSecret)
 	return e, token(t, fmt.Sprintf("tenant-%d", time.Now().UnixNano()), "user-1")
 }
 
