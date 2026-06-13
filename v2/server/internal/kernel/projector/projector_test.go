@@ -148,29 +148,58 @@ func TestApprovalAndArtifactProjection(t *testing.T) {
 		}
 	}
 	artID := fmt.Sprintf("art-%d", os.Getpid())
+	apID := fmt.Sprintf("ap-%d", os.Getpid())
 	must("CreateTask", fmt.Sprintf(`{"taskId":%q,"workspaceId":"w","canonicalPrompt":"p","risk":"low"}`, id))
-	must("RequestApproval", fmt.Sprintf(`{"taskId":%q,"approvalId":"ap1","kind":"shell","risk":"high"}`, id))
+	must("RequestApproval", fmt.Sprintf(`{"taskId":%q,"approvalId":%q,"kind":"shell","risk":"high"}`, id, apID))
 	must("AppendArtifact", fmt.Sprintf(`{"taskId":%q,"artifactId":%q,"path":"/o.txt","sha256":"deadbeef","mime":"text/plain","size":3}`, id, artID))
 
 	if _, err := proj.RunOnce(ctx); err != nil {
 		t.Fatalf("project: %v", err)
 	}
 
+	// Approval request cross-updates the task to awaiting_approval.
 	status, _ := readTask(t, pool, ctx, tenant, id)
 	if status != "awaiting_approval" {
 		t.Fatalf("want awaiting_approval, got %q", status)
 	}
+	if got := readApprovalStatus(t, pool, ctx, tenant, apID); got != "pending" {
+		t.Fatalf("want approval pending, got %q", got)
+	}
 
 	tx, _ := pool.Begin(ctx)
-	defer tx.Rollback(ctx)
 	_, _ = tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenant)
 	var path string
 	if err := tx.QueryRow(ctx, "SELECT path FROM rm_artifacts WHERE id = $1", artID).Scan(&path); err != nil {
 		t.Fatalf("artifact not projected: %v", err)
 	}
+	tx.Rollback(ctx)
 	if path != "/o.txt" {
 		t.Fatalf("unexpected artifact path %q", path)
 	}
+
+	// Resolving (reject) marks the approval rejected and returns the task to pending.
+	must("RejectApproval", fmt.Sprintf(`{"approvalId":%q,"resolvedBy":"human","reason":"no"}`, apID))
+	if _, err := proj.RunOnce(ctx); err != nil {
+		t.Fatalf("project resolve: %v", err)
+	}
+	if status, _ := readTask(t, pool, ctx, tenant, id); status != "pending" {
+		t.Fatalf("want pending after resolve, got %q", status)
+	}
+	if got := readApprovalStatus(t, pool, ctx, tenant, apID); got != "rejected" {
+		t.Fatalf("want approval rejected, got %q", got)
+	}
+}
+
+func readApprovalStatus(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenant, id string) string {
+	t.Helper()
+	tx, _ := pool.Begin(ctx)
+	defer tx.Rollback(ctx)
+	_, _ = tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenant)
+	var status string
+	if err := tx.QueryRow(ctx, "SELECT status FROM rm_approvals WHERE id = $1", id).Scan(&status); err != nil {
+		t.Fatalf("approval not projected: %v", err)
+	}
+	return status
 }
 
 func containsTask(tasks []app.TaskView, id string) bool {

@@ -111,6 +111,10 @@ func (p *Projector) RunOnce(ctx context.Context) (int, error) {
 			if err := applyToWorkspaces(ctx, tx, r.seq, r.tenant, r.stream, r.typ, r.payload, r.occurredAt); err != nil {
 				return 0, err
 			}
+		case strings.HasPrefix(r.stream, "approval:"):
+			if err := applyToApprovals(ctx, tx, r.seq, r.tenant, r.typ, r.payload, r.occurredAt); err != nil {
+				return 0, err
+			}
 		}
 		last = r.seq
 	}
@@ -130,7 +134,7 @@ func (p *Projector) RunOnce(ctx context.Context) (int, error) {
 // Rebuild truncates the task read model, resets the offset, and replays the
 // whole log. Proves the read model is a pure function of the event log.
 func (p *Projector) Rebuild(ctx context.Context) error {
-	if _, err := p.pool.Exec(ctx, "TRUNCATE rm_tasks, rm_timeline, rm_artifacts, rm_workspaces"); err != nil {
+	if _, err := p.pool.Exec(ctx, "TRUNCATE rm_tasks, rm_timeline, rm_artifacts, rm_workspaces, rm_approvals"); err != nil {
 		return err
 	}
 	if _, err := p.pool.Exec(ctx,
@@ -155,10 +159,6 @@ func statusForType(typ string) (string, bool) {
 	case "TurnStarted":
 		return "running", true
 	case "TurnCompleted":
-		return "pending", true
-	case "ApprovalRequested":
-		return "awaiting_approval", true
-	case "ApprovalResolved":
 		return "pending", true
 	case "TaskCompleted":
 		return "completed", true
@@ -227,6 +227,65 @@ func applyToTasks(ctx context.Context, tx pgx.Tx, seq int64, tenant, stream, typ
 		return err
 	}
 	return nil
+}
+
+// applyToApprovals maintains rm_approvals and cross-updates the owning task's
+// status (awaiting_approval on request, pending on resolution). The task is a
+// different aggregate, but the projector observes all streams in global order,
+// so the rm_tasks row already exists (CreateTask precedes any approval).
+func applyToApprovals(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ string, payload []byte, occurredAt time.Time) error {
+	switch typ {
+	case "ApprovalRequested":
+		var p struct {
+			ApprovalID string `json:"approvalId"`
+			TaskID     string `json:"taskId"`
+			Kind       string `json:"kind"`
+			Risk       string `json:"risk"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO rm_approvals (id, tenant_id, task_id, kind, risk, status, updated_seq, updated_at)
+			VALUES ($1,$2,$3,$4,$5,'pending',$6,$7) ON CONFLICT (id) DO NOTHING`,
+			p.ApprovalID, tenant, p.TaskID, p.Kind, p.Risk, seq, occurredAt); err != nil {
+			return err
+		}
+		return crossUpdateTaskStatus(ctx, tx, p.TaskID, "awaiting_approval", seq, occurredAt)
+	case "ApprovalResolved":
+		var p struct {
+			ApprovalID string `json:"approvalId"`
+			TaskID     string `json:"taskId"`
+			Decision   string `json:"decision"`
+			ResolvedBy string `json:"resolvedBy"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		status := "approved"
+		if p.Decision == "reject" {
+			status = "rejected"
+		}
+		// Monotonic guard: ignore stale/replayed events (idempotent).
+		if _, err := tx.Exec(ctx, `
+			UPDATE rm_approvals SET status = $2, resolved_by = $3, updated_seq = $4, updated_at = $5
+			WHERE id = $1 AND updated_seq < $4`,
+			p.ApprovalID, status, p.ResolvedBy, seq, occurredAt); err != nil {
+			return err
+		}
+		return crossUpdateTaskStatus(ctx, tx, p.TaskID, "pending", seq, occurredAt)
+	}
+	return nil
+}
+
+// crossUpdateTaskStatus moves the owning task's status under the same monotonic
+// guard used by applyToTasks, keeping replays idempotent.
+func crossUpdateTaskStatus(ctx context.Context, tx pgx.Tx, taskID, status string, seq int64, occurredAt time.Time) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE rm_tasks SET status = $2, updated_seq = $3, updated_at = $4
+		WHERE id = $1 AND updated_seq < $3`,
+		taskID, status, seq, occurredAt)
+	return err
 }
 
 func applyToWorkspaces(ctx context.Context, tx pgx.Tx, seq int64, tenant, stream, typ string, payload []byte, occurredAt time.Time) error {
