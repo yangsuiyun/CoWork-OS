@@ -154,7 +154,7 @@ export interface components {
         /** @description Opaque resume position; encodes the per-shard monotonic visible global_seq. */
         Cursor: string;
         Command: {
-            /** @description Command name, e.g. CreateTask, StartTurn, ResolveApproval. */
+            /** @description Command name, e.g. CreateTask, StartTurn, ApproveApproval. */
             type: string;
             /** @description Command-specific fields (validated against the command schema). */
             payload: {

@@ -11,7 +11,7 @@
 | M1 | Walking Skeleton：Task 聚合端到端（命令 → event_log/outbox → 投影 → 读模型 → WS 推送 → 瘦客户端）+ 鉴权/租户/RLS | ✅ 完成 |
 | M2 | 能力授权 + Pre/PostToolUse Hook + 外部会话 API + 前端瘦客户端 | ✅ 完成 |
 | M3 | 本地 Agent Runner / 云沙箱执行 | ⏳ 未开始（需运行时决策） |
-| M4 | 编排 + 外部 Agent + 自学习 | 🚧 进行中（Workspace 聚合已落地） |
+| M4 | 编排 + 外部 Agent + 自学习 | 🚧 进行中（Workspace + ApprovalRequest 聚合已落地） |
 | M5 | 桌面端收敛 | ⏳ 未开始 |
 
 ## 已完成明细
@@ -43,29 +43,29 @@
 - **外部 API** `/v1/sessions`：create / get / cancel + SSE 事件流，会话即 Task。
 - **前端** `web/`：React + Vite + TS 瘦客户端（任务列表、创建、WS 实时流），TS 类型由契约生成。
 
-### M4 进行中 — Workspace 聚合
-- 事件契约：`WorkspaceCreated` / `PermissionsChanged`（`contracts/events/`）。
-- 读模型：`rm_workspaces`（`migrations/0005`，RLS + 最小权限授权）。
-- 聚合：`internal/kernel/workspace`，命令 `CreateWorkspace` / `UpdatePermissions`，权限单调版本化（capability-first）。
-- 应用层：`Service.Handle` 重构为按聚合分派的 reducer 闭包（聚合无关）；`QueryWorkspaces`。
-- 投影：projector 按 stream 前缀路由 + `applyToWorkspaces`；`/v1/query/workspaces`。
-- 设计决策：`Switch` 命令属会话态、不产生聚合事件，暂缓。
+### M4 进行中 — Workspace + ApprovalRequest 聚合
+- 事件契约：`WorkspaceCreated` / `PermissionsChanged`；`ApprovalRequested` / `ApprovalResolved` 由 `catalog.yaml` 归属至独立 `approval:` 流。
+- 读模型：`rm_workspaces`（`migrations/0005`）、`rm_approvals`（`migrations/0006`，含 `task_id`），均 RLS + 最小权限授权。
+- 聚合：`internal/kernel/workspace`（`CreateWorkspace` / `UpdatePermissions`，权限单调版本化）；`internal/kernel/approval`（`RequestApproval` / `ApproveApproval` / `RejectApproval`，已决议终态——hard-deny 不可覆盖）。
+- 应用层：`Service.Handle` 按聚合分派的 reducer 闭包（聚合无关）；`QueryWorkspaces` / `QueryApprovals`。
+- 投影：projector 按 stream 前缀路由；`applyToWorkspaces`；`applyToApprovals` 写 `rm_approvals` 并跨聚合按 `taskId` 更新 `rm_tasks.status`（`awaiting_approval` / `pending`）。
+- 查询：`/v1/query/workspaces`、`/v1/query/approvals`。
+- 设计决策：审批全量迁出 Task（pre-v1.0 无兼容层），单一权威事件源；`Switch` 命令属会话态、不产生聚合事件，暂缓。
 
 ## 代码规模（快照）
 
-- Go 源文件 34（测试 13），SQL 迁移 5，事件 Schema 13。
-- kernel 包：`app` / `events` / `projector` / `task` / `workspace`。
+- Go 源文件 37（测试 14），SQL 迁移 6，事件 Schema 13。
+- kernel 包：`app` / `events` / `projector` / `task` / `workspace` / `approval`。
 - 用户态：`cap`（能力、撤销、权限引擎、Hook、Guard）。
 - 适配器：`adapter/http`（commands / query / stream / actions / sessions）。
 - 测试：聚合纯函数单测 + 投影/RLS/会话/动作集成测试（需 Postgres）。
 
 ## 待办（按 spec 顺序）
 
-1. **ApprovalRequest 聚合**：将审批抽为独立聚合，`data_export` 独立通道（当前审批以 Task 事件承载）。
-2. **OrchestrationGraph**：`Split/DispatchNode/MergeResult`，远程节点以 `remoteTaskId` 收敛（需先定契约）。
-3. **ExternalAgentSession**：`OpenSession/Enqueue/Heartbeat/Cancel`（演进，需先定契约）。
-4. **M3 本地 Agent Runner**：执行运行时（LLM / 沙箱）— 需单独立项定契约。
-5. **前端**：工作区视图、审批交互、会话面板。
+1. **OrchestrationGraph**：`Split/DispatchNode/MergeResult`，远程节点以 `remoteTaskId` 收敛（需先定契约）。
+2. **ExternalAgentSession**：`OpenSession/Enqueue/Heartbeat/Cancel`（演进，需先定契约）。
+3. **M3 本地 Agent Runner**：执行运行时（LLM / 沙箱）— 需单独立项定契约。
+4. **前端**：工作区视图、审批交互、会话面板。
 
 ## 本地开发
 

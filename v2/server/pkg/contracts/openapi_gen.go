@@ -83,7 +83,7 @@ type Command struct {
 	// Payload Command-specific fields (validated against the command schema).
 	Payload map[string]interface{} `json:"payload"`
 
-	// Type Command name, e.g. CreateTask, StartTurn, ResolveApproval.
+	// Type Command name, e.g. CreateTask, StartTurn, ApproveApproval.
 	Type string `json:"type"`
 }
 
