@@ -8,13 +8,13 @@
 #     EXCLUDING meta schemas: _envelope.schema.json (underscore-prefixed) and
 #     ../capability.schema.json are not events and are not catalogued.
 #
-# Scope (M0): only the Task aggregate is catalogued, sufficient for the M1
-# walking skeleton. The Workspace, ApprovalRequest, OrchestrationGraph, and
-# ExternalAgentSession aggregates (spec 7.2) are added in M2+.
+# Scope: the Task, Workspace, and ApprovalRequest aggregates are catalogued.
+# OrchestrationGraph and ExternalAgentSession (spec 7.2) are added later.
 #
-# Decision (approval modeling): ApprovalRequested/Resolved currently live in the
-# task stream for M1 simplicity. They may graduate to a standalone
-# ApprovalRequest aggregate in M2 if approvals need an independent lifecycle.
+# Decision (approval modeling): ApprovalRequested/Resolved graduated out of the
+# task stream into a standalone ApprovalRequest aggregate (approval:<id>), so
+# approvals have an independent lifecycle and a single authoritative source.
+# The projector cross-updates rm_tasks.status by taskId on these events.
 
 version: 0.1.0
 
@@ -38,14 +38,6 @@ aggregates:
         schemaVer: 1
         schema: events/turn-completed.schema.json
         producedBy: StartTurn
-      - type: ApprovalRequested
-        schemaVer: 1
-        schema: events/approval-requested.schema.json
-        producedBy: RequestApproval
-      - type: ApprovalResolved
-        schemaVer: 1
-        schema: events/approval-resolved.schema.json
-        producedBy: ResolveApproval
       - type: ArtifactCreated
         schemaVer: 1
         schema: events/artifact-created.schema.json
@@ -62,3 +54,27 @@ aggregates:
         schemaVer: 1
         schema: events/task-cancelled.schema.json
         producedBy: CancelTask
+
+  workspace:
+    streamPrefix: "workspace:"
+    events:
+      - type: WorkspaceCreated
+        schemaVer: 1
+        schema: events/workspace-created.schema.json
+        producedBy: CreateWorkspace
+      - type: PermissionsChanged
+        schemaVer: 1
+        schema: events/permissions-changed.schema.json
+        producedBy: UpdatePermissions
+
+  approval:
+    streamPrefix: "approval:"
+    events:
+      - type: ApprovalRequested
+        schemaVer: 1
+        schema: events/approval-requested.schema.json
+        producedBy: RequestApproval
+      - type: ApprovalResolved
+        schemaVer: 1
+        schema: events/approval-resolved.schema.json
+        producedBy: ApproveApproval, RejectApproval
