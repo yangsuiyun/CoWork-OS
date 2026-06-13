@@ -25,6 +25,25 @@ v2/
 └─ tools/codegen/        # OpenAPI + JSON Schema -> Go & TS
 ```
 
+## Development
+
+```bash
+# Backend (needs Postgres + goose migrations applied; roles cowork_app/cowork_projector):
+export COWORK_DATABASE_URL='postgres://cowork_app:cowork@localhost:5432/coworkos?sslmode=disable'
+export COWORK_PROJECTOR_DATABASE_URL='postgres://cowork_projector:cowork@localhost:5432/coworkos?sslmode=disable'
+cd server && go run ./cmd/coworkd            # serves :8080
+
+# Frontend thin client (proxies /v1 to :8080):
+cd web && npm install && npm run dev          # serves :5173
+
+# Regenerate all contract types (Go + TS) after editing contracts/:
+make codegen
+```
+
+The web client needs a JWT with `tid` (tenant) and `sub` (actor) claims signed
+with `COWORK_JWT_SECRET` (dev default `dev-insecure-secret`); paste it into the
+token field. External API clients use `/v1/sessions` instead.
+
 ## Milestones (see spec §18)
 
 - **M0** Contracts frozen: OpenAPI + event/capability schemas + read-model DDL
