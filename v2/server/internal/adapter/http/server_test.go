@@ -11,12 +11,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coworkos/cowork-os/v2/server/internal/cap"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/app"
 	"github.com/coworkos/cowork-os/v2/server/internal/realtime"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 )
+
+func testVerifier(pool *pgxpool.Pool) *cap.Verifier {
+	return cap.NewVerifier(cap.NewIssuer(testSecret), cap.NewRevocationStore(pool))
+}
 
 const testSecret = "test-secret"
 
@@ -44,7 +49,7 @@ func newServer(t *testing.T) (*echo.Echo, string) {
 	}
 	t.Cleanup(pool.Close)
 	e := echo.New()
-	Register(e, app.New(pool), realtime.NewHub(pool), testSecret)
+	Register(e, app.New(pool), realtime.NewHub(pool), testVerifier(pool), testSecret)
 	return e, token(t, fmt.Sprintf("tenant-%d", time.Now().UnixNano()), "user-1")
 }
 

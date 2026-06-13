@@ -98,6 +98,32 @@ paths:
         '101':
           description: Switching Protocols (WebSocket).
 
+  /v1/actions:
+    post:
+      operationId: authorizeAction
+      summary: Capability + permission gate for a guarded action
+      description: >
+        Runs the deterministic decision pipeline (spec 11.2): verify the
+        presented capability (signature, expiry, revocation), then evaluate the
+        permission rule matrix. allow proceeds; ask emits an ApprovalRequested
+        event on the task; deny returns a typed capability/permission error.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ActionRequest' }
+      responses:
+        '200':
+          description: Decision (allow or ask).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResult' }
+        '403':
+          description: Capability or permission denied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainError' }
+
   /v1/sessions:
     post:
       operationId: createManagedSession
@@ -239,6 +265,31 @@ components:
         maxTokens: { type: integer }
         maxCostUsd: { type: number }
         maxWallClockSec: { type: integer }
+
+    ActionRequest:
+      type: object
+      required: [taskId, resource]
+      properties:
+        taskId: { type: string }
+        resource:
+          type: string
+          description: 'Resource class, e.g. fs.read, fs.write, net, shell, data_export, tool:<name>.'
+        risk: { type: string, enum: [low, medium, high] }
+        inScope: { type: boolean }
+        outsideScope: { type: boolean }
+        domainAllowListed: { type: boolean }
+        capabilityToken: { type: string, description: 'Server-signed capability envelope; verified at use-time.' }
+        context: { type: object, additionalProperties: true }
+
+    ActionResult:
+      type: object
+      required: [decision, ruleId]
+      properties:
+        decision: { type: string, enum: [allow, ask, deny] }
+        ruleId: { type: string, description: 'Matched permission rule id (audit).' }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/CommittedEvent' }
 
     ManagedSession:
       type: object

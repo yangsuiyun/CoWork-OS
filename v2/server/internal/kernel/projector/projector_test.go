@@ -147,9 +147,10 @@ func TestApprovalAndArtifactProjection(t *testing.T) {
 			t.Fatalf("%s: %v", cmd, err)
 		}
 	}
+	artID := fmt.Sprintf("art-%d", os.Getpid())
 	must("CreateTask", fmt.Sprintf(`{"taskId":%q,"workspaceId":"w","canonicalPrompt":"p","risk":"low"}`, id))
 	must("RequestApproval", fmt.Sprintf(`{"taskId":%q,"approvalId":"ap1","kind":"shell","risk":"high"}`, id))
-	must("AppendArtifact", fmt.Sprintf(`{"taskId":%q,"artifactId":"art1","path":"/o.txt","sha256":"deadbeef","mime":"text/plain","size":3}`, id))
+	must("AppendArtifact", fmt.Sprintf(`{"taskId":%q,"artifactId":%q,"path":"/o.txt","sha256":"deadbeef","mime":"text/plain","size":3}`, id, artID))
 
 	if _, err := proj.RunOnce(ctx); err != nil {
 		t.Fatalf("project: %v", err)
@@ -164,7 +165,7 @@ func TestApprovalAndArtifactProjection(t *testing.T) {
 	defer tx.Rollback(ctx)
 	_, _ = tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenant)
 	var path string
-	if err := tx.QueryRow(ctx, "SELECT path FROM rm_artifacts WHERE id = $1", "art1").Scan(&path); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT path FROM rm_artifacts WHERE id = $1", artID).Scan(&path); err != nil {
 		t.Fatalf("artifact not projected: %v", err)
 	}
 	if path != "/o.txt" {

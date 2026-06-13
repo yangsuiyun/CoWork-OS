@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/coworkos/cowork-os/v2/server/internal/cap"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/app"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/events"
 	"github.com/coworkos/cowork-os/v2/server/internal/realtime"
@@ -25,12 +26,13 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(*http.Request) bool { return true },
 }
 
-// Register mounts the /v1 command, query, and stream routes with auth.
-func Register(e *echo.Echo, svc *app.Service, hub *realtime.Hub, jwtSecret string) {
+// Register mounts the /v1 command, query, stream, and action routes with auth.
+func Register(e *echo.Echo, svc *app.Service, hub *realtime.Hub, verifier *cap.Verifier, jwtSecret string) {
 	g := e.Group("/v1", authMiddleware(jwtSecret))
 	g.POST("/commands", dispatchCommand(svc))
 	g.GET("/query/:name", runQuery(svc))
 	g.GET("/stream", streamEvents(svc, hub))
+	g.POST("/actions", authorizeAction(svc, verifier))
 }
 
 // authMiddleware verifies a short-lived HS256 JWT and extracts tenant/actor.

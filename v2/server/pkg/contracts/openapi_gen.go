@@ -11,6 +11,20 @@ const (
 	BearerAuthScopes = "bearerAuth.Scopes"
 )
 
+// Defines values for ActionRequestRisk.
+const (
+	High   ActionRequestRisk = "high"
+	Low    ActionRequestRisk = "low"
+	Medium ActionRequestRisk = "medium"
+)
+
+// Defines values for ActionResultDecision.
+const (
+	Allow ActionResultDecision = "allow"
+	Ask   ActionResultDecision = "ask"
+	Deny  ActionResultDecision = "deny"
+)
+
 // Defines values for ManagedSessionStatus.
 const (
 	AwaitingApproval ManagedSessionStatus = "awaiting_approval"
@@ -20,6 +34,36 @@ const (
 	Pending          ManagedSessionStatus = "pending"
 	Running          ManagedSessionStatus = "running"
 )
+
+// ActionRequest defines model for ActionRequest.
+type ActionRequest struct {
+	// CapabilityToken Server-signed capability envelope; verified at use-time.
+	CapabilityToken   *string                 `json:"capabilityToken,omitempty"`
+	Context           *map[string]interface{} `json:"context,omitempty"`
+	DomainAllowListed *bool                   `json:"domainAllowListed,omitempty"`
+	InScope           *bool                   `json:"inScope,omitempty"`
+	OutsideScope      *bool                   `json:"outsideScope,omitempty"`
+
+	// Resource Resource class, e.g. fs.read, fs.write, net, shell, data_export, tool:<name>.
+	Resource string             `json:"resource"`
+	Risk     *ActionRequestRisk `json:"risk,omitempty"`
+	TaskId   string             `json:"taskId"`
+}
+
+// ActionRequestRisk defines model for ActionRequest.Risk.
+type ActionRequestRisk string
+
+// ActionResult defines model for ActionResult.
+type ActionResult struct {
+	Decision ActionResultDecision `json:"decision"`
+	Events   *[]CommittedEvent    `json:"events,omitempty"`
+
+	// RuleId Matched permission rule id (audit).
+	RuleId string `json:"ruleId"`
+}
+
+// ActionResultDecision defines model for ActionResult.Decision.
+type ActionResultDecision string
 
 // Budget defines model for Budget.
 type Budget struct {
@@ -108,6 +152,9 @@ type CreateManagedSessionJSONBody struct {
 type SubscribeStreamParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
+
+// AuthorizeActionJSONRequestBody defines body for AuthorizeAction for application/json ContentType.
+type AuthorizeActionJSONRequestBody = ActionRequest
 
 // DispatchCommandJSONRequestBody defines body for DispatchCommand for application/json ContentType.
 type DispatchCommandJSONRequestBody = Command

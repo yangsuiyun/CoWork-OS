@@ -36,7 +36,7 @@ func TestWebSocketLiveStream(t *testing.T) {
 	go func() { _ = hub.Run(hubCtx) }()
 
 	e := echo.New()
-	Register(e, app.New(pool), hub, testSecret)
+	Register(e, app.New(pool), hub, testVerifier(pool), testSecret)
 	ts := httptest.NewServer(e)
 	defer ts.Close()
 

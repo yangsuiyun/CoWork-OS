@@ -12,6 +12,7 @@ import (
 	"time"
 
 	httpapi "github.com/coworkos/cowork-os/v2/server/internal/adapter/http"
+	"github.com/coworkos/cowork-os/v2/server/internal/cap"
 	"github.com/coworkos/cowork-os/v2/server/internal/config"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/app"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/projector"
@@ -61,7 +62,8 @@ func main() {
 	})
 
 	hub := realtime.NewHub(pool)
-	httpapi.Register(e, app.New(pool), hub, cfg.JWTSecret)
+	verifier := cap.NewVerifier(cap.NewIssuer(cfg.JWTSecret), cap.NewRevocationStore(pool))
+	httpapi.Register(e, app.New(pool), hub, verifier, cfg.JWTSecret)
 
 	bgCtx, bgCancel := context.WithCancel(ctx)
 	defer bgCancel()
