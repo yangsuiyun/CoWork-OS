@@ -115,6 +115,10 @@ func (p *Projector) RunOnce(ctx context.Context) (int, error) {
 			if err := applyToApprovals(ctx, tx, r.seq, r.tenant, r.typ, r.payload, r.occurredAt); err != nil {
 				return 0, err
 			}
+		case strings.HasPrefix(r.stream, "graph:"):
+			if err := applyToGraph(ctx, tx, r.seq, r.tenant, r.typ, r.payload, r.occurredAt); err != nil {
+				return 0, err
+			}
 		}
 		last = r.seq
 	}
@@ -134,7 +138,7 @@ func (p *Projector) RunOnce(ctx context.Context) (int, error) {
 // Rebuild truncates the task read model, resets the offset, and replays the
 // whole log. Proves the read model is a pure function of the event log.
 func (p *Projector) Rebuild(ctx context.Context) error {
-	if _, err := p.pool.Exec(ctx, "TRUNCATE rm_tasks, rm_timeline, rm_artifacts, rm_workspaces, rm_approvals"); err != nil {
+	if _, err := p.pool.Exec(ctx, "TRUNCATE rm_tasks, rm_timeline, rm_artifacts, rm_workspaces, rm_approvals, rm_graph_nodes"); err != nil {
 		return err
 	}
 	if _, err := p.pool.Exec(ctx,
@@ -321,6 +325,69 @@ func applyToWorkspaces(ctx context.Context, tx pgx.Tx, seq int64, tenant, stream
 			wsID, []byte(p.Permissions), p.Version, seq, occurredAt); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// applyToGraph maintains rm_graph_nodes for the OrchestrationGraph aggregate.
+// One row per node; GraphSplit seeds nodes as pending, dispatch/update advance
+// status under a monotonic guard so replays are idempotent.
+func applyToGraph(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ string, payload []byte, occurredAt time.Time) error {
+	switch typ {
+	case "GraphSplit":
+		var p struct {
+			GraphID string `json:"graphId"`
+			TaskID  string `json:"taskId"`
+			Nodes   []struct {
+				NodeID         string `json:"nodeId"`
+				DispatchTarget string `json:"dispatchTarget"`
+			} `json:"nodes"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		for _, n := range p.Nodes {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO rm_graph_nodes (graph_id, node_id, tenant_id, task_id, dispatch_target, status, updated_seq, updated_at)
+				VALUES ($1,$2,$3,$4,$5,'pending',$6,$7) ON CONFLICT (graph_id, node_id) DO NOTHING`,
+				p.GraphID, n.NodeID, tenant, p.TaskID, n.DispatchTarget, seq, occurredAt); err != nil {
+				return err
+			}
+		}
+	case "NodeDispatched":
+		var p struct {
+			GraphID      string `json:"graphId"`
+			NodeID       string `json:"nodeId"`
+			RemoteTaskID string `json:"remoteTaskId"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE rm_graph_nodes SET status = 'dispatched', remote_task_id = NULLIF($3,''), updated_seq = $4, updated_at = $5
+			WHERE graph_id = $1 AND node_id = $2 AND updated_seq < $4`,
+			p.GraphID, p.NodeID, p.RemoteTaskID, seq, occurredAt); err != nil {
+			return err
+		}
+	case "NodeUpdated":
+		var p struct {
+			GraphID string `json:"graphId"`
+			NodeID  string `json:"nodeId"`
+			Status  string `json:"status"`
+			Outcome string `json:"outcome"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE rm_graph_nodes SET status = $3, outcome = NULLIF($4,''), updated_seq = $5, updated_at = $6
+			WHERE graph_id = $1 AND node_id = $2 AND updated_seq < $5`,
+			p.GraphID, p.NodeID, p.Status, p.Outcome, seq, occurredAt); err != nil {
+			return err
+		}
+	case "ResultMerged":
+		// Merge is terminal at the graph level; node rows already carry outcomes.
+		// No per-node write needed (the graph aggregate enforces the invariant).
 	}
 	return nil
 }

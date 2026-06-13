@@ -11,6 +11,7 @@ import (
 
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/approval"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/events"
+	"github.com/coworkos/cowork-os/v2/server/internal/kernel/graph"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/task"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/workspace"
 	"github.com/jackc/pgx/v5"
@@ -201,6 +202,42 @@ func (s *Service) QueryApprovals(ctx context.Context, tenant string, limit int) 
 	return out, err
 }
 
+// GraphNodeView is a read-model row for the OrchestrationGraph aggregate.
+type GraphNodeView struct {
+	GraphID        string `json:"graphId"`
+	NodeID         string `json:"nodeId"`
+	TaskID         string `json:"taskId"`
+	DispatchTarget string `json:"dispatchTarget"`
+	RemoteTaskID   string `json:"remoteTaskId"`
+	Status         string `json:"status"`
+	Outcome        string `json:"outcome"`
+	UpdatedSeq     int64  `json:"updatedSeq"`
+}
+
+// QueryGraphNodes returns the tenant's orchestration-graph nodes from the read
+// model (populated by the projector).
+func (s *Service) QueryGraphNodes(ctx context.Context, tenant string, limit int) ([]GraphNodeView, error) {
+	var out []GraphNodeView
+	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT graph_id, node_id, task_id, dispatch_target, COALESCE(remote_task_id,''), status, COALESCE(outcome,''), updated_seq
+			FROM rm_graph_nodes ORDER BY updated_seq DESC LIMIT $1`, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var v GraphNodeView
+			if err := rows.Scan(&v.GraphID, &v.NodeID, &v.TaskID, &v.DispatchTarget, &v.RemoteTaskID, &v.Status, &v.Outcome, &v.UpdatedSeq); err != nil {
+				return err
+			}
+			out = append(out, v)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // QueryTask returns a single task view by id, or found=false if absent.
 func (s *Service) QueryTask(ctx context.Context, tenant, id string) (TaskView, bool, error) {
 	var v TaskView
@@ -238,7 +275,13 @@ func ErrorCode(err error) (code string, category string) {
 		errors.Is(err, workspace.ErrNotFound),
 		errors.Is(err, approval.ErrAlreadyExists),
 		errors.Is(err, approval.ErrNotFound),
-		errors.Is(err, approval.ErrResolved):
+		errors.Is(err, approval.ErrResolved),
+		errors.Is(err, graph.ErrAlreadyExists),
+		errors.Is(err, graph.ErrNotFound),
+		errors.Is(err, graph.ErrNoNode),
+		errors.Is(err, graph.ErrNodeTerminal),
+		errors.Is(err, graph.ErrMerged),
+		errors.Is(err, graph.ErrEmpty):
 		return "invariant_violated", "unprocessable"
 	default:
 		return "internal", "internal"
