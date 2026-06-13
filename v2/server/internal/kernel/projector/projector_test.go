@@ -137,6 +137,41 @@ func TestTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestApprovalAndArtifactProjection(t *testing.T) {
+	pool, svc, proj, ctx := setup(t)
+	tenant := fmt.Sprintf("aa-%d", os.Getpid())
+	id := fmt.Sprintf("aa-task-%d", os.Getpid())
+
+	must := func(cmd string, body string) {
+		if _, err := svc.Handle(ctx, tenant, "u", cmd, []byte(body)); err != nil {
+			t.Fatalf("%s: %v", cmd, err)
+		}
+	}
+	must("CreateTask", fmt.Sprintf(`{"taskId":%q,"workspaceId":"w","canonicalPrompt":"p","risk":"low"}`, id))
+	must("RequestApproval", fmt.Sprintf(`{"taskId":%q,"approvalId":"ap1","kind":"shell","risk":"high"}`, id))
+	must("AppendArtifact", fmt.Sprintf(`{"taskId":%q,"artifactId":"art1","path":"/o.txt","sha256":"deadbeef","mime":"text/plain","size":3}`, id))
+
+	if _, err := proj.RunOnce(ctx); err != nil {
+		t.Fatalf("project: %v", err)
+	}
+
+	status, _ := readTask(t, pool, ctx, tenant, id)
+	if status != "awaiting_approval" {
+		t.Fatalf("want awaiting_approval, got %q", status)
+	}
+
+	tx, _ := pool.Begin(ctx)
+	defer tx.Rollback(ctx)
+	_, _ = tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenant)
+	var path string
+	if err := tx.QueryRow(ctx, "SELECT path FROM rm_artifacts WHERE id = $1", "art1").Scan(&path); err != nil {
+		t.Fatalf("artifact not projected: %v", err)
+	}
+	if path != "/o.txt" {
+		t.Fatalf("unexpected artifact path %q", path)
+	}
+}
+
 func containsTask(tasks []app.TaskView, id string) bool {
 	for _, v := range tasks {
 		if v.ID == id {

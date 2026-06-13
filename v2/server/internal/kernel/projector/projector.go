@@ -122,7 +122,7 @@ func (p *Projector) RunOnce(ctx context.Context) (int, error) {
 // Rebuild truncates the task read model, resets the offset, and replays the
 // whole log. Proves the read model is a pure function of the event log.
 func (p *Projector) Rebuild(ctx context.Context) error {
-	if _, err := p.pool.Exec(ctx, "TRUNCATE rm_tasks, rm_timeline"); err != nil {
+	if _, err := p.pool.Exec(ctx, "TRUNCATE rm_tasks, rm_timeline, rm_artifacts"); err != nil {
 		return err
 	}
 	if _, err := p.pool.Exec(ctx,
@@ -147,6 +147,10 @@ func statusForType(typ string) (string, bool) {
 	case "TurnStarted":
 		return "running", true
 	case "TurnCompleted":
+		return "pending", true
+	case "ApprovalRequested":
+		return "awaiting_approval", true
+	case "ApprovalResolved":
 		return "pending", true
 	case "TaskCompleted":
 		return "completed", true
@@ -178,6 +182,23 @@ func applyToTasks(ctx context.Context, tx pgx.Tx, seq int64, tenant, stream, typ
 			VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9)
 			ON CONFLICT (id) DO NOTHING`,
 			taskID, tenant, p.WorkspaceID, p.ParentTaskID, p.CanonicalPrompt, p.Risk, p.Origin, seq, occurredAt); err != nil {
+			return err
+		}
+	} else if typ == "ArtifactCreated" {
+		var p struct {
+			ArtifactID string `json:"artifactId"`
+			Path       string `json:"path"`
+			SHA256     string `json:"sha256"`
+			Mime       string `json:"mime"`
+			Size       int64  `json:"size"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO rm_artifacts (id, tenant_id, task_id, path, sha256, mime, size, created_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`,
+			p.ArtifactID, tenant, taskID, p.Path, p.SHA256, p.Mime, p.Size, occurredAt); err != nil {
 			return err
 		}
 	} else if status, ok := statusForType(typ); ok {

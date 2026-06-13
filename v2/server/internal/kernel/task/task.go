@@ -17,12 +17,13 @@ var (
 type Status string
 
 const (
-	StatusPending   Status = "pending"
-	StatusPlanned   Status = "planned"
-	StatusRunning   Status = "running"
-	StatusCompleted Status = "completed"
-	StatusFailed    Status = "failed"
-	StatusCancelled Status = "cancelled"
+	StatusPending          Status = "pending"
+	StatusPlanned          Status = "planned"
+	StatusRunning          Status = "running"
+	StatusAwaitingApproval Status = "awaiting_approval"
+	StatusCompleted        Status = "completed"
+	StatusFailed           Status = "failed"
+	StatusCancelled        Status = "cancelled"
 )
 
 func (s Status) terminal() bool {
@@ -64,6 +65,12 @@ func (t *Task) Apply(e Event) {
 		t.Status = StatusFailed
 	case TaskCancelled:
 		t.Status = StatusCancelled
+	case ApprovalRequested:
+		t.Status = StatusAwaitingApproval
+	case ApprovalResolved:
+		t.Status = StatusPending
+	case ArtifactCreated:
+		// Artifacts do not change task status.
 	}
 }
 
@@ -121,6 +128,30 @@ func (t *Task) Decide(cmd Command) ([]Event, error) {
 			return nil, err
 		}
 		return []Event{TaskCancelled{TaskID: t.ID, CancelledBy: c.CancelledBy}}, nil
+
+	case RequestApproval:
+		if err := t.requireActive(); err != nil {
+			return nil, err
+		}
+		return []Event{ApprovalRequested{
+			TaskID: t.ID, ApprovalID: c.ApprovalID, Kind: c.Kind, Risk: c.Risk, Context: c.Context,
+		}}, nil
+
+	case ResolveApproval:
+		if err := t.requireActive(); err != nil {
+			return nil, err
+		}
+		return []Event{ApprovalResolved{
+			TaskID: t.ID, ApprovalID: c.ApprovalID, Decision: c.Decision, ResolvedBy: c.ResolvedBy, Reason: c.Reason,
+		}}, nil
+
+	case AppendArtifact:
+		if err := t.requireActive(); err != nil {
+			return nil, err
+		}
+		return []Event{ArtifactCreated{
+			ArtifactID: c.ArtifactID, TaskID: t.ID, Path: c.Path, SHA256: c.SHA256, Mime: c.Mime, Size: c.Size,
+		}}, nil
 
 	default:
 		return nil, errors.New("task: unknown command")

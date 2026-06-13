@@ -86,6 +86,49 @@ func decodeCommand(cmdType string, payload []byte) (task.Command, string, error)
 			return nil, "", err
 		}
 		return task.CancelTask{TaskID: p.TaskID, CancelledBy: p.CancelledBy}, streamID(p.TaskID), nil
+	case "RequestApproval":
+		var p struct {
+			TaskID     string         `json:"taskId"`
+			ApprovalID string         `json:"approvalId"`
+			Kind       string         `json:"kind"`
+			Risk       string         `json:"risk"`
+			Context    map[string]any `json:"context"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return nil, "", err
+		}
+		if p.ApprovalID == "" {
+			p.ApprovalID = uuid.NewString()
+		}
+		return task.RequestApproval{TaskID: p.TaskID, ApprovalID: p.ApprovalID, Kind: p.Kind, Risk: p.Risk, Context: p.Context}, streamID(p.TaskID), nil
+	case "ResolveApproval":
+		var p struct {
+			TaskID     string `json:"taskId"`
+			ApprovalID string `json:"approvalId"`
+			Decision   string `json:"decision"`
+			ResolvedBy string `json:"resolvedBy"`
+			Reason     string `json:"reason"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return nil, "", err
+		}
+		return task.ResolveApproval{TaskID: p.TaskID, ApprovalID: p.ApprovalID, Decision: p.Decision, ResolvedBy: p.ResolvedBy, Reason: p.Reason}, streamID(p.TaskID), nil
+	case "AppendArtifact":
+		var p struct {
+			TaskID     string `json:"taskId"`
+			ArtifactID string `json:"artifactId"`
+			Path       string `json:"path"`
+			SHA256     string `json:"sha256"`
+			Mime       string `json:"mime"`
+			Size       int64  `json:"size"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return nil, "", err
+		}
+		if p.ArtifactID == "" {
+			p.ArtifactID = uuid.NewString()
+		}
+		return task.AppendArtifact{TaskID: p.TaskID, ArtifactID: p.ArtifactID, Path: p.Path, SHA256: p.SHA256, Mime: p.Mime, Size: p.Size}, streamID(p.TaskID), nil
 	default:
 		return nil, "", fmt.Errorf("%w: %s", ErrUnknownCommand, cmdType)
 	}
@@ -126,6 +169,20 @@ func eventPayload(e task.Event) any {
 		return map[string]any{"taskId": ev.TaskID, "errorCode": ev.ErrorCode, "message": ev.Message}
 	case task.TaskCancelled:
 		return map[string]any{"taskId": ev.TaskID, "cancelledBy": ev.CancelledBy}
+	case task.ApprovalRequested:
+		m := map[string]any{"taskId": ev.TaskID, "approvalId": ev.ApprovalID, "kind": ev.Kind, "risk": ev.Risk}
+		if ev.Context != nil {
+			m["context"] = ev.Context
+		}
+		return m
+	case task.ApprovalResolved:
+		m := map[string]any{"taskId": ev.TaskID, "approvalId": ev.ApprovalID, "decision": ev.Decision, "resolvedBy": ev.ResolvedBy}
+		if ev.Reason != "" {
+			m["reason"] = ev.Reason
+		}
+		return m
+	case task.ArtifactCreated:
+		return map[string]any{"artifactId": ev.ArtifactID, "taskId": ev.TaskID, "path": ev.Path, "sha256": ev.SHA256, "mime": ev.Mime, "size": ev.Size}
 	default:
 		return map[string]any{}
 	}
@@ -185,6 +242,37 @@ func committedToEvent(c events.Committed) (task.Event, error) {
 		}
 		_ = json.Unmarshal(c.Payload, &raw)
 		return task.TaskCancelled{TaskID: raw.TaskID, CancelledBy: raw.CancelledBy}, nil
+	case "ApprovalRequested":
+		var raw struct {
+			TaskID     string         `json:"taskId"`
+			ApprovalID string         `json:"approvalId"`
+			Kind       string         `json:"kind"`
+			Risk       string         `json:"risk"`
+			Context    map[string]any `json:"context"`
+		}
+		_ = json.Unmarshal(c.Payload, &raw)
+		return task.ApprovalRequested{TaskID: raw.TaskID, ApprovalID: raw.ApprovalID, Kind: raw.Kind, Risk: raw.Risk, Context: raw.Context}, nil
+	case "ApprovalResolved":
+		var raw struct {
+			TaskID     string `json:"taskId"`
+			ApprovalID string `json:"approvalId"`
+			Decision   string `json:"decision"`
+			ResolvedBy string `json:"resolvedBy"`
+			Reason     string `json:"reason"`
+		}
+		_ = json.Unmarshal(c.Payload, &raw)
+		return task.ApprovalResolved{TaskID: raw.TaskID, ApprovalID: raw.ApprovalID, Decision: raw.Decision, ResolvedBy: raw.ResolvedBy, Reason: raw.Reason}, nil
+	case "ArtifactCreated":
+		var raw struct {
+			ArtifactID string `json:"artifactId"`
+			TaskID     string `json:"taskId"`
+			Path       string `json:"path"`
+			SHA256     string `json:"sha256"`
+			Mime       string `json:"mime"`
+			Size       int64  `json:"size"`
+		}
+		_ = json.Unmarshal(c.Payload, &raw)
+		return task.ArtifactCreated{ArtifactID: raw.ArtifactID, TaskID: raw.TaskID, Path: raw.Path, SHA256: raw.SHA256, Mime: raw.Mime, Size: raw.Size}, nil
 	default:
 		return nil, fmt.Errorf("unknown event type: %s", c.Type)
 	}
