@@ -46,12 +46,15 @@ token field. External API clients use `/v1/sessions` instead.
 
 ## Milestones (see spec §18)
 
-- **M0** Contracts frozen: OpenAPI + event/capability schemas + read-model DDL
+Detailed progress: [`PROGRESS.md`](PROGRESS.md).
+
+- **M0** ✅ Contracts frozen: OpenAPI + event/capability schemas + read-model DDL
   + permission rule matrix + codegen + CI boundary guard (`depguard`).
-- **M1** Walking skeleton: Task aggregate end-to-end
+- **M1** ✅ Walking skeleton: Task aggregate end-to-end
   (command → event_log + outbox → projector → read model → WS push → thin web),
   auth/tenant/RLS.
-- **M2** Capability authorization + Pre/PostToolUse hooks.
-- **M3** Local Agent Runner or cloud sandbox.
-- **M4** Orchestration + external agents + self-learning.
-- **M5** Desktop convergence.
+- **M2** ✅ Capability authorization + Pre/PostToolUse hooks + external
+  `/v1/sessions` API + React thin client.
+- **M3** ⏳ Local Agent Runner or cloud sandbox.
+- **M4** 🚧 Orchestration + external agents + self-learning (Workspace aggregate done).
+- **M5** ⏳ Desktop convergence.
