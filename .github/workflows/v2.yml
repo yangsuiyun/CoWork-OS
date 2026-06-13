@@ -39,8 +39,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: { go-version: '1.22' }
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
+      - name: Install codegen tools
+        run: |
+          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1
+          go install github.com/atombender/go-jsonschema@v0.16.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Fail if generated types drift from contracts
         working-directory: v2
         run: make codegen-check

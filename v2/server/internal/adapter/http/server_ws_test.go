@@ -13,6 +13,7 @@ import (
 
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/app"
 	"github.com/coworkos/cowork-os/v2/server/internal/realtime"
+	"github.com/coworkos/cowork-os/v2/server/pkg/contracts"
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
@@ -71,11 +72,11 @@ func TestWebSocketLiveStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read ws: %v", err)
 	}
-	var got eventDTO
+	var got contracts.CommittedEvent
 	if err := json.Unmarshal(msg, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got.Type != "TaskCreated" || got.StreamID != "task:"+taskID {
+	if got.Type != "TaskCreated" || got.StreamId != "task:"+taskID {
 		t.Fatalf("unexpected event: %+v", got)
 	}
 }

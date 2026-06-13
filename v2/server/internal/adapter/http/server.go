@@ -13,6 +13,7 @@ import (
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/app"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/events"
 	"github.com/coworkos/cowork-os/v2/server/internal/realtime"
+	"github.com/coworkos/cowork-os/v2/server/pkg/contracts"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
@@ -65,49 +66,42 @@ func authMiddleware(secret string) echo.MiddlewareFunc {
 	}
 }
 
-type commandReq struct {
-	Type    string          `json:"type"`
-	Payload json.RawMessage `json:"payload"`
-}
-
-type eventDTO struct {
-	GlobalSeq  int64           `json:"globalSeq"`
-	StreamID   string          `json:"streamId"`
-	StreamSeq  int64           `json:"streamSeq"`
-	Type       string          `json:"type"`
-	SchemaVer  int             `json:"schemaVer"`
-	Payload    json.RawMessage `json:"payload"`
-	OccurredAt string          `json:"occurredAt"`
-}
-
 func dispatchCommand(svc *app.Service) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		var req commandReq
+		var req contracts.Command
 		if err := c.Bind(&req); err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 		}
 		tenant, _ := c.Get("tenant").(string)
 		actor, _ := c.Get("actor").(string)
 
-		committed, err := svc.Handle(c.Request().Context(), tenant, actor, req.Type, req.Payload)
+		payload, err := json.Marshal(req.Payload)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid payload")
+		}
+		committed, err := svc.Handle(c.Request().Context(), tenant, actor, req.Type, payload)
 		if err != nil {
 			code, category := app.ErrorCode(err)
-			return c.JSON(statusFor(category), map[string]any{"code": code, "message": err.Error()})
+			return c.JSON(statusFor(category), contracts.DomainError{Code: code, Message: err.Error()})
 		}
 
-		out := make([]eventDTO, 0, len(committed))
+		out := make([]contracts.CommittedEvent, 0, len(committed))
 		for _, e := range committed {
-			out = append(out, toEventDTO(e))
+			out = append(out, toCommittedEvent(e))
 		}
 		return c.JSON(http.StatusOK, map[string]any{"events": out})
 	}
 }
 
-func toEventDTO(e events.Committed) eventDTO {
-	return eventDTO{
-		GlobalSeq: e.GlobalSeq, StreamID: e.StreamID, StreamSeq: e.StreamSeq,
-		Type: e.Type, SchemaVer: e.SchemaVer, Payload: json.RawMessage(e.Payload),
-		OccurredAt: e.OccurredAt.Format("2006-01-02T15:04:05.000Z07:00"),
+// toCommittedEvent maps a stored event to the contract wire type (SSOT).
+func toCommittedEvent(e events.Committed) contracts.CommittedEvent {
+	var payload map[string]any
+	_ = json.Unmarshal(e.Payload, &payload)
+	return contracts.CommittedEvent{
+		Actor: e.Actor, CausationId: e.CausationID, CorrelationId: e.CorrelationID,
+		GlobalSeq: e.GlobalSeq, OccurredAt: e.OccurredAt, Payload: payload,
+		SchemaVer: e.SchemaVer, StreamId: e.StreamID, StreamSeq: e.StreamSeq,
+		TenantId: e.TenantID, Type: e.Type,
 	}
 }
 
@@ -118,13 +112,25 @@ func runQuery(svc *app.Service) echo.HandlerFunc {
 		case "tasks":
 			items, err := svc.QueryTasks(c.Request().Context(), tenant, 50)
 			if err != nil {
-				return c.JSON(http.StatusInternalServerError, map[string]any{"code": "internal", "message": err.Error()})
+				return c.JSON(http.StatusInternalServerError, contracts.DomainError{Code: "internal", Message: err.Error()})
 			}
-			return c.JSON(http.StatusOK, map[string]any{"items": items})
+			return c.JSON(http.StatusOK, contracts.ReadModelPage{Items: toItemMaps(items)})
 		default:
 			return echo.NewHTTPError(http.StatusNotFound, "unknown query")
 		}
 	}
+}
+
+// toItemMaps renders typed read-model rows as the contract's generic items.
+func toItemMaps[T any](rows []T) []map[string]any {
+	out := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		raw, _ := json.Marshal(r)
+		var m map[string]any
+		_ = json.Unmarshal(raw, &m)
+		out = append(out, m)
+	}
+	return out
 }
 
 // streamEvents upgrades to WebSocket and streams the tenant's events from the
@@ -164,7 +170,7 @@ func streamEvents(svc *app.Service, hub *realtime.Hub) echo.HandlerFunc {
 					return err
 				}
 				for _, e := range evs {
-					if err := ws.WriteJSON(toEventDTO(e)); err != nil {
+					if err := ws.WriteJSON(toCommittedEvent(e)); err != nil {
 						return err
 					}
 					cursor = e.GlobalSeq

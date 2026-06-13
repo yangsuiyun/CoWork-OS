@@ -1,9 +1,10 @@
-# oapi-codegen config: OpenAPI -> Go server types (ADR-02).
+# oapi-codegen config: OpenAPI -> Go shared models (ADR-02, Contract-First).
+# Models only: the wire types are the single source of truth shared by the HTTP
+# adapter. Routing stays hand-written (thin); strict-server scaffolding is a
+# later step and not required for the M1 walking skeleton.
 package: contracts
 output: ../../server/pkg/contracts/openapi_gen.go
 generate:
   models: true
-  echo-server: true
-  strict-server: true
 output-options:
   skip-prune: false

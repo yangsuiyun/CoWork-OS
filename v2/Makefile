@@ -1,15 +1,17 @@
 # CoWork OS v2 build entry. Toolchain is provisioned in M1 (env-resolve).
 .PHONY: codegen codegen-check lint test contracts-validate
 
-# Regenerate Go + TS types from contracts (single source of truth, ADR-02).
+# Regenerate Go types from contracts (single source of truth, ADR-02).
+# oapi-codegen -> HTTP wire models; go-jsonschema -> event payload types.
+# TS generation (openapi-typescript -> web/src/contracts) is added together
+# with the frontend project so no orphan artifact is committed before then.
 codegen:
 	cd tools/codegen && oapi-codegen --config oapi-codegen.yaml ../../contracts/openapi.yaml
 	go-jsonschema -p contracts --output server/pkg/contracts/events_gen.go contracts/events/*.schema.json contracts/capability.schema.json
-	npx openapi-typescript contracts/openapi.yaml -o web/src/contracts/openapi.d.ts
 
-# CI drift guard: regenerate into a temp tree and diff; non-empty diff fails.
+# CI drift guard: regenerate and diff; non-empty diff fails the build.
 codegen-check: codegen
-	git diff --exit-code -- server/pkg/contracts web/src/contracts
+	git diff --exit-code -- server/pkg/contracts
 
 # Validate contracts are well-formed (OpenAPI 3.1 + JSON Schema 2020-12).
 contracts-validate:
