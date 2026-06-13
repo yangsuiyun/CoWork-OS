@@ -83,9 +83,10 @@ func TestProjectionAndDeterministicRebuild(t *testing.T) {
 		t.Fatalf("after projection want completed, got %q", status)
 	}
 
-	// Idempotency: re-running applies nothing new and keeps the same state.
-	if n, err := proj.RunOnce(ctx); err != nil || n != 0 {
-		t.Fatalf("re-run want (0,nil) got (%d,%v)", n, err)
+	// Idempotency: a re-run may pick up unrelated events from concurrent test
+	// packages (the log is global), but must never change THIS task's state.
+	if _, err := proj.RunOnce(ctx); err != nil {
+		t.Fatalf("re-run: %v", err)
 	}
 	status2, seq2 := readTask(t, pool, ctx, tenant, id)
 	if status2 != status || seq2 != seq {
