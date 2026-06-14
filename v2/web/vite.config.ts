@@ -7,8 +7,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      "/v1": { target: "http://localhost:8080", ws: true, changeOrigin: true },
-      "/healthz": "http://localhost:8080",
+      "/v1": { target: "http://0.0.0.0:8000", ws: true, changeOrigin: true },
+      "/healthz": "http://0.0.0.0:8000",
     },
   },
 });

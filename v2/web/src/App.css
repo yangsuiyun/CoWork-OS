@@ -96,6 +96,7 @@ button:disabled {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid #d1d5db;
@@ -294,28 +295,39 @@ button.data-row:hover,
 
 .status {
   border-radius: 999px;
-  padding: 3px 8px;
-  color: #fff;
+  padding: 4px 10px;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
 }
 
 .status.ok {
-  background: #16a34a;
+  background: #dcfce7;
+  color: #15803d;
+  border-color: #bbf7d0;
 }
 
 .status.danger {
-  background: #dc2626;
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #fca5a5;
 }
 
 .status.attention {
-  background: #d97706;
+  background: #fef3c7;
+  color: #b45309;
+  border-color: #fde68a;
 }
 
 .status.info {
-  background: #2563eb;
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
 }
 
 button,
@@ -391,3 +403,107 @@ button,
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+/* --- Premium UI/UX Animations and Theme Improvements --- */
+
+/* Modern Focus States & Global Transitions */
+button,
+input,
+select,
+textarea,
+.nav-list button,
+.data-row,
+.metric-card {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+/* Nav Link Hover/Active Translation Slide */
+.nav-list button:hover,
+.nav-list button.active {
+  transform: translateX(4px);
+}
+
+/* Metric Cards Premium Interactions */
+.metric-card {
+  border: 1px solid #e5e7eb;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 48px rgb(15 23 42 / 0.08);
+  border-color: #c7d2fe;
+}
+
+/* Action Center / Composer Panel Tabbed Styling */
+.composer-panel {
+  margin-bottom: 20px;
+}
+
+.composer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 14px;
+  margin-bottom: 18px;
+}
+
+.composer-header h2 {
+  margin: 0 !important;
+  font-size: 16px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.composer-tabs {
+  display: flex;
+  gap: 4px;
+  background: #f1f5f9;
+  padding: 4px;
+  border-radius: 10px;
+}
+
+.composer-tabs button {
+  background: transparent;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+}
+
+.composer-tabs button:hover {
+  color: #1e293b;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.composer-tabs button.active {
+  background: #fff;
+  color: #6366f1;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.composer-content {
+  padding-top: 4px;
+}
+
+.composer-content form {
+  gap: 12px;
+}
+
+.brief-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+

@@ -42,6 +42,35 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "events", label: "Events" },
 ];
 
+// Custom lightweight debounce hook for high-frequency events
+function useDebouncedCallback<T extends (...args: any[]) => void>(callback: T, delay: number) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const callbackRef = useRef(callback);
+
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+
+  const debouncedFn = useCallback((...args: Parameters<T>) => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+    timerRef.current = setTimeout(() => {
+      callbackRef.current(...args);
+    }, delay);
+  }, [delay]);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  return debouncedFn;
+}
+
 export default function App() {
   const [token, setTokenState] = useState(getToken());
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
@@ -49,6 +78,7 @@ export default function App() {
   const [taskEvents, setTaskEvents] = useState<CommittedEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [activeView, setActiveView] = useState<View>("brief");
+  const [composerTab, setComposerTab] = useState<"task" | "session" | "workspace">("task");
   const [prompt, setPrompt] = useState("");
   const [workspace, setWorkspace] = useState("default");
   const [workspaceName, setWorkspaceName] = useState("");
@@ -69,6 +99,8 @@ export default function App() {
     }
   }, []);
 
+  const debouncedRefresh = useDebouncedCallback(refresh, 200);
+
   useEffect(() => {
     if (!token) return;
     refresh();
@@ -77,12 +109,12 @@ export default function App() {
       (e) => {
         cursorRef.current = e.globalSeq;
         setEvents((prev) => [e, ...prev].slice(0, 50));
-        refresh();
+        debouncedRefresh();
       },
       setConnected,
     );
     return close;
-  }, [token, refresh]);
+  }, [token, refresh, debouncedRefresh]);
 
   useEffect(() => {
     if (!selectedTaskId || !token) {
@@ -232,34 +264,99 @@ export default function App() {
 
         {error && <div className="error-banner">{error}</div>}
 
-        <section className="composer-grid">
-          <Panel title="New task">
-            <form onSubmit={onCreate} className="stack">
-              <input value={workspace} onChange={(e) => setWorkspace(e.target.value)} placeholder="workspaceId" />
-              <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="What should the agent do?" />
-              <button disabled={busy || !token || !prompt.trim()}>Create task</button>
-            </form>
-          </Panel>
-
-          <Panel title="Managed session">
-            <form onSubmit={onCreateSession} className="stack">
-              <textarea value={sessionPrompt} onChange={(e) => setSessionPrompt(e.target.value)} placeholder="Create durable run via /v1/sessions" />
-              <button disabled={busy || !token || !sessionPrompt.trim()}>Start session</button>
-              {sessionId && <small className="muted">Last session: {sessionId}</small>}
-            </form>
-          </Panel>
-
-          <Panel title="Workspace">
-            <form onSubmit={onCreateWorkspace} className="stack">
-              <input value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} placeholder="Workspace name" />
-              <button disabled={busy || !token || !workspaceName.trim()}>Create workspace</button>
-            </form>
-          </Panel>
-        </section>
-
         {activeView === "brief" && (
-          <CommandBrief snapshot={snapshot} stats={stats} events={events} onOpenView={setActiveView} onSelectTask={setSelectedTaskId} />
+          <div className="brief-container">
+            <section className="panel composer-panel">
+              <div className="composer-header">
+                <h2>Action Center</h2>
+                <div className="composer-tabs">
+                  <button
+                    className={composerTab === "task" ? "active" : ""}
+                    onClick={() => setComposerTab("task")}
+                  >
+                    New Task
+                  </button>
+                  <button
+                    className={composerTab === "session" ? "active" : ""}
+                    onClick={() => setComposerTab("session")}
+                  >
+                    Managed Session
+                  </button>
+                  <button
+                    className={composerTab === "workspace" ? "active" : ""}
+                    onClick={() => setComposerTab("workspace")}
+                  >
+                    Workspace
+                  </button>
+                </div>
+              </div>
+
+              <div className="composer-content">
+                {composerTab === "task" && (
+                  <form onSubmit={onCreate} className="stack">
+                    <label className="field">
+                      <span>Workspace</span>
+                      <select value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
+                        {snapshot.workspaces.length === 0 ? (
+                          <option value="default">default</option>
+                        ) : (
+                          snapshot.workspaces.map((ws) => (
+                            <option key={ws.id} value={ws.id}>
+                              {ws.name || ws.id} ({ws.id})
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Prompt</span>
+                      <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="What should the agent do?" />
+                    </label>
+                    <button disabled={busy || !token || !prompt.trim()}>Create task</button>
+                  </form>
+                )}
+
+                {composerTab === "session" && (
+                  <form onSubmit={onCreateSession} className="stack">
+                    <label className="field">
+                      <span>Workspace</span>
+                      <select value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
+                        {snapshot.workspaces.length === 0 ? (
+                          <option value="default">default</option>
+                        ) : (
+                          snapshot.workspaces.map((ws) => (
+                            <option key={ws.id} value={ws.id}>
+                              {ws.name || ws.id} ({ws.id})
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Session Prompt</span>
+                      <textarea value={sessionPrompt} onChange={(e) => setSessionPrompt(e.target.value)} placeholder="Create durable run via /v1/sessions" />
+                    </label>
+                    <button disabled={busy || !token || !sessionPrompt.trim()}>Start session</button>
+                    {sessionId && <small className="muted" style={{ display: "block", marginTop: "4px" }}>Last session: {sessionId}</small>}
+                  </form>
+                )}
+
+                {composerTab === "workspace" && (
+                  <form onSubmit={onCreateWorkspace} className="stack">
+                    <label className="field">
+                      <span>Workspace Name</span>
+                      <input value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} placeholder="e.g. Finance Agent, Dev Sandbox" />
+                    </label>
+                    <button disabled={busy || !token || !workspaceName.trim()}>Create workspace</button>
+                  </form>
+                )}
+              </div>
+            </section>
+
+            <CommandBrief snapshot={snapshot} stats={stats} events={events} onOpenView={setActiveView} onSelectTask={setSelectedTaskId} />
+          </div>
         )}
+
         {activeView === "tasks" && <TasksView tasks={snapshot.tasks} selectedTaskId={selectedTaskId} onSelectTask={setSelectedTaskId} />}
         {activeView === "approvals" && <ApprovalsView approvals={snapshot.approvals} busy={busy} onResolve={onResolveApproval} />}
         {activeView === "graph" && <GraphView nodes={snapshot.graphNodes} />}
