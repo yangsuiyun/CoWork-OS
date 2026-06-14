@@ -204,12 +204,13 @@ type TaskView struct {
 
 // QueryTasks returns the tenant's tasks from the read model (populated by the
 // projector). Returns empty before the projector has run.
-func (s *Service) QueryTasks(ctx context.Context, tenant string, limit int) ([]TaskView, error) {
+func (s *Service) QueryTasks(ctx context.Context, tenant string, limit int, offsets ...int) ([]TaskView, error) {
 	var out []TaskView
+	offset := queryOffset(offsets)
 	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT id, workspace_id, status, COALESCE(title,''), risk, origin, updated_seq
-			FROM rm_tasks ORDER BY updated_seq DESC LIMIT $1`, limit)
+			FROM rm_tasks ORDER BY updated_seq DESC LIMIT $1 OFFSET $2`, limit, offset)
 		if err != nil {
 			return err
 		}
@@ -236,12 +237,13 @@ type WorkspaceView struct {
 }
 
 // QueryWorkspaces returns the tenant's workspaces from the read model.
-func (s *Service) QueryWorkspaces(ctx context.Context, tenant string, limit int) ([]WorkspaceView, error) {
+func (s *Service) QueryWorkspaces(ctx context.Context, tenant string, limit int, offsets ...int) ([]WorkspaceView, error) {
 	var out []WorkspaceView
+	offset := queryOffset(offsets)
 	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT id, name, permissions, permissions_version, updated_seq
-			FROM rm_workspaces ORDER BY updated_seq DESC LIMIT $1`, limit)
+			FROM rm_workspaces ORDER BY updated_seq DESC LIMIT $1 OFFSET $2`, limit, offset)
 		if err != nil {
 			return err
 		}
@@ -270,12 +272,13 @@ type ApprovalView struct {
 }
 
 // QueryApprovals returns the tenant's approvals from the read model.
-func (s *Service) QueryApprovals(ctx context.Context, tenant string, limit int) ([]ApprovalView, error) {
+func (s *Service) QueryApprovals(ctx context.Context, tenant string, limit int, offsets ...int) ([]ApprovalView, error) {
 	var out []ApprovalView
+	offset := queryOffset(offsets)
 	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT id, task_id, kind, risk, status, COALESCE(resolved_by,''), updated_seq
-			FROM rm_approvals ORDER BY updated_seq DESC LIMIT $1`, limit)
+			FROM rm_approvals ORDER BY updated_seq DESC LIMIT $1 OFFSET $2`, limit, offset)
 		if err != nil {
 			return err
 		}
@@ -306,12 +309,13 @@ type GraphNodeView struct {
 
 // QueryGraphNodes returns the tenant's orchestration-graph nodes from the read
 // model (populated by the projector).
-func (s *Service) QueryGraphNodes(ctx context.Context, tenant string, limit int) ([]GraphNodeView, error) {
+func (s *Service) QueryGraphNodes(ctx context.Context, tenant string, limit int, offsets ...int) ([]GraphNodeView, error) {
 	var out []GraphNodeView
+	offset := queryOffset(offsets)
 	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT graph_id, node_id, task_id, dispatch_target, COALESCE(remote_task_id,''), status, COALESCE(outcome,''), updated_seq
-			FROM rm_graph_nodes ORDER BY updated_seq DESC LIMIT $1`, limit)
+			FROM rm_graph_nodes ORDER BY updated_seq DESC LIMIT $1 OFFSET $2`, limit, offset)
 		if err != nil {
 			return err
 		}
@@ -340,12 +344,13 @@ type SkillCandidateView struct {
 }
 
 // QuerySkillCandidates returns the tenant's skill candidates from the read model.
-func (s *Service) QuerySkillCandidates(ctx context.Context, tenant string, limit int) ([]SkillCandidateView, error) {
+func (s *Service) QuerySkillCandidates(ctx context.Context, tenant string, limit int, offsets ...int) ([]SkillCandidateView, error) {
 	var out []SkillCandidateView
+	offset := queryOffset(offsets)
 	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT id, name, COALESCE(source_task_id,''), COALESCE(summary,''), status, COALESCE(reviewed_by,''), updated_seq
-			FROM rm_skill_candidates ORDER BY updated_seq DESC LIMIT $1`, limit)
+			FROM rm_skill_candidates ORDER BY updated_seq DESC LIMIT $1 OFFSET $2`, limit, offset)
 		if err != nil {
 			return err
 		}
@@ -372,12 +377,13 @@ type RunnerView struct {
 }
 
 // QueryRunners returns the tenant's local-runner sessions from the read model.
-func (s *Service) QueryRunners(ctx context.Context, tenant string, limit int) ([]RunnerView, error) {
+func (s *Service) QueryRunners(ctx context.Context, tenant string, limit int, offsets ...int) ([]RunnerView, error) {
 	var out []RunnerView
+	offset := queryOffset(offsets)
 	err := s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT id, workspace_id, status, last_pulse, updated_seq
-			FROM rm_runners ORDER BY updated_seq DESC LIMIT $1`, limit)
+			FROM rm_runners ORDER BY updated_seq DESC LIMIT $1 OFFSET $2`, limit, offset)
 		if err != nil {
 			return err
 		}
@@ -413,6 +419,13 @@ func (s *Service) QueryTask(ctx context.Context, tenant, id string) (TaskView, b
 		}
 	})
 	return v, found, err
+}
+
+func queryOffset(offsets []int) int {
+	if len(offsets) == 0 || offsets[0] < 0 {
+		return 0
+	}
+	return offsets[0]
 }
 
 // ErrorCode classifies a Handle error into a stable contract code + HTTP-ish

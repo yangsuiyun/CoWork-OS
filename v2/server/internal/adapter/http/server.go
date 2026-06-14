@@ -6,6 +6,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -119,47 +120,85 @@ func toCommittedEvent(e events.Committed) contracts.CommittedEvent {
 func runQuery(svc *app.Service) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		tenant, _ := c.Get("tenant").(string)
+		page, err := parsePageParams(c)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, contracts.DomainError{Code: "invalid_request", Message: err.Error()})
+		}
 		switch c.Param("name") {
 		case "tasks":
-			items, err := svc.QueryTasks(c.Request().Context(), tenant, 50)
+			items, err := svc.QueryTasks(c.Request().Context(), tenant, page.limit, page.offset)
 			if err != nil {
 				return c.JSON(http.StatusInternalServerError, contracts.DomainError{Code: "internal", Message: err.Error()})
 			}
-			return c.JSON(http.StatusOK, contracts.ReadModelPage{Items: toItemMaps(items)})
+			return c.JSON(http.StatusOK, readModelPage(items, page))
 		case "workspaces":
-			items, err := svc.QueryWorkspaces(c.Request().Context(), tenant, 50)
+			items, err := svc.QueryWorkspaces(c.Request().Context(), tenant, page.limit, page.offset)
 			if err != nil {
 				return c.JSON(http.StatusInternalServerError, contracts.DomainError{Code: "internal", Message: err.Error()})
 			}
-			return c.JSON(http.StatusOK, contracts.ReadModelPage{Items: toItemMaps(items)})
+			return c.JSON(http.StatusOK, readModelPage(items, page))
 		case "approvals":
-			items, err := svc.QueryApprovals(c.Request().Context(), tenant, 50)
+			items, err := svc.QueryApprovals(c.Request().Context(), tenant, page.limit, page.offset)
 			if err != nil {
 				return c.JSON(http.StatusInternalServerError, contracts.DomainError{Code: "internal", Message: err.Error()})
 			}
-			return c.JSON(http.StatusOK, contracts.ReadModelPage{Items: toItemMaps(items)})
+			return c.JSON(http.StatusOK, readModelPage(items, page))
 		case "graphNodes":
-			items, err := svc.QueryGraphNodes(c.Request().Context(), tenant, 50)
+			items, err := svc.QueryGraphNodes(c.Request().Context(), tenant, page.limit, page.offset)
 			if err != nil {
 				return c.JSON(http.StatusInternalServerError, contracts.DomainError{Code: "internal", Message: err.Error()})
 			}
-			return c.JSON(http.StatusOK, contracts.ReadModelPage{Items: toItemMaps(items)})
+			return c.JSON(http.StatusOK, readModelPage(items, page))
 		case "skillCandidates":
-			items, err := svc.QuerySkillCandidates(c.Request().Context(), tenant, 50)
+			items, err := svc.QuerySkillCandidates(c.Request().Context(), tenant, page.limit, page.offset)
 			if err != nil {
 				return c.JSON(http.StatusInternalServerError, contracts.DomainError{Code: "internal", Message: err.Error()})
 			}
-			return c.JSON(http.StatusOK, contracts.ReadModelPage{Items: toItemMaps(items)})
+			return c.JSON(http.StatusOK, readModelPage(items, page))
 		case "runners":
-			items, err := svc.QueryRunners(c.Request().Context(), tenant, 50)
+			items, err := svc.QueryRunners(c.Request().Context(), tenant, page.limit, page.offset)
 			if err != nil {
 				return c.JSON(http.StatusInternalServerError, contracts.DomainError{Code: "internal", Message: err.Error()})
 			}
-			return c.JSON(http.StatusOK, contracts.ReadModelPage{Items: toItemMaps(items)})
+			return c.JSON(http.StatusOK, readModelPage(items, page))
 		default:
 			return echo.NewHTTPError(http.StatusNotFound, "unknown query")
 		}
 	}
+}
+
+type pageParams struct {
+	limit  int
+	offset int
+}
+
+func parsePageParams(c echo.Context) (pageParams, error) {
+	limit := 50
+	if raw := c.QueryParam("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 500 {
+			return pageParams{}, errors.New("limit must be between 1 and 500")
+		}
+		limit = n
+	}
+	offset := 0
+	if raw := c.QueryParam("cursor"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return pageParams{}, errors.New("cursor must be a non-negative offset")
+		}
+		offset = n
+	}
+	return pageParams{limit: limit, offset: offset}, nil
+}
+
+func readModelPage[T any](rows []T, page pageParams) contracts.ReadModelPage {
+	out := contracts.ReadModelPage{Items: toItemMaps(rows)}
+	if len(rows) == page.limit {
+		next := contracts.Cursor(strconv.Itoa(page.offset + len(rows)))
+		out.NextCursor = &next
+	}
+	return out
 }
 
 // toItemMaps renders typed read-model rows as the contract's generic items.
@@ -180,7 +219,10 @@ func toItemMaps[T any](rows []T) []map[string]any {
 func streamEvents(svc *app.Service, hub *realtime.Hub) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		tenant, _ := c.Get("tenant").(string)
-		from, _ := strconv.ParseInt(c.QueryParam("from"), 10, 64)
+		from, err := streamCursor(c)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, contracts.DomainError{Code: "invalid_request", Message: err.Error()})
+		}
 
 		ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 		if err != nil {
@@ -236,6 +278,21 @@ func streamEvents(svc *app.Service, hub *realtime.Hub) echo.HandlerFunc {
 			}
 		}
 	}
+}
+
+func streamCursor(c echo.Context) (int64, error) {
+	raw := c.QueryParam("cursor")
+	if raw == "" {
+		raw = c.QueryParam("from")
+	}
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n < 0 {
+		return 0, errors.New("cursor must be a non-negative global sequence")
+	}
+	return n, nil
 }
 
 func statusFor(category string) int {

@@ -98,6 +98,10 @@ func streamSessionEvents(svc *app.Service, hub *realtime.Hub) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		tenant, _ := c.Get("tenant").(string)
 		streamID := "task:" + c.Param("id")
+		cursor, err := streamCursor(c)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, contracts.DomainError{Code: "invalid_request", Message: err.Error()})
+		}
 
 		w := c.Response()
 		w.Header().Set(echo.HeaderContentType, "text/event-stream")
@@ -110,7 +114,6 @@ func streamSessionEvents(svc *app.Service, hub *realtime.Hub) echo.HandlerFunc {
 		defer release()
 
 		ctx := c.Request().Context()
-		var cursor int64
 		drain := func() error {
 			for {
 				evs, err := svc.EventsSince(ctx, tenant, cursor, 200)

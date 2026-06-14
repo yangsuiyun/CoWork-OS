@@ -95,6 +95,42 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 }
 
+func TestQueryPagination(t *testing.T) {
+	e, proj, jwtTok, ctx := newSessionServer(t)
+
+	firstRec, first := mustPost(t, e, jwtTok, "/v1/sessions", `{"prompt":"first","workspaceId":"w"}`)
+	secondRec, second := mustPost(t, e, jwtTok, "/v1/sessions", `{"prompt":"second","workspaceId":"w"}`)
+	if firstRec.Code != http.StatusCreated || secondRec.Code != http.StatusCreated {
+		t.Fatalf("create sessions: first=%d %v second=%d %v", firstRec.Code, first, secondRec.Code, second)
+	}
+	if _, err := proj.RunOnce(ctx); err != nil {
+		t.Fatalf("project: %v", err)
+	}
+
+	rec, page1 := mustGet(t, e, jwtTok, "/v1/query/tasks?limit=1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page1: code=%d out=%v", rec.Code, page1)
+	}
+	items1, _ := page1["items"].([]any)
+	if len(items1) != 1 || page1["nextCursor"] != "1" {
+		t.Fatalf("page1 want one item and nextCursor=1, got %v", page1)
+	}
+
+	rec, page2 := mustGet(t, e, jwtTok, "/v1/query/tasks?limit=1&cursor=1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page2: code=%d out=%v", rec.Code, page2)
+	}
+	items2, _ := page2["items"].([]any)
+	if len(items2) != 1 || items1[0].(map[string]any)["id"] == items2[0].(map[string]any)["id"] {
+		t.Fatalf("page2 must return a different item, page1=%v page2=%v", page1, page2)
+	}
+
+	rec, out := mustGet(t, e, jwtTok, "/v1/query/tasks?limit=0")
+	if rec.Code != http.StatusBadRequest || out["code"] != "invalid_request" {
+		t.Fatalf("invalid limit want 400 invalid_request, got %d: %v", rec.Code, out)
+	}
+}
+
 func TestSessionEventsSSE(t *testing.T) {
 	e, _, jwtTok, _ := newSessionServer(t)
 
