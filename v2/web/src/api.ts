@@ -3,10 +3,11 @@ import type { components } from "./contracts/openapi";
 export type CommittedEvent = components["schemas"]["CommittedEvent"];
 export type DomainError = components["schemas"]["DomainError"];
 export type ReadModelPage = components["schemas"]["ReadModelPage"];
+export type ManagedSession = components["schemas"]["ManagedSession"];
 
-// TaskRow is the read-model shape returned under ReadModelPage.items. The
-// contract types items as generic objects, so we narrow the fields we render.
-export interface TaskRow {
+// Read models are returned under ReadModelPage.items. The OpenAPI contract keeps
+// items generic, so this file is the single client-side narrowing point.
+export interface TaskView {
   id: string;
   workspaceId: string;
   status: string;
@@ -14,6 +15,62 @@ export interface TaskRow {
   risk: string;
   origin: string;
   updatedSeq: number;
+}
+
+export interface WorkspaceView {
+  id: string;
+  name: string;
+  permissions?: { paths?: string[]; domains?: string[] } | Record<string, unknown>;
+  permissionsVersion: number;
+  updatedSeq: number;
+}
+
+export interface ApprovalView {
+  id: string;
+  taskId: string;
+  kind: string;
+  risk: string;
+  status: string;
+  resolvedBy: string;
+  updatedSeq: number;
+}
+
+export interface GraphNodeView {
+  graphId: string;
+  nodeId: string;
+  taskId: string;
+  dispatchTarget: string;
+  remoteTaskId: string;
+  status: string;
+  outcome: string;
+  updatedSeq: number;
+}
+
+export interface SkillCandidateView {
+  id: string;
+  name: string;
+  sourceTaskId: string;
+  summary: string;
+  status: string;
+  reviewedBy: string;
+  updatedSeq: number;
+}
+
+export interface RunnerView {
+  id: string;
+  workspaceId: string;
+  status: string;
+  lastPulse: number;
+  updatedSeq: number;
+}
+
+export interface Snapshot {
+  tasks: TaskView[];
+  workspaces: WorkspaceView[];
+  approvals: ApprovalView[];
+  graphNodes: GraphNodeView[];
+  skillCandidates: SkillCandidateView[];
+  runners: RunnerView[];
 }
 
 const TOKEN_KEY = "cowork_token";
@@ -44,15 +101,80 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return data as T;
 }
 
-export function listTasks(): Promise<ReadModelPage> {
-  return request<ReadModelPage>("GET", "/v1/query/tasks");
+async function query<T>(name: string): Promise<T[]> {
+  const page = await request<ReadModelPage>("GET", `/v1/query/${name}`);
+  return (page.items as T[] | undefined) ?? [];
+}
+
+export function listTasks(): Promise<TaskView[]> {
+  return query<TaskView>("tasks");
+}
+
+export function listWorkspaces(): Promise<WorkspaceView[]> {
+  return query<WorkspaceView>("workspaces");
+}
+
+export function listApprovals(): Promise<ApprovalView[]> {
+  return query<ApprovalView>("approvals");
+}
+
+export function listGraphNodes(): Promise<GraphNodeView[]> {
+  return query<GraphNodeView>("graphNodes");
+}
+
+export function listSkillCandidates(): Promise<SkillCandidateView[]> {
+  return query<SkillCandidateView>("skillCandidates");
+}
+
+export function listRunners(): Promise<RunnerView[]> {
+  return query<RunnerView>("runners");
+}
+
+export async function loadSnapshot(): Promise<Snapshot> {
+  const [tasks, workspaces, approvals, graphNodes, skillCandidates, runners] = await Promise.all([
+    listTasks(),
+    listWorkspaces(),
+    listApprovals(),
+    listGraphNodes(),
+    listSkillCandidates(),
+    listRunners(),
+  ]);
+  return { tasks, workspaces, approvals, graphNodes, skillCandidates, runners };
+}
+
+export function dispatchCommand(type: string, payload: Record<string, unknown>): Promise<{ events: CommittedEvent[] }> {
+  return request("POST", "/v1/commands", { type, payload });
 }
 
 export function createTask(prompt: string, workspaceId: string): Promise<unknown> {
-  return request("POST", "/v1/commands", {
-    type: "CreateTask",
-    payload: { canonicalPrompt: prompt, workspaceId, origin: "api", risk: "low" },
+  return dispatchCommand("CreateTask", {
+    canonicalPrompt: prompt,
+    workspaceId,
+    origin: "api",
+    risk: "low",
   });
+}
+
+export function createWorkspace(workspaceId: string, name: string): Promise<unknown> {
+  return dispatchCommand("CreateWorkspace", { workspaceId, name });
+}
+
+export function resolveApproval(approvalId: string, decision: "approve" | "reject", reason: string): Promise<unknown> {
+  const command = decision === "approve" ? "ApproveApproval" : "RejectApproval";
+  return dispatchCommand(command, { approvalId, reason });
+}
+
+export function createManagedSession(prompt: string, workspaceId: string): Promise<ManagedSession> {
+  const body = workspaceId ? { prompt, workspaceId } : { prompt };
+  return request<ManagedSession>("POST", "/v1/sessions", body);
+}
+
+export function getManagedSession(id: string): Promise<ManagedSession> {
+  return request<ManagedSession>("GET", `/v1/sessions/${encodeURIComponent(id)}`);
+}
+
+export function cancelManagedSession(id: string): Promise<{ events: CommittedEvent[] }> {
+  return request("POST", `/v1/sessions/${encodeURIComponent(id)}/cancel`);
 }
 
 // streamEvents opens the WebSocket live stream from the given cursor. Browsers
@@ -76,4 +198,11 @@ export function streamEvents(
     }
   };
   return () => ws.close();
+}
+
+export function streamTaskEvents(taskId: string, onEvent: (e: CommittedEvent) => void, onError: (message: string) => void): () => void {
+  const source = new EventSource(`/v1/sessions/${encodeURIComponent(taskId)}/events?token=${encodeURIComponent(getToken())}`);
+  source.onmessage = (msg) => onEvent(JSON.parse(msg.data) as CommittedEvent);
+  source.onerror = () => onError("Task event stream disconnected");
+  return () => source.close();
 }
