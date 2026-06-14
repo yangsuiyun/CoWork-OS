@@ -11,7 +11,7 @@ CREATE TABLE rm_workspaces (
   permissions_version INT         NOT NULL DEFAULT 0,
   updated_seq         BIGINT      NOT NULL,
   updated_at          TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (id)
+  PRIMARY KEY (tenant_id, id)
 );
 CREATE INDEX rm_workspaces_tenant_idx ON rm_workspaces (tenant_id);
 

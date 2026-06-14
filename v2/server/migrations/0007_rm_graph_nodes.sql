@@ -15,7 +15,7 @@ CREATE TABLE rm_graph_nodes (
   outcome         TEXT,
   updated_seq     BIGINT      NOT NULL,
   updated_at      TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (graph_id, node_id)
+  PRIMARY KEY (tenant_id, graph_id, node_id)
 );
 CREATE INDEX rm_graph_nodes_task_idx ON rm_graph_nodes (tenant_id, task_id);
 

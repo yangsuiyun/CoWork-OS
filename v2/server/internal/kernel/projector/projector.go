@@ -200,7 +200,7 @@ func applyToTasks(ctx context.Context, tx pgx.Tx, seq int64, tenant, stream, typ
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO rm_tasks (id, tenant_id, workspace_id, parent_task_id, status, title, risk, origin, updated_seq, updated_at)
 			VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9)
-			ON CONFLICT (id) DO NOTHING`,
+			ON CONFLICT (tenant_id, id) DO NOTHING`,
 			taskID, tenant, p.WorkspaceID, p.ParentTaskID, p.CanonicalPrompt, p.Risk, p.Origin, seq, occurredAt); err != nil {
 			return err
 		}
@@ -217,16 +217,16 @@ func applyToTasks(ctx context.Context, tx pgx.Tx, seq int64, tenant, stream, typ
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO rm_artifacts (id, tenant_id, task_id, path, sha256, mime, size, created_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`,
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (tenant_id, id) DO NOTHING`,
 			p.ArtifactID, tenant, taskID, p.Path, p.SHA256, p.Mime, p.Size, occurredAt); err != nil {
 			return err
 		}
 	} else if status, ok := statusForType(typ); ok {
 		// Monotonic guard: ignore stale/replayed events (idempotent).
 		if _, err := tx.Exec(ctx, `
-			UPDATE rm_tasks SET status = $2, updated_seq = $3, updated_at = $4
-			WHERE id = $1 AND updated_seq < $3`,
-			taskID, status, seq, occurredAt); err != nil {
+			UPDATE rm_tasks SET status = $3, updated_seq = $4, updated_at = $5
+			WHERE tenant_id = $1 AND id = $2 AND updated_seq < $4`,
+			tenant, taskID, status, seq, occurredAt); err != nil {
 			return err
 		}
 	}
@@ -234,7 +234,7 @@ func applyToTasks(ctx context.Context, tx pgx.Tx, seq int64, tenant, stream, typ
 	// Timeline entry per event (idempotent on replay).
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO rm_timeline (tenant_id, task_id, seq, kind, summary, occurred_at)
-		VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (task_id, seq) DO NOTHING`,
+		VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (tenant_id, task_id, seq) DO NOTHING`,
 		tenant, taskID, seq, typ, typ, occurredAt); err != nil {
 		return err
 	}
@@ -259,11 +259,11 @@ func applyToApprovals(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ str
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO rm_approvals (id, tenant_id, task_id, kind, risk, status, updated_seq, updated_at)
-			VALUES ($1,$2,$3,$4,$5,'pending',$6,$7) ON CONFLICT (id) DO NOTHING`,
+			VALUES ($1,$2,$3,$4,$5,'pending',$6,$7) ON CONFLICT (tenant_id, id) DO NOTHING`,
 			p.ApprovalID, tenant, p.TaskID, p.Kind, p.Risk, seq, occurredAt); err != nil {
 			return err
 		}
-		return crossUpdateTaskStatus(ctx, tx, p.TaskID, "awaiting_approval", seq, occurredAt)
+		return crossUpdateTaskStatus(ctx, tx, tenant, p.TaskID, "awaiting_approval", seq, occurredAt)
 	case "ApprovalResolved":
 		var p struct {
 			ApprovalID string `json:"approvalId"`
@@ -280,23 +280,23 @@ func applyToApprovals(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ str
 		}
 		// Monotonic guard: ignore stale/replayed events (idempotent).
 		if _, err := tx.Exec(ctx, `
-			UPDATE rm_approvals SET status = $2, resolved_by = $3, updated_seq = $4, updated_at = $5
-			WHERE id = $1 AND updated_seq < $4`,
-			p.ApprovalID, status, p.ResolvedBy, seq, occurredAt); err != nil {
+			UPDATE rm_approvals SET status = $3, resolved_by = $4, updated_seq = $5, updated_at = $6
+			WHERE tenant_id = $1 AND id = $2 AND updated_seq < $5`,
+			tenant, p.ApprovalID, status, p.ResolvedBy, seq, occurredAt); err != nil {
 			return err
 		}
-		return crossUpdateTaskStatus(ctx, tx, p.TaskID, "pending", seq, occurredAt)
+		return crossUpdateTaskStatus(ctx, tx, tenant, p.TaskID, "pending", seq, occurredAt)
 	}
 	return nil
 }
 
 // crossUpdateTaskStatus moves the owning task's status under the same monotonic
 // guard used by applyToTasks, keeping replays idempotent.
-func crossUpdateTaskStatus(ctx context.Context, tx pgx.Tx, taskID, status string, seq int64, occurredAt time.Time) error {
+func crossUpdateTaskStatus(ctx context.Context, tx pgx.Tx, tenant, taskID, status string, seq int64, occurredAt time.Time) error {
 	_, err := tx.Exec(ctx, `
-		UPDATE rm_tasks SET status = $2, updated_seq = $3, updated_at = $4
-		WHERE id = $1 AND updated_seq < $3`,
-		taskID, status, seq, occurredAt)
+		UPDATE rm_tasks SET status = $3, updated_seq = $4, updated_at = $5
+		WHERE tenant_id = $1 AND id = $2 AND updated_seq < $4`,
+		tenant, taskID, status, seq, occurredAt)
 	return err
 }
 
@@ -314,7 +314,7 @@ func applyToWorkspaces(ctx context.Context, tx pgx.Tx, seq int64, tenant, stream
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO rm_workspaces (id, tenant_id, name, permissions, permissions_version, updated_seq, updated_at)
 			VALUES ($1,$2,$3,'{}'::jsonb,0,$4,$5)
-			ON CONFLICT (id) DO NOTHING`,
+			ON CONFLICT (tenant_id, id) DO NOTHING`,
 			wsID, tenant, p.Name, seq, occurredAt); err != nil {
 			return err
 		}
@@ -328,9 +328,9 @@ func applyToWorkspaces(ctx context.Context, tx pgx.Tx, seq int64, tenant, stream
 		}
 		// Monotonic guard: ignore stale/replayed events (idempotent).
 		if _, err := tx.Exec(ctx, `
-			UPDATE rm_workspaces SET permissions = $2, permissions_version = $3, updated_seq = $4, updated_at = $5
-			WHERE id = $1 AND updated_seq < $4`,
-			wsID, []byte(p.Permissions), p.Version, seq, occurredAt); err != nil {
+			UPDATE rm_workspaces SET permissions = $3, permissions_version = $4, updated_seq = $5, updated_at = $6
+			WHERE tenant_id = $1 AND id = $2 AND updated_seq < $5`,
+			tenant, wsID, []byte(p.Permissions), p.Version, seq, occurredAt); err != nil {
 			return err
 		}
 	}
@@ -357,7 +357,7 @@ func applyToGraph(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ string,
 		for _, n := range p.Nodes {
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO rm_graph_nodes (graph_id, node_id, tenant_id, task_id, dispatch_target, status, updated_seq, updated_at)
-				VALUES ($1,$2,$3,$4,$5,'pending',$6,$7) ON CONFLICT (graph_id, node_id) DO NOTHING`,
+				VALUES ($1,$2,$3,$4,$5,'pending',$6,$7) ON CONFLICT (tenant_id, graph_id, node_id) DO NOTHING`,
 				p.GraphID, n.NodeID, tenant, p.TaskID, n.DispatchTarget, seq, occurredAt); err != nil {
 				return err
 			}
@@ -372,9 +372,9 @@ func applyToGraph(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ string,
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE rm_graph_nodes SET status = 'dispatched', remote_task_id = NULLIF($3,''), updated_seq = $4, updated_at = $5
-			WHERE graph_id = $1 AND node_id = $2 AND updated_seq < $4`,
-			p.GraphID, p.NodeID, p.RemoteTaskID, seq, occurredAt); err != nil {
+			UPDATE rm_graph_nodes SET status = 'dispatched', remote_task_id = NULLIF($4,''), updated_seq = $5, updated_at = $6
+			WHERE tenant_id = $1 AND graph_id = $2 AND node_id = $3 AND updated_seq < $5`,
+			tenant, p.GraphID, p.NodeID, p.RemoteTaskID, seq, occurredAt); err != nil {
 			return err
 		}
 	case "NodeUpdated":
@@ -388,9 +388,9 @@ func applyToGraph(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ string,
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE rm_graph_nodes SET status = $3, outcome = NULLIF($4,''), updated_seq = $5, updated_at = $6
-			WHERE graph_id = $1 AND node_id = $2 AND updated_seq < $5`,
-			p.GraphID, p.NodeID, p.Status, p.Outcome, seq, occurredAt); err != nil {
+			UPDATE rm_graph_nodes SET status = $4, outcome = NULLIF($5,''), updated_seq = $6, updated_at = $7
+			WHERE tenant_id = $1 AND graph_id = $2 AND node_id = $3 AND updated_seq < $6`,
+			tenant, p.GraphID, p.NodeID, p.Status, p.Outcome, seq, occurredAt); err != nil {
 			return err
 		}
 	case "ResultMerged":
@@ -417,7 +417,7 @@ func applyToSkillCandidates(ctx context.Context, tx pgx.Tx, seq int64, tenant, t
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO rm_skill_candidates (id, tenant_id, name, source_task_id, summary, status, updated_seq, updated_at)
-			VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),'proposed',$6,$7) ON CONFLICT (id) DO NOTHING`,
+			VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),'proposed',$6,$7) ON CONFLICT (tenant_id, id) DO NOTHING`,
 			p.CandidateID, tenant, p.Name, p.SourceTaskID, p.Summary, seq, occurredAt); err != nil {
 			return err
 		}
@@ -430,9 +430,9 @@ func applyToSkillCandidates(ctx context.Context, tx pgx.Tx, seq int64, tenant, t
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE rm_skill_candidates SET status = 'published', reviewed_by = $2, updated_seq = $3, updated_at = $4
-			WHERE id = $1 AND updated_seq < $3`,
-			p.CandidateID, p.ReviewedBy, seq, occurredAt); err != nil {
+			UPDATE rm_skill_candidates SET status = 'published', reviewed_by = $3, updated_seq = $4, updated_at = $5
+			WHERE tenant_id = $1 AND id = $2 AND updated_seq < $4`,
+			tenant, p.CandidateID, p.ReviewedBy, seq, occurredAt); err != nil {
 			return err
 		}
 	case "SkillCandidateRejected":
@@ -444,9 +444,9 @@ func applyToSkillCandidates(ctx context.Context, tx pgx.Tx, seq int64, tenant, t
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE rm_skill_candidates SET status = 'rejected', reviewed_by = $2, updated_seq = $3, updated_at = $4
-			WHERE id = $1 AND updated_seq < $3`,
-			p.CandidateID, p.ReviewedBy, seq, occurredAt); err != nil {
+			UPDATE rm_skill_candidates SET status = 'rejected', reviewed_by = $3, updated_seq = $4, updated_at = $5
+			WHERE tenant_id = $1 AND id = $2 AND updated_seq < $4`,
+			tenant, p.CandidateID, p.ReviewedBy, seq, occurredAt); err != nil {
 			return err
 		}
 	}
@@ -470,7 +470,7 @@ func applyToRunners(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ strin
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO rm_runners (id, tenant_id, workspace_id, status, last_pulse, updated_seq, updated_at)
 			VALUES ($1,$2,$3,'active',0,$4,$5)
-			ON CONFLICT (id) DO UPDATE SET status = 'active', last_pulse = 0, updated_seq = $4, updated_at = $5
+			ON CONFLICT (tenant_id, id) DO UPDATE SET status = 'active', last_pulse = 0, updated_seq = $4, updated_at = $5
 			WHERE rm_runners.updated_seq < $4`,
 			p.RunnerID, tenant, p.WorkspaceID, seq, occurredAt); err != nil {
 			return err
@@ -484,9 +484,9 @@ func applyToRunners(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ strin
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE rm_runners SET last_pulse = $2, updated_seq = $3, updated_at = $4
-			WHERE id = $1 AND updated_seq < $3`,
-			p.RunnerID, p.Pulse, seq, occurredAt); err != nil {
+			UPDATE rm_runners SET last_pulse = $3, updated_seq = $4, updated_at = $5
+			WHERE tenant_id = $1 AND id = $2 AND updated_seq < $4`,
+			tenant, p.RunnerID, p.Pulse, seq, occurredAt); err != nil {
 			return err
 		}
 	case "RunnerStale":
@@ -497,9 +497,9 @@ func applyToRunners(ctx context.Context, tx pgx.Tx, seq int64, tenant, typ strin
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE rm_runners SET status = 'stale', updated_seq = $2, updated_at = $3
-			WHERE id = $1 AND updated_seq < $2`,
-			p.RunnerID, seq, occurredAt); err != nil {
+			UPDATE rm_runners SET status = 'stale', updated_seq = $3, updated_at = $4
+			WHERE tenant_id = $1 AND id = $2 AND updated_seq < $3`,
+			tenant, p.RunnerID, seq, occurredAt); err != nil {
 			return err
 		}
 	}

@@ -133,6 +133,40 @@ func TestWorkspaceCommandsOverHTTP(t *testing.T) {
 	}
 }
 
+func TestCommandIdempotencyAndExpectedSeq(t *testing.T) {
+	e, jwtTok := newServer(t)
+	taskID := fmt.Sprintf("idem-%d", time.Now().UnixNano())
+	body := fmt.Sprintf(`{"type":"CreateTask","idempotencyKey":"k1","expectedStreamSeq":0,"payload":{"taskId":%q,"workspaceId":"w1","canonicalPrompt":"do x","risk":"low"}}`, taskID)
+
+	rec, out := do(t, e, jwtTok, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create want 200 got %d: %v", rec.Code, out)
+	}
+	firstEvents, _ := out["events"].([]any)
+	if len(firstEvents) != 1 {
+		t.Fatalf("expected first event, got %v", out)
+	}
+
+	rec, out = do(t, e, jwtTok, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("idempotent retry want 200 got %d: %v", rec.Code, out)
+	}
+	retryEvents, _ := out["events"].([]any)
+	if len(retryEvents) != 1 || retryEvents[0].(map[string]any)["globalSeq"] != firstEvents[0].(map[string]any)["globalSeq"] {
+		t.Fatalf("retry must return original event, got %v", out)
+	}
+
+	rec, out = do(t, e, jwtTok, fmt.Sprintf(`{"type":"StartTurn","idempotencyKey":"k1","payload":{"taskId":%q}}`, taskID))
+	if rec.Code != http.StatusConflict || out["code"] != "idempotency_conflict" {
+		t.Fatalf("key reuse want 409 idempotency_conflict, got %d: %v", rec.Code, out)
+	}
+
+	rec, out = do(t, e, jwtTok, fmt.Sprintf(`{"type":"StartTurn","expectedStreamSeq":0,"payload":{"taskId":%q}}`, taskID))
+	if rec.Code != http.StatusConflict || out["code"] != "concurrency_conflict" {
+		t.Fatalf("stale expected seq want 409 concurrency_conflict, got %d: %v", rec.Code, out)
+	}
+}
+
 func TestUnknownCommand(t *testing.T) {
 	e, jwtTok := newServer(t)
 	rec, out := do(t, e, jwtTok, `{"type":"Frobnicate","payload":{}}`)

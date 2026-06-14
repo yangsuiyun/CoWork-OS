@@ -63,6 +63,9 @@ func authMiddleware(secret string) echo.MiddlewareFunc {
 				return echo.NewHTTPError(http.StatusForbidden, "missing tenant claim")
 			}
 			actor, _ := claims["sub"].(string)
+			if actor == "" {
+				return echo.NewHTTPError(http.StatusForbidden, "missing subject claim")
+			}
 			c.Set("tenant", tenant)
 			c.Set("actor", actor)
 			return next(c)
@@ -83,7 +86,11 @@ func dispatchCommand(svc *app.Service) echo.HandlerFunc {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid payload")
 		}
-		committed, err := svc.Handle(c.Request().Context(), tenant, actor, req.Type, payload)
+		opt := app.CommandOptions{ExpectedStreamSeq: req.ExpectedStreamSeq}
+		if req.IdempotencyKey != nil {
+			opt.IdempotencyKey = *req.IdempotencyKey
+		}
+		committed, err := svc.Handle(c.Request().Context(), tenant, actor, req.Type, payload, opt)
 		if err != nil {
 			code, category := app.ErrorCode(err)
 			return c.JSON(statusFor(category), contracts.DomainError{Code: code, Message: err.Error()})

@@ -7,6 +7,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/approval"
@@ -17,6 +18,7 @@ import (
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/task"
 	"github.com/coworkos/cowork-os/v2/server/internal/kernel/workspace"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -31,6 +33,15 @@ type Service struct {
 	pool  *pgxpool.Pool
 }
 
+// CommandOptions carries optional wire-level command semantics from OpenAPI.
+type CommandOptions struct {
+	IdempotencyKey    string
+	ExpectedStreamSeq *int64
+}
+
+// ErrIdempotencyConflict is returned when a key is reused for a different command.
+var ErrIdempotencyConflict = errors.New("app: idempotency key reused with different command")
+
 // New constructs a Service.
 func New(pool *pgxpool.Pool) *Service {
 	return &Service{store: events.NewStore(pool), pool: pool}
@@ -38,15 +49,30 @@ func New(pool *pgxpool.Pool) *Service {
 
 // Handle processes a command end-to-end: load stream -> rebuild aggregate ->
 // decide (invariants) -> append events + outbox, all in one tenant tx.
-func (s *Service) Handle(ctx context.Context, tenant, actor, cmdType string, payload []byte) ([]events.Committed, error) {
+func (s *Service) Handle(ctx context.Context, tenant, actor, cmdType string, payload []byte, opts ...CommandOptions) ([]events.Committed, error) {
 	stream, reduce, err := planCommand(cmdType, actor, payload)
 	if err != nil {
 		return nil, err
 	}
+	var opt CommandOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
 
 	var committed []events.Committed
 	err = s.store.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
-		history, err := s.store.LoadStream(ctx, tx, stream)
+		if opt.IdempotencyKey != "" {
+			prior, found, err := s.loadProcessedCommand(ctx, tx, tenant, opt.IdempotencyKey, cmdType)
+			if err != nil {
+				return err
+			}
+			if found {
+				committed = prior
+				return nil
+			}
+		}
+
+		history, err := s.store.LoadStream(ctx, tx, tenant, stream)
 		if err != nil {
 			return err
 		}
@@ -61,9 +87,18 @@ func (s *Service) Handle(ctx context.Context, tenant, actor, cmdType string, pay
 		if n := len(history); n > 0 {
 			expectedSeq = history[n-1].StreamSeq
 		}
+		if opt.ExpectedStreamSeq != nil && *opt.ExpectedStreamSeq != expectedSeq {
+			return fmt.Errorf("%w: stream=%s expected=%d actual=%d",
+				events.ErrConcurrencyConflict, stream, *opt.ExpectedStreamSeq, expectedSeq)
+		}
 		committed, err = s.store.Append(ctx, tx, tenant, stream, expectedSeq, toAppend)
 		if err != nil {
 			return err
+		}
+		if opt.IdempotencyKey != "" {
+			if err := s.recordProcessedCommand(ctx, tx, tenant, opt.IdempotencyKey, cmdType, committed); err != nil {
+				return err
+			}
 		}
 		// Transactional NOTIFY: delivered on commit, wakes WS fan-out.
 		if n := len(committed); n > 0 {
@@ -76,6 +111,59 @@ func (s *Service) Handle(ctx context.Context, tenant, actor, cmdType string, pay
 		return nil, err
 	}
 	return committed, nil
+}
+
+func (s *Service) loadProcessedCommand(ctx context.Context, tx pgx.Tx, tenant, key, cmdType string) ([]events.Committed, bool, error) {
+	var priorType string
+	var seqs []int64
+	err := tx.QueryRow(ctx, `
+		SELECT command_type, result_seqs FROM processed_command
+		WHERE tenant_id = $1 AND idempotency_key = $2`,
+		tenant, key).Scan(&priorType, &seqs)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return nil, false, nil
+	case err != nil:
+		return nil, false, err
+	case priorType != cmdType:
+		return nil, false, ErrIdempotencyConflict
+	case len(seqs) == 0:
+		return nil, true, nil
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT global_seq, tenant_id, stream_id, stream_seq, type, schema_ver, payload, actor, correlation_id, causation_id, occurred_at
+		FROM event_log WHERE tenant_id = $1 AND global_seq = ANY($2) ORDER BY global_seq`,
+		tenant, seqs)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	out := make([]events.Committed, 0, len(seqs))
+	for rows.Next() {
+		var c events.Committed
+		if err := rows.Scan(&c.GlobalSeq, &c.TenantID, &c.StreamID, &c.StreamSeq, &c.Type, &c.SchemaVer,
+			&c.Payload, &c.Actor, &c.CorrelationID, &c.CausationID, &c.OccurredAt); err != nil {
+			return nil, false, err
+		}
+		out = append(out, c)
+	}
+	return out, true, rows.Err()
+}
+
+func (s *Service) recordProcessedCommand(ctx context.Context, tx pgx.Tx, tenant, key, cmdType string, committed []events.Committed) error {
+	seqs := make([]int64, 0, len(committed))
+	for _, e := range committed {
+		seqs = append(seqs, e.GlobalSeq)
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO processed_command (tenant_id, idempotency_key, command_type, result_seqs)
+		VALUES ($1, $2, $3, $4)`,
+		tenant, key, cmdType, seqs)
+	if err != nil && isUniqueViolation(err) {
+		return fmt.Errorf("%w: idempotency_key=%s", events.ErrConcurrencyConflict, key)
+	}
+	return err
 }
 
 // EventsSince returns the tenant's events with global_seq greater than fromSeq,
@@ -333,6 +421,8 @@ func ErrorCode(err error) (code string, category string) {
 	switch {
 	case errors.Is(err, ErrUnknownCommand):
 		return "unknown_command", "bad_request"
+	case errors.Is(err, ErrIdempotencyConflict):
+		return "idempotency_conflict", "conflict"
 	case errors.Is(err, events.ErrConcurrencyConflict):
 		return "concurrency_conflict", "conflict"
 	case errors.Is(err, task.ErrAlreadyExists),
@@ -361,4 +451,9 @@ func ErrorCode(err error) (code string, category string) {
 	default:
 		return "internal", "internal"
 	}
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

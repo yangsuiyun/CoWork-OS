@@ -14,7 +14,7 @@ CREATE TABLE rm_skill_candidates (
   reviewed_by    TEXT,
   updated_seq    BIGINT      NOT NULL,
   updated_at     TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (id)
+  PRIMARY KEY (tenant_id, id)
 );
 CREATE INDEX rm_skill_candidates_status_idx ON rm_skill_candidates (tenant_id, status);
 

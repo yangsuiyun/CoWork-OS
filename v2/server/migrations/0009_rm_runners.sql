@@ -13,7 +13,7 @@ CREATE TABLE rm_runners (
   last_pulse   BIGINT      NOT NULL DEFAULT 0,
   updated_seq  BIGINT      NOT NULL,
   updated_at   TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (id)
+  PRIMARY KEY (tenant_id, id)
 );
 CREATE INDEX rm_runners_ws_idx ON rm_runners (tenant_id, workspace_id, status);
 

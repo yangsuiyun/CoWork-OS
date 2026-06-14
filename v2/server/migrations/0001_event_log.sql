@@ -15,10 +15,10 @@ CREATE TABLE event_log (
   causation_id   TEXT,
   occurred_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (global_seq),
-  UNIQUE (stream_id, stream_seq)                        -- concurrent write conflict -> retry command
+  UNIQUE (tenant_id, stream_id, stream_seq)             -- concurrent write conflict -> retry command
 );
 CREATE INDEX event_log_tenant_seq_idx ON event_log (tenant_id, global_seq);
-CREATE INDEX event_log_stream_idx ON event_log (stream_id, stream_seq);
+CREATE INDEX event_log_stream_idx ON event_log (tenant_id, stream_id, stream_seq);
 
 -- global_seq is assigned by the single writer from this sequence while holding a
 -- per-shard advisory lock, so the committed value is monotonically VISIBLE and

@@ -123,12 +123,12 @@ func (s *Store) Append(ctx context.Context, tx pgx.Tx, tenantID, streamID string
 	return out, nil
 }
 
-// LoadStream returns all events of a stream ordered by stream_seq. The last
-// element's StreamSeq is the expectedSeq for the next Append (0 if empty).
-func (s *Store) LoadStream(ctx context.Context, tx pgx.Tx, streamID string) ([]Committed, error) {
+// LoadStream returns one tenant's events of a stream ordered by stream_seq. The
+// last element's StreamSeq is the expectedSeq for the next Append (0 if empty).
+func (s *Store) LoadStream(ctx context.Context, tx pgx.Tx, tenantID, streamID string) ([]Committed, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT global_seq, tenant_id, stream_id, stream_seq, type, schema_ver, payload, actor, correlation_id, causation_id, occurred_at
-		FROM event_log WHERE stream_id = $1 ORDER BY stream_seq`, streamID)
+		FROM event_log WHERE tenant_id = $1 AND stream_id = $2 ORDER BY stream_seq`, tenantID, streamID)
 	if err != nil {
 		return nil, err
 	}

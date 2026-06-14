@@ -15,7 +15,7 @@ CREATE TABLE rm_approvals (
   reason      TEXT,
   updated_seq BIGINT      NOT NULL,
   updated_at  TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (id)
+  PRIMARY KEY (tenant_id, id)
 );
 CREATE INDEX rm_approvals_task_idx ON rm_approvals (tenant_id, task_id, status);
 

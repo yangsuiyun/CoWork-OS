@@ -51,7 +51,7 @@ func TestAppendAndLoad(t *testing.T) {
 	}
 
 	err = s.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
-		loaded, e := s.LoadStream(ctx, tx, stream)
+		loaded, e := s.LoadStream(ctx, tx, tenant, stream)
 		if e != nil {
 			return e
 		}
@@ -62,6 +62,35 @@ func TestAppendAndLoad(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("load: %v", err)
+	}
+}
+
+func TestSameStreamIDAcrossTenants(t *testing.T) {
+	s, ctx := newTestStore(t)
+	stream := fmt.Sprintf("task:shared-%d", time.Now().UnixNano())
+	tenantA := "tenant-shared-a"
+	tenantB := "tenant-shared-b"
+
+	for _, tenant := range []string{tenantA, tenantB} {
+		if err := s.WithTenantTx(ctx, tenant, func(tx pgx.Tx) error {
+			committed, err := s.Append(ctx, tx, tenant, stream, 0, []ToAppend{ev("TaskCreated")})
+			if err != nil {
+				return err
+			}
+			if len(committed) != 1 || committed[0].StreamSeq != 1 {
+				return fmt.Errorf("unexpected commit for %s: %+v", tenant, committed)
+			}
+			loaded, err := s.LoadStream(ctx, tx, tenant, stream)
+			if err != nil {
+				return err
+			}
+			if len(loaded) != 1 || loaded[0].TenantID != tenant {
+				return fmt.Errorf("unexpected tenant load for %s: %+v", tenant, loaded)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("tenant %s append/load: %v", tenant, err)
+		}
 	}
 }
 

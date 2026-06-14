@@ -16,7 +16,7 @@ CREATE TABLE rm_tasks (
   origin         TEXT        NOT NULL,
   updated_seq    BIGINT      NOT NULL,
   updated_at     TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (id)
+  PRIMARY KEY (tenant_id, id)
 );
 CREATE INDEX rm_tasks_ws_idx ON rm_tasks (tenant_id, workspace_id, status);
 
@@ -27,7 +27,7 @@ CREATE TABLE rm_timeline (
   kind        TEXT        NOT NULL,
   summary     TEXT,
   occurred_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (task_id, seq)
+  PRIMARY KEY (tenant_id, task_id, seq)
 );
 
 CREATE TABLE rm_artifacts (
@@ -39,7 +39,7 @@ CREATE TABLE rm_artifacts (
   mime       TEXT        NOT NULL,
   size       BIGINT      NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (id)
+  PRIMARY KEY (tenant_id, id)
 );
 
 -- pgvector. Embeddings are computed ONCE at event time and carried in the event
@@ -57,7 +57,7 @@ CREATE TABLE rm_memory_vec (
   embedding    VECTOR(1536),
   text         TEXT        NOT NULL,
   source_event BIGINT      NOT NULL,
-  PRIMARY KEY (id)
+  PRIMARY KEY (tenant_id, id)
 );
 
 -- All read models enforce tenant isolation in-DB (USING gates reads,
