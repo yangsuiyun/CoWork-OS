@@ -53,11 +53,26 @@ func TestInvariants(t *testing.T) {
 	if _, err := empty.Decide(SplitGraph{GraphID: "g1", TaskID: "t1"}); !errors.Is(err, ErrEmpty) {
 		t.Fatalf("empty split want ErrEmpty, got %v", err)
 	}
+	for name, nodes := range map[string][]NodeSpec{
+		"empty node id":    {{NodeID: "", DispatchTarget: "local"}},
+		"invalid target":   {{NodeID: "n1", DispatchTarget: "sideways"}},
+		"duplicate node":   {{NodeID: "n1", DispatchTarget: "local"}, {NodeID: "n1", DispatchTarget: "remote"}},
+		"missing dep":      {{NodeID: "n1", DispatchTarget: "local", DependsOn: []string{"n2"}}},
+		"self dep":         {{NodeID: "n1", DispatchTarget: "local", DependsOn: []string{"n1"}}},
+		"dependency cycle": {{NodeID: "n1", DispatchTarget: "local", DependsOn: []string{"n2"}}, {NodeID: "n2", DispatchTarget: "remote", DependsOn: []string{"n1"}}},
+	} {
+		if _, err := empty.Decide(SplitGraph{GraphID: "g1", TaskID: "t1", Nodes: nodes}); !errors.Is(err, ErrInvalidDAG) {
+			t.Fatalf("%s want ErrInvalidDAG, got %v", name, err)
+		}
+	}
 
 	// Duplicate split rejected.
 	g := Load([]Event{GraphSplit{GraphID: "g1", TaskID: "t1", Nodes: []NodeSpec{{NodeID: "n1", DispatchTarget: "local"}}}})
 	if _, err := g.Decide(SplitGraph{GraphID: "g1", TaskID: "t1", Nodes: []NodeSpec{{NodeID: "n1"}}}); !errors.Is(err, ErrAlreadyExists) {
 		t.Fatalf("duplicate split want ErrAlreadyExists, got %v", err)
+	}
+	if _, err := g.Decide(UpdateNode{GraphID: "g1", NodeID: "n1", Status: "running"}); !errors.Is(err, ErrInvalidStatus) {
+		t.Fatalf("invalid status want ErrInvalidStatus, got %v", err)
 	}
 
 	// Dispatch on unknown graph rejected.

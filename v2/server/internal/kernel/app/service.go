@@ -453,6 +453,8 @@ func ErrorCode(err error) (code string, category string) {
 		errors.Is(err, graph.ErrNodeTerminal),
 		errors.Is(err, graph.ErrMerged),
 		errors.Is(err, graph.ErrEmpty),
+		errors.Is(err, graph.ErrInvalidDAG),
+		errors.Is(err, graph.ErrInvalidStatus),
 		errors.Is(err, skillcandidate.ErrAlreadyExists),
 		errors.Is(err, skillcandidate.ErrNotFound),
 		errors.Is(err, skillcandidate.ErrReviewed),

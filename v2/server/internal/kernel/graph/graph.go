@@ -9,7 +9,10 @@
 // difference is dispatchTarget, kept on the node spec.
 package graph
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Domain errors (fail-fast, spec P6). One handling site maps these to codes.
 var (
@@ -19,6 +22,8 @@ var (
 	ErrNodeTerminal  = errors.New("graph: node already terminal")
 	ErrMerged        = errors.New("graph: already merged, closed")
 	ErrEmpty         = errors.New("graph: must declare at least one node")
+	ErrInvalidDAG    = errors.New("graph: invalid DAG")
+	ErrInvalidStatus = errors.New("graph: invalid node status")
 )
 
 type nodeState struct {
@@ -79,6 +84,9 @@ func (g *Graph) Decide(cmd Command) ([]Event, error) {
 		if len(c.Nodes) == 0 {
 			return nil, ErrEmpty
 		}
+		if err := validateDAG(c.Nodes); err != nil {
+			return nil, err
+		}
 		return []Event{GraphSplit{GraphID: c.GraphID, TaskID: c.TaskID, Nodes: c.Nodes}}, nil
 
 	case DispatchNode:
@@ -91,6 +99,9 @@ func (g *Graph) Decide(cmd Command) ([]Event, error) {
 		}}, nil
 
 	case UpdateNode:
+		if c.Status != "done" && c.Status != "failed" {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidStatus, c.Status)
+		}
 		if _, err := g.openNode(c.NodeID); err != nil {
 			return nil, err
 		}
@@ -108,6 +119,63 @@ func (g *Graph) Decide(cmd Command) ([]Event, error) {
 	default:
 		return nil, errors.New("graph: unknown command")
 	}
+}
+
+func validateDAG(nodes []NodeSpec) error {
+	seen := make(map[string]NodeSpec, len(nodes))
+	for _, n := range nodes {
+		if n.NodeID == "" {
+			return fmt.Errorf("%w: empty nodeId", ErrInvalidDAG)
+		}
+		if n.DispatchTarget != "local" && n.DispatchTarget != "remote" {
+			return fmt.Errorf("%w: invalid dispatchTarget for %s", ErrInvalidDAG, n.NodeID)
+		}
+		if _, ok := seen[n.NodeID]; ok {
+			return fmt.Errorf("%w: duplicate nodeId %s", ErrInvalidDAG, n.NodeID)
+		}
+		seen[n.NodeID] = n
+	}
+
+	for _, n := range nodes {
+		for _, dep := range n.DependsOn {
+			if dep == "" {
+				return fmt.Errorf("%w: empty dependency for %s", ErrInvalidDAG, n.NodeID)
+			}
+			if dep == n.NodeID {
+				return fmt.Errorf("%w: self dependency for %s", ErrInvalidDAG, n.NodeID)
+			}
+			if _, ok := seen[dep]; !ok {
+				return fmt.Errorf("%w: missing dependency %s for %s", ErrInvalidDAG, dep, n.NodeID)
+			}
+		}
+	}
+
+	visiting := map[string]bool{}
+	visited := map[string]bool{}
+	var visit func(string) error
+	visit = func(id string) error {
+		if visited[id] {
+			return nil
+		}
+		if visiting[id] {
+			return fmt.Errorf("%w: cycle at %s", ErrInvalidDAG, id)
+		}
+		visiting[id] = true
+		for _, dep := range seen[id].DependsOn {
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+		visiting[id] = false
+		visited[id] = true
+		return nil
+	}
+	for id := range seen {
+		if err := visit(id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // openNode resolves a node that can still transition: the graph must exist and
