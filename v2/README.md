@@ -28,7 +28,7 @@ v2/
 ## Development
 
 ```bash
-# Backend (needs Postgres + goose migrations applied; roles cowork_app/cowork_projector):
+# Backend (needs Postgres + goose migrations applied; both DSNs are required):
 export COWORK_DATABASE_URL='postgres://cowork_app:cowork@localhost:5432/coworkos?sslmode=disable'
 export COWORK_PROJECTOR_DATABASE_URL='postgres://cowork_projector:cowork@localhost:5432/coworkos?sslmode=disable'
 cd server && go run ./cmd/coworkd            # serves :8080
@@ -43,6 +43,23 @@ make codegen
 The web client needs a JWT with `tid` (tenant) and `sub` (actor) claims signed
 with `COWORK_JWT_SECRET` (dev default `dev-insecure-secret`); paste it into the
 token field. External API clients use `/v1/sessions` instead.
+
+## Implementation Guarantees
+
+- Tenant isolation is enforced both by Postgres RLS and by tenant-scoped
+  authoritative keys: event stream uniqueness and read-model primary keys include
+  `tenant_id`, and the BYPASSRLS projector writes with explicit tenant filters.
+- Runtime config fails fast unless `COWORK_DATABASE_URL` uses the RLS-scoped
+  request role and `COWORK_PROJECTOR_DATABASE_URL` uses the BYPASSRLS projector
+  role; the projector never falls back to the request-path DSN.
+- Command dispatch honors `idempotencyKey` and `expectedStreamSeq` from the
+  OpenAPI contract, so safe retries return the original committed events and
+  stale clients receive a concurrency conflict.
+- Read-model queries honor `limit` and `cursor`, returning `nextCursor` for
+  full pages. Realtime streams accept the documented `cursor` parameter and the
+  existing `from` alias for browser clients.
+- Orchestration graphs validate node IDs, dispatch targets, dependencies, DAG
+  acyclicity, and terminal node statuses before events enter the log.
 
 ## Milestones (see spec §18)
 

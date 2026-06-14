@@ -1,7 +1,7 @@
 # CoWork OS v2 — 开发进度
 
 > 权威设计：`../docs/cowork-os-complete-design-spec.html`。本文件记录实现进度，
-> 随每个里程碑更新。最后更新：2026-06-13（M3 契约层 + M4 编排/自学习聚合落地）。
+> 随每个里程碑更新。最后更新：2026-06-14（V2 审查阻断项修复：租户键、命令契约、查询分页、Graph 不变量）。
 
 ## 总览
 
@@ -26,12 +26,12 @@
 
 ### M1 Walking Skeleton（PI-1 ~ PI-9）
 - **PI-1** Go 服务骨架 + DB 就绪探针 `healthz`。
-- **PI-2** append-only 事件存储，单调可见 `global_seq`（advisory lock）。
+- **PI-2** append-only 事件存储，单调可见 `global_seq`（advisory lock）；事件流唯一性按 `tenant_id + stream_id + stream_seq` 约束。
 - **PI-3** Task 聚合纯函数 `decide/apply` + 不变量（INV-1/2/3）。
-- **PI-4** 命令处理 + HTTP API（JWT 鉴权 + 租户作用域）。
-- **PI-5** 读模型投影器 + 确定性 Rebuild。
-- **PI-6** 最小权限 DB 角色强制 RLS（`cowork_app` RLS / `cowork_projector` BYPASSRLS）。
-- **PI-7** 基于 `LISTEN/NOTIFY` 的 WebSocket 实时事件流。
+- **PI-4** 命令处理 + HTTP API（JWT 鉴权 + 租户作用域）；`idempotencyKey` 与 `expectedStreamSeq` 已接入统一命令入口。
+- **PI-5** 读模型投影器 + 确定性 Rebuild；所有读模型主键按租户内唯一设计。
+- **PI-6** 最小权限 DB 角色强制 RLS（`cowork_app` RLS / `cowork_projector` BYPASSRLS）；投影器写入显式携带 `tenant_id`，避免 BYPASSRLS 下跨租户命中；运行时要求显式配置 `COWORK_PROJECTOR_DATABASE_URL`，不回退到请求路径 DSN。
+- **PI-7** 基于 `LISTEN/NOTIFY` 的 WebSocket 实时事件流；支持 OpenAPI `cursor` 参数并保留 `from` 别名。
 - **PI-8** codegen 契约类型作为唯一事实源接线。
 - **PI-9** Task 审批 / 工件命令与投影补全。
 
@@ -42,6 +42,7 @@
 - **PI-13** 可插拔 Hook 流水线（`PreToolUse` 拒绝/改写 + `PostToolUse` 审计），经 `cap.Guard` 接入；顺序：pre-hooks → 能力 → 规则 → post-hooks。
 - **外部 API** `/v1/sessions`：create / get / cancel + SSE 事件流，会话即 Task。
 - **前端** `web/`：React + Vite + TS 瘦客户端（任务列表、创建、WS 实时流），TS 类型由契约生成。
+- **查询分页** `/v1/query/{name}`：已实现 `limit` / `cursor` 参数和 `nextCursor` 返回，覆盖 tasks/workspaces/approvals/graphNodes/skillCandidates/runners。
 
 ### M4 进行中 — Workspace + ApprovalRequest + OrchestrationGraph + SkillCandidate 聚合
 - 事件契约：`WorkspaceCreated` / `PermissionsChanged`；`ApprovalRequested` / `ApprovalResolved`（独立 `approval:` 流）；`GraphSplit` / `NodeDispatched` / `NodeUpdated` / `ResultMerged`（`graph:` 流）；`SkillCandidateProposed` / `SkillCandidatePublished` / `SkillCandidateRejected`（`skillcandidate:` 流）。
@@ -49,11 +50,11 @@
 - 聚合：
   - `internal/kernel/workspace`（`CreateWorkspace` / `UpdatePermissions`，权限单调版本化）。
   - `internal/kernel/approval`（`RequestApproval` / `ApproveApproval` / `RejectApproval`，已决议终态——hard-deny 不可覆盖）。
-  - `internal/kernel/graph`（编排 DAG，spec 12.1）：本地子代理与远程 Agent 共用节点抽象，仅 `dispatchTarget` 不同；远程节点以 `remoteTaskId` 收敛；不变量——节点终态不可改、已 merge 图关闭。
+  - `internal/kernel/graph`（编排 DAG，spec 12.1）：本地子代理与远程 Agent 共用节点抽象，仅 `dispatchTarget` 不同；远程节点以 `remoteTaskId` 收敛；不变量——节点 ID / dispatch target / 依赖存在性 / 无环校验，节点终态不可改，已 merge 图关闭，节点结果状态仅允许 `done|failed`。
   - `internal/kernel/skillcandidate`（自学习 Review-First，spec 13.2）：反思只产候选，须人工 review 才发布；review 决议终态不可覆盖。
 - 应用层：`Service.Handle` 按聚合分派的 reducer 闭包（聚合无关）；`QueryWorkspaces` / `QueryApprovals` / `QueryGraphNodes` / `QuerySkillCandidates`。
 - 投影：projector 按 stream 前缀路由；新增 `applyToGraph` / `applyToSkillCandidates`，均单调幂等。
-- 查询：`/v1/query/{workspaces,approvals,graphNodes,skillCandidates}`。
+- 查询：`/v1/query/{workspaces,approvals,graphNodes,skillCandidates}`，均支持统一分页参数。
 - 设计决策：审批全量迁出 Task（pre-v1.0 无兼容层），单一权威事件源；`Switch` 命令属会话态、不产生聚合事件，暂缓；ExternalAgentSession（actor+租约+心跳+ACP/MCP 防腐）依赖运行时与外部协议，与 M3 运行时一并独立立项。
 
 ### M3 契约层 — LocalRunnerSession 聚合
@@ -71,6 +72,7 @@
 - 适配器：`adapter/http`（commands / query / stream / actions / sessions）。
 - 测试：聚合纯函数单测（task/workspace/approval/graph/skillcandidate/runner）+ 投影/RLS/会话/动作集成测试（需 Postgres）。
 - 契约 codegen：`server/pkg/contracts/events_gen.go` 已随新增 Schema 重新生成（`make codegen-check` 零漂移）。
+- 验证快照：`go test ./...` 通过；`npm ci --registry https://repo.huaweicloud.com/repository/npm/ && npm run build` 通过（Node/npm 版本提示 warning，不影响构建）。
 
 ## 待办（按 spec 顺序）
 

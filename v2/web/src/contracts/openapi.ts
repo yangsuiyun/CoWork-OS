@@ -50,7 +50,7 @@ export interface paths {
         };
         /**
          * WebSocket event stream (Upgrade required; see description)
-         * @description WebSocket endpoint. Client connects with Bearer token, sends a filter (workspaceIds, types) and a resume cursor. Server pushes CommittedEvent frames, fan-out across gateway replicas via PubSub. On reconnect the client resumes from its persisted cursor (idempotent, at-least-once). Token refresh: the short-lived JWT may expire mid-connection; the client sends a `reauth` control frame with a fresh token before expiry, and the server closes the socket (4401) if no valid token is presented in time, prompting the client to reconnect-and-resume. Not a plain HTTP GET; expressed here for documentation only.
+         * @description WebSocket endpoint. Client connects with Bearer token and an optional resume cursor. Server pushes tenant-scoped CommittedEvent frames; fan-out is triggered by LISTEN/NOTIFY and every subscriber re-queries its own tenant through RLS. On reconnect the client resumes from its persisted cursor (idempotent, at-least-once). Token refresh is performed by reconnecting with a fresh JWT and the last seen cursor. Not a plain HTTP GET; expressed here for documentation only.
          */
         get: operations["subscribeStream"];
         put?: never;

@@ -31,7 +31,7 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("COWORK_DATABASE_URL is required")
 	}
 	if c.ProjectorDatabaseURL == "" {
-		c.ProjectorDatabaseURL = c.DatabaseURL
+		return Config{}, fmt.Errorf("COWORK_PROJECTOR_DATABASE_URL is required")
 	}
 	return c, nil
 }
