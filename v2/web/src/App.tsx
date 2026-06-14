@@ -129,6 +129,19 @@ export default function App() {
     );
   }, [selectedTaskId, token]);
 
+  // Synchronize active workspace state with snapshot workspaces to prevent value drift
+  useEffect(() => {
+    if (snapshot.workspaces.length > 0) {
+      const exists = snapshot.workspaces.some((ws) => ws.id === workspace);
+      if (!exists) {
+        // If "default" doesn't exist and state is still "default", or active workspace was deleted, auto-select first
+        setWorkspace(snapshot.workspaces[0].id);
+      }
+    } else if (workspace !== "default") {
+      setWorkspace("default");
+    }
+  }, [snapshot.workspaces, workspace]);
+
   const stats = useMemo(() => {
     const activeTasks = snapshot.tasks.filter((t) => ["pending", "planned", "running", "awaiting_approval"].includes(t.status)).length;
     const pendingApprovals = snapshot.approvals.filter((a) => a.status === "pending").length;
