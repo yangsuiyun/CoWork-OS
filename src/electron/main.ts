@@ -341,7 +341,6 @@ const TRANSIENT_MAIN_PROCESS_ERROR_RE = new RegExp(
   "i",
 );
 let processErrorGuardsInstalled = false;
-const STARTER_AUTOMATION_ROLE_NAMES = ["assistant", "project_manager"];
 const MAIN_WINDOW_STATE_FILE = "main-window-state.json";
 const MAIN_WINDOW_MIN_WIDTH = 1200;
 const MAIN_WINDOW_MIN_HEIGHT = 800;
@@ -451,7 +450,6 @@ function buildDefaultAutomationProfile(role: import("../shared/types").AgentRole
   profile: import("../shared/types").HeartbeatProfile;
   activeHours?: import("../shared/types").HeartbeatActiveHours;
 } {
-  const isStarter = STARTER_AUTOMATION_ROLE_NAMES.includes(role.name);
   if (role.name === "project_manager") {
     return {
       enabled: true,
@@ -529,32 +527,6 @@ function ensureCoreAutomationProfiles(): void {
     });
     existingProfiles.set(role.id, created);
     createdCount += 1;
-  }
-
-  const enabledEligibleProfiles = automationProfileRepo
-    .listEnabled()
-    .filter((profile) => eligibleRoles.some((role) => role.id === profile.agentRoleId));
-
-  if (enabledEligibleProfiles.length === 0) {
-    const starterRoles = eligibleRoles.filter((role) =>
-      STARTER_AUTOMATION_ROLE_NAMES.includes(role.name),
-    );
-    const fallbackRoles = starterRoles.length ? starterRoles : eligibleRoles.slice(0, 1);
-    for (const role of fallbackRoles) {
-      const seeded = buildDefaultAutomationProfile(role);
-      const existing = existingProfiles.get(role.id);
-      if (!existing) continue;
-      automationProfileRepo.update({
-        id: existing.id,
-        enabled: true,
-        cadenceMinutes: seeded.cadenceMinutes,
-        staggerOffsetMinutes: seeded.staggerOffsetMinutes,
-        dispatchCooldownMinutes: seeded.dispatchCooldownMinutes,
-        maxDispatchesPerDay: seeded.maxDispatchesPerDay,
-        profile: seeded.profile,
-        activeHours: seeded.activeHours,
-      });
-    }
   }
 
   const totalProfiles = automationProfileRepo.listAll();
