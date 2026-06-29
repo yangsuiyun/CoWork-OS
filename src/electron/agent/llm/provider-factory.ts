@@ -2681,9 +2681,14 @@ export class LLMProviderFactory {
         configured: !!settings.openrouter?.apiKey,
       },
       {
-        type: "deepseek" as LLMProviderType,
-        name: "DeepSeek",
-        configured: !!settings.deepseek?.apiKey,
+        type: "openai" as LLMProviderType,
+        name: "OpenAI",
+        configured: !!(settings.openai?.apiKey || settings.openai?.accessToken),
+      },
+      {
+        type: "moa" as LLMProviderType,
+        name: "Mixture of Agents",
+        configured: this.isProviderConfigured(settings, "moa"),
       },
       {
         type: "anthropic" as LLMProviderType,
@@ -2696,9 +2701,9 @@ export class LLMProviderFactory {
         configured: !!settings.gemini?.apiKey,
       },
       {
-        type: "openai" as LLMProviderType,
-        name: "OpenAI",
-        configured: !!(settings.openai?.apiKey || settings.openai?.accessToken),
+        type: "deepseek" as LLMProviderType,
+        name: "DeepSeek",
+        configured: !!settings.deepseek?.apiKey,
       },
       {
         type: "azure" as LLMProviderType,
@@ -2765,11 +2770,6 @@ export class LLMProviderFactory {
         configured: !!(
           settings.openaiCompatible?.baseUrl && settings.openaiCompatible?.model
         ),
-      },
-      {
-        type: "moa" as LLMProviderType,
-        name: "Mixture of Agents",
-        configured: this.isProviderConfigured(settings, "moa"),
       },
     ];
 
