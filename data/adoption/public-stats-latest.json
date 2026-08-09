@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-08T04:28:07.377Z",
-  "generatedDay": "2026-08-08",
+  "generatedAt": "2026-08-09T04:36:36.956Z",
+  "generatedDay": "2026-08-09",
   "privacy": {
     "source": "Public GitHub/npm APIs plus owner-only GitHub traffic APIs when available.",
     "appTelemetry": false,
@@ -13,13 +13,13 @@
       "fullName": "CoWork-OS/CoWork-OS",
       "htmlUrl": "https://github.com/CoWork-OS/CoWork-OS",
       "defaultBranch": "main",
-      "stars": 418,
+      "stars": 419,
       "forks": 65,
       "watchers": 2,
       "openIssues": 8,
       "archived": false,
-      "pushedAt": "2026-08-08T04:19:55Z",
-      "updatedAt": "2026-08-08T04:20:00Z"
+      "pushedAt": "2026-08-09T04:35:09Z",
+      "updatedAt": "2026-08-09T04:35:13Z"
     },
     "releases": {
       "releaseCount": 60,
@@ -29,13 +29,13 @@
         "publishedAt": "2026-07-20T14:41:49Z",
         "htmlUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.50"
       },
-      "totalAssetDownloadCount": 2404,
-      "totalInstallAssetDownloadCount": 1409,
-      "metadataAssetDownloadCount": 995,
+      "totalAssetDownloadCount": 2422,
+      "totalInstallAssetDownloadCount": 1416,
+      "metadataAssetDownloadCount": 1006,
       "platformTotals": {
-        "macos": 745,
-        "server": 51,
-        "windows": 613
+        "macos": 746,
+        "server": 53,
+        "windows": 617
       },
       "assets": [
         {
@@ -47,8 +47,8 @@
           "sizeBytes": 848,
           "downloadCount": 3,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.50/builder-debug.yml",
-          "previousDownloadCount": 2,
-          "deltaSincePreviousSnapshot": 1
+          "previousDownloadCount": 3,
+          "deltaSincePreviousSnapshot": 0
         },
         {
           "releaseTag": "v0.5.50",
@@ -69,9 +69,9 @@
           "assetName": "CoWork-OS-0.5.50-arm64-mac.zip.blockmap",
           "platform": "metadata",
           "sizeBytes": 285849,
-          "downloadCount": 3,
+          "downloadCount": 4,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.50/CoWork-OS-0.5.50-arm64-mac.zip.blockmap",
-          "previousDownloadCount": 2,
+          "previousDownloadCount": 3,
           "deltaSincePreviousSnapshot": 1
         },
         {
@@ -81,10 +81,10 @@
           "assetName": "CoWork-OS-0.5.50-arm64.dmg",
           "platform": "macos",
           "sizeBytes": 285796015,
-          "downloadCount": 19,
+          "downloadCount": 20,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.50/CoWork-OS-0.5.50-arm64.dmg",
           "previousDownloadCount": 19,
-          "deltaSincePreviousSnapshot": 0
+          "deltaSincePreviousSnapshot": 1
         },
         {
           "releaseTag": "v0.5.50",
@@ -93,9 +93,9 @@
           "assetName": "CoWork-OS-0.5.50-arm64.dmg.blockmap",
           "platform": "metadata",
           "sizeBytes": 297342,
-          "downloadCount": 3,
+          "downloadCount": 4,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.50/CoWork-OS-0.5.50-arm64.dmg.blockmap",
-          "previousDownloadCount": 2,
+          "previousDownloadCount": 3,
           "deltaSincePreviousSnapshot": 1
         },
         {
@@ -105,10 +105,10 @@
           "assetName": "cowork-os-server-linux-x64-v0.5.50.tar.gz",
           "platform": "server",
           "sizeBytes": 238280096,
-          "downloadCount": 4,
+          "downloadCount": 6,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.50/cowork-os-server-linux-x64-v0.5.50.tar.gz",
           "previousDownloadCount": 4,
-          "deltaSincePreviousSnapshot": 0
+          "deltaSincePreviousSnapshot": 2
         },
         {
           "releaseTag": "v0.5.50",
@@ -117,10 +117,10 @@
           "assetName": "cowork-os-server-linux-x64-v0.5.50.tar.gz.sha256",
           "platform": "metadata",
           "sizeBytes": 108,
-          "downloadCount": 4,
+          "downloadCount": 5,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.50/cowork-os-server-linux-x64-v0.5.50.tar.gz.sha256",
           "previousDownloadCount": 4,
-          "deltaSincePreviousSnapshot": 0
+          "deltaSincePreviousSnapshot": 1
         },
         {
           "releaseTag": "v0.5.50",
@@ -129,10 +129,10 @@
           "assetName": "CoWork-OS-Setup-0.5.50.exe",
           "platform": "windows",
           "sizeBytes": 230278541,
-          "downloadCount": 87,
+          "downloadCount": 91,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.50/CoWork-OS-Setup-0.5.50.exe",
-          "previousDownloadCount": 85,
-          "deltaSincePreviousSnapshot": 2
+          "previousDownloadCount": 87,
+          "deltaSincePreviousSnapshot": 4
         },
         {
           "releaseTag": "v0.5.50",
@@ -143,8 +143,8 @@
           "sizeBytes": 239829,
           "downloadCount": 4,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.50/CoWork-OS-Setup-0.5.50.exe.blockmap",
-          "previousDownloadCount": 3,
-          "deltaSincePreviousSnapshot": 1
+          "previousDownloadCount": 4,
+          "deltaSincePreviousSnapshot": 0
         },
         {
           "releaseTag": "v0.5.50",
@@ -153,10 +153,10 @@
           "assetName": "latest-mac.yml",
           "platform": "metadata",
           "sizeBytes": 515,
-          "downloadCount": 142,
+          "downloadCount": 150,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.50/latest-mac.yml",
-          "previousDownloadCount": 135,
-          "deltaSincePreviousSnapshot": 7
+          "previousDownloadCount": 142,
+          "deltaSincePreviousSnapshot": 8
         },
         {
           "releaseTag": "v0.5.50",
@@ -3195,13 +3195,13 @@
   },
   "deltas": {
     "releaseDownloads": {
-      "totalDeltaSincePreviousSnapshot": 2,
+      "totalDeltaSincePreviousSnapshot": 7,
       "platformDeltasSincePreviousSnapshot": {
-        "macos": 0,
-        "server": 0,
-        "windows": 2
+        "macos": 1,
+        "server": 2,
+        "windows": 4
       }
     },
-    "previousSnapshotGeneratedAt": "2026-08-07T05:02:14.013Z"
+    "previousSnapshotGeneratedAt": "2026-08-08T04:28:07.377Z"
   }
 }
