@@ -1,6 +1,6 @@
 # Public Adoption Stats
 
-Generated at: 2026-08-10T04:53:47.943Z
+Generated at: 2026-08-11T04:39:42.684Z
 
 These numbers are acquisition and download-intent signals for CoWork OS. They do **not** measure active users, first launch, successful task completion, model configuration, retention, prompts, files, emails, or any in-app content.
 
@@ -8,18 +8,18 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Metric | Value |
 |---|---:|
-| GitHub stars | 422 |
+| GitHub stars | 424 |
 | GitHub forks | 65 |
 | GitHub watchers | 2 |
 | GitHub open issues | 8 |
 | Latest release | v0.5.50 |
 | Latest release date | 2026-07-20 |
-| Installer/server downloads, lifetime | 1,420 |
-| Installer/server downloads, since previous snapshot | 4 |
+| Installer/server downloads, lifetime | 1,425 |
+| Installer/server downloads, since previous snapshot | 5 |
 | npm latest version | 0.5.50 |
-| npm downloads, last day | 6 |
-| npm downloads, last week | 147 |
-| npm downloads, last month | 761 |
+| npm downloads, last day | 10 |
+| npm downloads, last week | 142 |
+| npm downloads, last month | 659 |
 | GitHub views, last 14-ish days | unavailable |
 | GitHub clones, last 14-ish days | unavailable |
 
@@ -27,18 +27,18 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Platform | Lifetime downloads | Delta |
 |---|---:|---:|
-| macos | 748 | +2 |
+| macos | 751 | +3 |
 | server | 53 | +0 |
-| windows | 619 | +2 |
+| windows | 621 | +2 |
 
 ## Recent Release Assets
 
 | Release | Asset | Platform | Downloads | Delta |
 |---|---|---|---:|---:|
-| v0.5.50 | CoWork-OS-0.5.50-arm64-mac.zip | macos | 5 | +1 |
-| v0.5.50 | CoWork-OS-0.5.50-arm64.dmg | macos | 21 | +1 |
+| v0.5.50 | CoWork-OS-0.5.50-arm64-mac.zip | macos | 5 | +0 |
+| v0.5.50 | CoWork-OS-0.5.50-arm64.dmg | macos | 24 | +3 |
 | v0.5.50 | cowork-os-server-linux-x64-v0.5.50.tar.gz | server | 6 | +0 |
-| v0.5.50 | CoWork-OS-Setup-0.5.50.exe | windows | 93 | +2 |
+| v0.5.50 | CoWork-OS-Setup-0.5.50.exe | windows | 95 | +2 |
 | v0.5.49 | CoWork-OS-0.5.49-arm64-mac.zip | macos | 23 | +0 |
 | v0.5.49 | CoWork-OS-0.5.49-arm64.dmg | macos | 59 | +0 |
 | v0.5.49 | cowork-os-server-linux-x64-v0.5.49.tar.gz | server | 16 | +0 |
