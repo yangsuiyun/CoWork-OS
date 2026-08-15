@@ -1,6 +1,6 @@
 # Public Adoption Stats
 
-Generated at: 2026-08-14T05:02:30.965Z
+Generated at: 2026-08-15T03:54:03.493Z
 
 These numbers are acquisition and download-intent signals for CoWork OS. They do **not** measure active users, first launch, successful task completion, model configuration, retention, prompts, files, emails, or any in-app content.
 
@@ -8,14 +8,14 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Metric | Value |
 |---|---:|
-| GitHub stars | 429 |
+| GitHub stars | 432 |
 | GitHub forks | 68 |
 | GitHub watchers | 3 |
-| GitHub open issues | 8 |
+| GitHub open issues | 11 |
 | Latest release | v0.5.50 |
 | Latest release date | 2026-07-20 |
-| Installer/server downloads, lifetime | 1,443 |
-| Installer/server downloads, since previous snapshot | 6 |
+| Installer/server downloads, lifetime | 1,447 |
+| Installer/server downloads, since previous snapshot | 4 |
 | npm latest version | 0.5.50 |
 | npm downloads, last day | 10 |
 | npm downloads, last week | 142 |
@@ -27,18 +27,18 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Platform | Lifetime downloads | Delta |
 |---|---:|---:|
-| macos | 760 | +6 |
+| macos | 762 | +2 |
 | server | 53 | +0 |
-| windows | 630 | +0 |
+| windows | 632 | +2 |
 
 ## Recent Release Assets
 
 | Release | Asset | Platform | Downloads | Delta |
 |---|---|---|---:|---:|
-| v0.5.50 | CoWork-OS-0.5.50-arm64-mac.zip | macos | 8 | +1 |
-| v0.5.50 | CoWork-OS-0.5.50-arm64.dmg | macos | 30 | +5 |
+| v0.5.50 | CoWork-OS-0.5.50-arm64-mac.zip | macos | 8 | +0 |
+| v0.5.50 | CoWork-OS-0.5.50-arm64.dmg | macos | 32 | +2 |
 | v0.5.50 | cowork-os-server-linux-x64-v0.5.50.tar.gz | server | 6 | +0 |
-| v0.5.50 | CoWork-OS-Setup-0.5.50.exe | windows | 103 | +0 |
+| v0.5.50 | CoWork-OS-Setup-0.5.50.exe | windows | 105 | +2 |
 | v0.5.49 | CoWork-OS-0.5.49-arm64-mac.zip | macos | 23 | +0 |
 | v0.5.49 | CoWork-OS-0.5.49-arm64.dmg | macos | 59 | +0 |
 | v0.5.49 | cowork-os-server-linux-x64-v0.5.49.tar.gz | server | 16 | +0 |
