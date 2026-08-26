@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-25T03:59:26.640Z",
-  "generatedDay": "2026-08-25",
+  "generatedAt": "2026-08-26T04:02:45.432Z",
+  "generatedDay": "2026-08-26",
   "privacy": {
     "source": "Public GitHub/npm APIs plus owner-only GitHub traffic APIs when available.",
     "appTelemetry": false,
@@ -13,13 +13,13 @@
       "fullName": "CoWork-OS/CoWork-OS",
       "htmlUrl": "https://github.com/CoWork-OS/CoWork-OS",
       "defaultBranch": "main",
-      "stars": 439,
+      "stars": 440,
       "forks": 70,
       "watchers": 3,
       "openIssues": 10,
       "archived": false,
-      "pushedAt": "2026-08-25T03:58:06Z",
-      "updatedAt": "2026-08-25T03:58:22Z"
+      "pushedAt": "2026-08-26T04:01:26Z",
+      "updatedAt": "2026-08-26T04:02:18Z"
     },
     "releases": {
       "releaseCount": 61,
@@ -29,13 +29,13 @@
         "publishedAt": "2026-08-17T20:38:06Z",
         "htmlUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.51"
       },
-      "totalAssetDownloadCount": 2650,
-      "totalInstallAssetDownloadCount": 1519,
-      "metadataAssetDownloadCount": 1131,
+      "totalAssetDownloadCount": 2663,
+      "totalInstallAssetDownloadCount": 1524,
+      "metadataAssetDownloadCount": 1139,
       "platformTotals": {
-        "macos": 789,
+        "macos": 791,
         "server": 57,
-        "windows": 673
+        "windows": 676
       },
       "assets": [
         {
@@ -81,10 +81,10 @@
           "assetName": "CoWork-OS-0.5.51-arm64.dmg",
           "platform": "macos",
           "sizeBytes": 285018694,
-          "downloadCount": 16,
+          "downloadCount": 18,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.51/CoWork-OS-0.5.51-arm64.dmg",
-          "previousDownloadCount": 12,
-          "deltaSincePreviousSnapshot": 4
+          "previousDownloadCount": 16,
+          "deltaSincePreviousSnapshot": 2
         },
         {
           "releaseTag": "v0.5.51",
@@ -129,10 +129,10 @@
           "assetName": "CoWork-OS-Setup-0.5.51.exe",
           "platform": "windows",
           "sizeBytes": 226046311,
-          "downloadCount": 32,
+          "downloadCount": 35,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.51/CoWork-OS-Setup-0.5.51.exe",
-          "previousDownloadCount": 27,
-          "deltaSincePreviousSnapshot": 5
+          "previousDownloadCount": 32,
+          "deltaSincePreviousSnapshot": 3
         },
         {
           "releaseTag": "v0.5.51",
@@ -153,9 +153,9 @@
           "assetName": "latest-mac.yml",
           "platform": "metadata",
           "sizeBytes": 515,
-          "downloadCount": 56,
+          "downloadCount": 64,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.51/latest-mac.yml",
-          "previousDownloadCount": 48,
+          "previousDownloadCount": 56,
           "deltaSincePreviousSnapshot": 8
         },
         {
@@ -3307,33 +3307,33 @@
     "downloads": {
       "lastDay": {
         "period": "last-day",
-        "downloads": 65,
-        "start": "2026-08-23",
-        "end": "2026-08-23"
+        "downloads": 77,
+        "start": "2026-08-24",
+        "end": "2026-08-24"
       },
       "lastWeek": {
         "period": "last-week",
-        "downloads": 494,
-        "start": "2026-08-17",
-        "end": "2026-08-23"
+        "downloads": 405,
+        "start": "2026-08-18",
+        "end": "2026-08-24"
       },
       "lastMonth": {
         "period": "last-month",
-        "downloads": 1020,
-        "start": "2026-07-25",
-        "end": "2026-08-23"
+        "downloads": 1018,
+        "start": "2026-07-26",
+        "end": "2026-08-24"
       }
     }
   },
   "deltas": {
     "releaseDownloads": {
-      "totalDeltaSincePreviousSnapshot": 9,
+      "totalDeltaSincePreviousSnapshot": 5,
       "platformDeltasSincePreviousSnapshot": {
-        "macos": 4,
+        "macos": 2,
         "server": 0,
-        "windows": 5
+        "windows": 3
       }
     },
-    "previousSnapshotGeneratedAt": "2026-08-24T04:05:07.946Z"
+    "previousSnapshotGeneratedAt": "2026-08-25T03:59:26.640Z"
   }
 }
