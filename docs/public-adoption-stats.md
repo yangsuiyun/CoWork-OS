@@ -1,6 +1,6 @@
 # Public Adoption Stats
 
-Generated at: 2026-08-26T04:02:45.432Z
+Generated at: 2026-08-27T14:12:30.562Z
 
 These numbers are acquisition and download-intent signals for CoWork OS. They do **not** measure active users, first launch, successful task completion, model configuration, retention, prompts, files, emails, or any in-app content.
 
@@ -9,17 +9,17 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 | Metric | Value |
 |---|---:|
 | GitHub stars | 440 |
-| GitHub forks | 70 |
+| GitHub forks | 72 |
 | GitHub watchers | 3 |
-| GitHub open issues | 10 |
+| GitHub open issues | 8 |
 | Latest release | v0.5.51 |
 | Latest release date | 2026-08-17 |
-| Installer/server downloads, lifetime | 1,524 |
-| Installer/server downloads, since previous snapshot | 5 |
+| Installer/server downloads, lifetime | 1,534 |
+| Installer/server downloads, since previous snapshot | 10 |
 | npm latest version | 0.5.51 |
-| npm downloads, last day | 77 |
-| npm downloads, last week | 405 |
-| npm downloads, last month | 1,018 |
+| npm downloads, last day | 16 |
+| npm downloads, last week | 356 |
+| npm downloads, last month | 1,094 |
 | GitHub views, last 14-ish days | unavailable |
 | GitHub clones, last 14-ish days | unavailable |
 
@@ -27,18 +27,18 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Platform | Lifetime downloads | Delta |
 |---|---:|---:|
-| macos | 791 | +2 |
-| server | 57 | +0 |
-| windows | 676 | +3 |
+| macos | 794 | +3 |
+| server | 58 | +1 |
+| windows | 682 | +6 |
 
 ## Recent Release Assets
 
 | Release | Asset | Platform | Downloads | Delta |
 |---|---|---|---:|---:|
 | v0.5.51 | CoWork-OS-0.5.51-arm64-mac.zip | macos | 5 | +0 |
-| v0.5.51 | CoWork-OS-0.5.51-arm64.dmg | macos | 18 | +2 |
+| v0.5.51 | CoWork-OS-0.5.51-arm64.dmg | macos | 21 | +3 |
 | v0.5.51 | cowork-os-server-linux-x64-v0.5.51.tar.gz | server | 4 | +0 |
-| v0.5.51 | CoWork-OS-Setup-0.5.51.exe | windows | 35 | +3 |
+| v0.5.51 | CoWork-OS-Setup-0.5.51.exe | windows | 41 | +6 |
 | v0.5.50 | CoWork-OS-0.5.50-arm64-mac.zip | macos | 11 | +0 |
 | v0.5.50 | CoWork-OS-0.5.50-arm64.dmg | macos | 35 | +0 |
 | v0.5.50 | cowork-os-server-linux-x64-v0.5.50.tar.gz | server | 6 | +0 |
