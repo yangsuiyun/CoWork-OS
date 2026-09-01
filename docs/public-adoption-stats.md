@@ -1,6 +1,6 @@
 # Public Adoption Stats
 
-Generated at: 2026-08-31T09:45:18.133Z
+Generated at: 2026-09-01T08:39:25.475Z
 
 These numbers are acquisition and download-intent signals for CoWork OS. They do **not** measure active users, first launch, successful task completion, model configuration, retention, prompts, files, emails, or any in-app content.
 
@@ -8,14 +8,14 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Metric | Value |
 |---|---:|
-| GitHub stars | 441 |
-| GitHub forks | 72 |
+| GitHub stars | 442 |
+| GitHub forks | 73 |
 | GitHub watchers | 3 |
 | GitHub open issues | 8 |
 | Latest release | v0.5.52 |
 | Latest release date | 2026-08-27 |
-| Installer/server downloads, lifetime | 1,583 |
-| Installer/server downloads, since previous snapshot | 9 |
+| Installer/server downloads, lifetime | 1,587 |
+| Installer/server downloads, since previous snapshot | 4 |
 | npm latest version | 0.5.52 |
 | npm downloads, last day | 18 |
 | npm downloads, last week | 598 |
@@ -27,18 +27,18 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Platform | Lifetime downloads | Delta |
 |---|---:|---:|
-| macos | 806 | +3 |
+| macos | 806 | +0 |
 | server | 60 | +0 |
-| windows | 717 | +6 |
+| windows | 721 | +4 |
 
 ## Recent Release Assets
 
 | Release | Asset | Platform | Downloads | Delta |
 |---|---|---|---:|---:|
-| v0.5.52 | CoWork-OS-0.5.52-arm64-mac.zip | macos | 4 | +1 |
-| v0.5.52 | CoWork-OS-0.5.52-arm64.dmg | macos | 6 | +2 |
+| v0.5.52 | CoWork-OS-0.5.52-arm64-mac.zip | macos | 4 | +0 |
+| v0.5.52 | CoWork-OS-0.5.52-arm64.dmg | macos | 6 | +0 |
 | v0.5.52 | cowork-os-server-linux-x64-v0.5.52.tar.gz | server | 2 | +0 |
-| v0.5.52 | CoWork-OS-Setup-0.5.52.exe | windows | 33 | +6 |
+| v0.5.52 | CoWork-OS-Setup-0.5.52.exe | windows | 37 | +4 |
 | v0.5.51 | CoWork-OS-0.5.51-arm64-mac.zip | macos | 6 | +0 |
 | v0.5.51 | CoWork-OS-0.5.51-arm64.dmg | macos | 22 | +0 |
 | v0.5.51 | cowork-os-server-linux-x64-v0.5.51.tar.gz | server | 4 | +0 |
