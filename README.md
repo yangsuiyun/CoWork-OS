@@ -45,13 +45,13 @@
 |---|---:|
 | GitHub stars | 443 |
 | GitHub forks | 74 |
-| Installer/server downloads | 1,592 |
-| Download delta | +5 |
+| Installer/server downloads | 1,604 |
+| Download delta | +12 |
 | npm downloads, last week | 598 |
 | GitHub views, last 14-ish days | unavailable |
 | GitHub clones, last 14-ish days | unavailable |
 
-Generated 2026-09-02T07:54:55.423Z. These are public GitHub/npm adoption signals, not active-user or in-app telemetry numbers. [Full report](docs/public-adoption-stats.md).
+Generated 2026-09-03T08:03:07.703Z. These are public GitHub/npm adoption signals, not active-user or in-app telemetry numbers. [Full report](docs/public-adoption-stats.md).
 <!-- COWORK_PUBLIC_ADOPTION_STATS_END -->
 
 <p align="center">

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-02T07:54:55.423Z",
-  "generatedDay": "2026-09-02",
+  "generatedAt": "2026-09-03T08:03:07.703Z",
+  "generatedDay": "2026-09-03",
   "privacy": {
     "source": "Public GitHub/npm APIs plus owner-only GitHub traffic APIs when available.",
     "appTelemetry": false,
@@ -18,8 +18,8 @@
       "watchers": 3,
       "openIssues": 9,
       "archived": false,
-      "pushedAt": "2026-09-02T07:53:16Z",
-      "updatedAt": "2026-09-02T07:53:24Z"
+      "pushedAt": "2026-09-03T08:00:54Z",
+      "updatedAt": "2026-09-03T08:02:06Z"
     },
     "releases": {
       "releaseCount": 62,
@@ -29,13 +29,13 @@
         "publishedAt": "2026-08-27T23:17:12Z",
         "htmlUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.52"
       },
-      "totalAssetDownloadCount": 2805,
-      "totalInstallAssetDownloadCount": 1592,
-      "metadataAssetDownloadCount": 1213,
+      "totalAssetDownloadCount": 2825,
+      "totalInstallAssetDownloadCount": 1604,
+      "metadataAssetDownloadCount": 1221,
       "platformTotals": {
-        "macos": 808,
+        "macos": 811,
         "server": 60,
-        "windows": 724
+        "windows": 733
       },
       "assets": [
         {
@@ -57,10 +57,10 @@
           "assetName": "CoWork-OS-0.5.52-arm64-mac.zip",
           "platform": "macos",
           "sizeBytes": 300972186,
-          "downloadCount": 4,
+          "downloadCount": 5,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.52/CoWork-OS-0.5.52-arm64-mac.zip",
           "previousDownloadCount": 4,
-          "deltaSincePreviousSnapshot": 0
+          "deltaSincePreviousSnapshot": 1
         },
         {
           "releaseTag": "v0.5.52",
@@ -81,9 +81,9 @@
           "assetName": "CoWork-OS-0.5.52-arm64.dmg",
           "platform": "macos",
           "sizeBytes": 300214666,
-          "downloadCount": 8,
+          "downloadCount": 10,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.52/CoWork-OS-0.5.52-arm64.dmg",
-          "previousDownloadCount": 6,
+          "previousDownloadCount": 8,
           "deltaSincePreviousSnapshot": 2
         },
         {
@@ -129,10 +129,10 @@
           "assetName": "CoWork-OS-Setup-0.5.52.exe",
           "platform": "windows",
           "sizeBytes": 242596806,
-          "downloadCount": 39,
+          "downloadCount": 48,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.52/CoWork-OS-Setup-0.5.52.exe",
-          "previousDownloadCount": 37,
-          "deltaSincePreviousSnapshot": 2
+          "previousDownloadCount": 39,
+          "deltaSincePreviousSnapshot": 9
         },
         {
           "releaseTag": "v0.5.52",
@@ -153,10 +153,10 @@
           "assetName": "latest-mac.yml",
           "platform": "metadata",
           "sizeBytes": 544,
-          "downloadCount": 42,
+          "downloadCount": 50,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.52/latest-mac.yml",
-          "previousDownloadCount": 35,
-          "deltaSincePreviousSnapshot": 7
+          "previousDownloadCount": 42,
+          "deltaSincePreviousSnapshot": 8
         },
         {
           "releaseTag": "v0.5.52",
@@ -1043,8 +1043,8 @@
           "sizeBytes": 219528571,
           "downloadCount": 35,
           "browserDownloadUrl": "https://github.com/CoWork-OS/CoWork-OS/releases/download/v0.5.44/CoWork-OS-Setup-0.5.44.exe",
-          "previousDownloadCount": 34,
-          "deltaSincePreviousSnapshot": 1
+          "previousDownloadCount": 35,
+          "deltaSincePreviousSnapshot": 0
         },
         {
           "releaseTag": "v0.5.44",
@@ -3459,13 +3459,13 @@
   },
   "deltas": {
     "releaseDownloads": {
-      "totalDeltaSincePreviousSnapshot": 5,
+      "totalDeltaSincePreviousSnapshot": 12,
       "platformDeltasSincePreviousSnapshot": {
-        "macos": 2,
+        "macos": 3,
         "server": 0,
-        "windows": 3
+        "windows": 9
       }
     },
-    "previousSnapshotGeneratedAt": "2026-09-01T08:39:25.475Z"
+    "previousSnapshotGeneratedAt": "2026-09-02T07:54:55.423Z"
   }
 }
