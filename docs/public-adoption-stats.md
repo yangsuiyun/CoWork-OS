@@ -1,6 +1,6 @@
 # Public Adoption Stats
 
-Generated at: 2026-09-09T08:09:00.048Z
+Generated at: 2026-09-10T08:08:25.468Z
 
 These numbers are acquisition and download-intent signals for CoWork OS. They do **not** measure active users, first launch, successful task completion, model configuration, retention, prompts, files, emails, or any in-app content.
 
@@ -14,8 +14,8 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 | GitHub open issues | 8 |
 | Latest release | v0.5.52 |
 | Latest release date | 2026-08-27 |
-| Installer/server downloads, lifetime | 1,636 |
-| Installer/server downloads, since previous snapshot | 9 |
+| Installer/server downloads, lifetime | 1,646 |
+| Installer/server downloads, since previous snapshot | 10 |
 | npm latest version | 0.5.52 |
 | npm downloads, last day | 4 |
 | npm downloads, last week | 112 |
@@ -27,19 +27,19 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Platform | Lifetime downloads | Delta |
 |---|---:|---:|
-| macos | 827 | +5 |
-| server | 62 | +1 |
-| windows | 747 | +3 |
+| macos | 829 | +2 |
+| server | 63 | +1 |
+| windows | 754 | +7 |
 
 ## Recent Release Assets
 
 | Release | Asset | Platform | Downloads | Delta |
 |---|---|---|---:|---:|
-| v0.5.52 | CoWork-OS-0.5.52-arm64-mac.zip | macos | 6 | +1 |
-| v0.5.52 | CoWork-OS-0.5.52-arm64.dmg | macos | 25 | +4 |
-| v0.5.52 | cowork-os-server-linux-x64-v0.5.52.tar.gz | server | 4 | +1 |
-| v0.5.52 | CoWork-OS-Setup-0.5.52.exe | windows | 62 | +3 |
-| v0.5.51 | CoWork-OS-0.5.51-arm64-mac.zip | macos | 6 | +0 |
+| v0.5.52 | CoWork-OS-0.5.52-arm64-mac.zip | macos | 6 | +0 |
+| v0.5.52 | CoWork-OS-0.5.52-arm64.dmg | macos | 26 | +1 |
+| v0.5.52 | cowork-os-server-linux-x64-v0.5.52.tar.gz | server | 5 | +1 |
+| v0.5.52 | CoWork-OS-Setup-0.5.52.exe | windows | 69 | +7 |
+| v0.5.51 | CoWork-OS-0.5.51-arm64-mac.zip | macos | 7 | +1 |
 | v0.5.51 | CoWork-OS-0.5.51-arm64.dmg | macos | 22 | +0 |
 | v0.5.51 | cowork-os-server-linux-x64-v0.5.51.tar.gz | server | 4 | +0 |
 | v0.5.51 | CoWork-OS-Setup-0.5.51.exe | windows | 42 | +0 |
