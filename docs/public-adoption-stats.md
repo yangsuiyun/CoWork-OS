@@ -1,6 +1,6 @@
 # Public Adoption Stats
 
-Generated at: 2026-09-15T08:41:06.303Z
+Generated at: 2026-09-16T08:35:39.960Z
 
 These numbers are acquisition and download-intent signals for CoWork OS. They do **not** measure active users, first launch, successful task completion, model configuration, retention, prompts, files, emails, or any in-app content.
 
@@ -8,14 +8,14 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Metric | Value |
 |---|---:|
-| GitHub stars | 452 |
+| GitHub stars | 454 |
 | GitHub forks | 79 |
 | GitHub watchers | 4 |
 | GitHub open issues | 11 |
 | Latest release | v0.5.52 |
 | Latest release date | 2026-08-27 |
-| Installer/server downloads, lifetime | 1,708 |
-| Installer/server downloads, since previous snapshot | 12 |
+| Installer/server downloads, lifetime | 1,715 |
+| Installer/server downloads, since previous snapshot | 7 |
 | npm latest version | 0.5.52 |
 | npm downloads, last day | 9 |
 | npm downloads, last week | 158 |
@@ -27,18 +27,18 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Platform | Lifetime downloads | Delta |
 |---|---:|---:|
-| macos | 862 | +6 |
-| server | 65 | +0 |
-| windows | 781 | +6 |
+| macos | 864 | +2 |
+| server | 66 | +1 |
+| windows | 785 | +4 |
 
 ## Recent Release Assets
 
 | Release | Asset | Platform | Downloads | Delta |
 |---|---|---|---:|---:|
 | v0.5.52 | CoWork-OS-0.5.52-arm64-mac.zip | macos | 10 | +0 |
-| v0.5.52 | CoWork-OS-0.5.52-arm64.dmg | macos | 52 | +6 |
-| v0.5.52 | cowork-os-server-linux-x64-v0.5.52.tar.gz | server | 5 | +0 |
-| v0.5.52 | CoWork-OS-Setup-0.5.52.exe | windows | 93 | +6 |
+| v0.5.52 | CoWork-OS-0.5.52-arm64.dmg | macos | 54 | +2 |
+| v0.5.52 | cowork-os-server-linux-x64-v0.5.52.tar.gz | server | 6 | +1 |
+| v0.5.52 | CoWork-OS-Setup-0.5.52.exe | windows | 97 | +4 |
 | v0.5.51 | CoWork-OS-0.5.51-arm64-mac.zip | macos | 8 | +0 |
 | v0.5.51 | CoWork-OS-0.5.51-arm64.dmg | macos | 24 | +0 |
 | v0.5.51 | cowork-os-server-linux-x64-v0.5.51.tar.gz | server | 6 | +0 |
