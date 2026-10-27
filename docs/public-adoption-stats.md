@@ -1,6 +1,6 @@
 # Public Adoption Stats
 
-Generated at: 2026-10-26T08:55:29.607Z
+Generated at: 2026-10-27T08:59:53.436Z
 
 These numbers are acquisition and download-intent signals for CoWork OS. They do **not** measure active users, first launch, successful task completion, model configuration, retention, prompts, files, emails, or any in-app content.
 
@@ -8,18 +8,18 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Metric | Value |
 |---|---:|
-| GitHub stars | 511 |
+| GitHub stars | 514 |
 | GitHub forks | 93 |
 | GitHub watchers | 3 |
-| GitHub open issues | 30 |
+| GitHub open issues | 18 |
 | Latest release | v0.5.61 |
 | Latest release date | 2026-10-18 |
-| Installer/server downloads, lifetime | 2,160 |
-| Installer/server downloads, since previous snapshot | 58 |
+| Installer/server downloads, lifetime | 2,183 |
+| Installer/server downloads, since previous snapshot | 23 |
 | npm latest version | 0.5.61 |
-| npm downloads, last day | 10 |
-| npm downloads, last week | 350 |
-| npm downloads, last month | 895 |
+| npm downloads, last day | 86 |
+| npm downloads, last week | 139 |
+| npm downloads, last month | 767 |
 | GitHub views, last 14-ish days | unavailable |
 | GitHub clones, last 14-ish days | unavailable |
 
@@ -27,34 +27,34 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Platform | Lifetime downloads | Delta |
 |---|---:|---:|
-| macos | 1,088 | +34 |
-| server | 124 | +4 |
-| windows | 948 | +20 |
+| macos | 1,100 | +12 |
+| server | 124 | +0 |
+| windows | 959 | +11 |
 
 ## Recent Release Assets
 
 | Release | Asset | Platform | Downloads | Delta |
 |---|---|---|---:|---:|
-| v0.5.61 | CoWork-OS-0.5.61-arm64-mac.zip | macos | 51 | +7 |
-| v0.5.61 | CoWork-OS-0.5.61-arm64.dmg | macos | 53 | +13 |
-| v0.5.61 | cowork-os-server-linux-x64-v0.5.61.tar.gz | server | 5 | +1 |
-| v0.5.61 | CoWork-OS-Setup-0.5.61.exe | windows | 106 | +19 |
-| v0.5.61 | registry-packages-0.5.61-b753cb10d1c74a755d2efed3e8643ee78833f0bf.tar.gz | server | 14 | +1 |
-| v0.5.60 | CoWork-OS-0.5.60-arm64-mac.zip | macos | 33 | +2 |
-| v0.5.60 | CoWork-OS-0.5.60-arm64.dmg | macos | 36 | +2 |
-| v0.5.60 | cowork-os-server-linux-x64-v0.5.60.tar.gz | server | 4 | +1 |
-| v0.5.60 | CoWork-OS-Setup-0.5.60.exe | windows | 75 | +1 |
-| v0.5.60 | registry-packages-0.5.60-3691bae3604ac0781a1f3f9ff0a5ad0120c0b0eb.tar.gz | server | 11 | +1 |
-| v0.5.54 | CoWork-OS-0.5.54-arm64-mac.zip | macos | 30 | +2 |
-| v0.5.54 | CoWork-OS-0.5.54-arm64.dmg | macos | 66 | +1 |
+| v0.5.61 | CoWork-OS-0.5.61-arm64-mac.zip | macos | 52 | +1 |
+| v0.5.61 | CoWork-OS-0.5.61-arm64.dmg | macos | 64 | +11 |
+| v0.5.61 | cowork-os-server-linux-x64-v0.5.61.tar.gz | server | 5 | +0 |
+| v0.5.61 | CoWork-OS-Setup-0.5.61.exe | windows | 117 | +11 |
+| v0.5.61 | registry-packages-0.5.61-b753cb10d1c74a755d2efed3e8643ee78833f0bf.tar.gz | server | 14 | +0 |
+| v0.5.60 | CoWork-OS-0.5.60-arm64-mac.zip | macos | 33 | +0 |
+| v0.5.60 | CoWork-OS-0.5.60-arm64.dmg | macos | 36 | +0 |
+| v0.5.60 | cowork-os-server-linux-x64-v0.5.60.tar.gz | server | 4 | +0 |
+| v0.5.60 | CoWork-OS-Setup-0.5.60.exe | windows | 75 | +0 |
+| v0.5.60 | registry-packages-0.5.60-3691bae3604ac0781a1f3f9ff0a5ad0120c0b0eb.tar.gz | server | 11 | +0 |
+| v0.5.54 | CoWork-OS-0.5.54-arm64-mac.zip | macos | 30 | +0 |
+| v0.5.54 | CoWork-OS-0.5.54-arm64.dmg | macos | 66 | +0 |
 | v0.5.54 | cowork-os-server-linux-x64-v0.5.54.tar.gz | server | 9 | +0 |
 | v0.5.54 | CoWork-OS-Setup-0.5.54.exe | windows | 138 | +0 |
 | v0.5.54 | registry-packages-0.5.54-2e9ee97cf27035aa37189f8ff52a46aac8307e79.tar.gz | server | 15 | +0 |
-| v0.5.52 | CoWork-OS-0.5.52-arm64-mac.zip | macos | 30 | +1 |
+| v0.5.52 | CoWork-OS-0.5.52-arm64-mac.zip | macos | 30 | +0 |
 | v0.5.52 | CoWork-OS-0.5.52-arm64.dmg | macos | 67 | +0 |
 | v0.5.52 | cowork-os-server-linux-x64-v0.5.52.tar.gz | server | 9 | +0 |
 | v0.5.52 | CoWork-OS-Setup-0.5.52.exe | windows | 119 | +0 |
-| v0.5.51 | CoWork-OS-0.5.51-arm64-mac.zip | macos | 23 | +1 |
+| v0.5.51 | CoWork-OS-0.5.51-arm64-mac.zip | macos | 23 | +0 |
 
 ## Top GitHub Referrers
 
