@@ -1,6 +1,6 @@
 # Public Adoption Stats
 
-Generated at: 2026-10-31T09:39:00.646Z
+Generated at: 2026-11-01T10:27:42.258Z
 
 These numbers are acquisition and download-intent signals for CoWork OS. They do **not** measure active users, first launch, successful task completion, model configuration, retention, prompts, files, emails, or any in-app content.
 
@@ -8,15 +8,15 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Metric | Value |
 |---|---:|
-| GitHub stars | 517 |
+| GitHub stars | 516 |
 | GitHub forks | 94 |
 | GitHub watchers | 3 |
-| GitHub open issues | 19 |
-| Latest release | v0.5.61 |
-| Latest release date | 2026-10-18 |
-| Installer/server downloads, lifetime | 2,358 |
-| Installer/server downloads, since previous snapshot | 37 |
-| npm latest version | 0.5.61 |
+| GitHub open issues | 21 |
+| Latest release | v0.5.62 |
+| Latest release date | 2026-10-31 |
+| Installer/server downloads, lifetime | 2,526 |
+| Installer/server downloads, since previous snapshot | 96 |
+| npm latest version | 0.5.62 |
 | npm downloads, last day | 13 |
 | npm downloads, last week | 102 |
 | npm downloads, last month | 743 |
@@ -27,34 +27,34 @@ These numbers are acquisition and download-intent signals for CoWork OS. They do
 
 | Platform | Lifetime downloads | Delta |
 |---|---:|---:|
-| macos | 1,163 | +13 |
-| server | 127 | +1 |
-| windows | 1,068 | +23 |
+| macos | 1,270 | +65 |
+| server | 144 | +13 |
+| windows | 1,112 | +18 |
 
 ## Recent Release Assets
 
 | Release | Asset | Platform | Downloads | Delta |
 |---|---|---|---:|---:|
-| v0.5.61 | CoWork-OS-0.5.61-arm64-mac.zip | macos | 97 | +12 |
-| v0.5.61 | CoWork-OS-0.5.61-arm64.dmg | macos | 82 | +1 |
-| v0.5.61 | cowork-os-server-linux-x64-v0.5.61.tar.gz | server | 8 | +1 |
-| v0.5.61 | CoWork-OS-Setup-0.5.61.exe | windows | 226 | +23 |
-| v0.5.61 | registry-packages-0.5.61-b753cb10d1c74a755d2efed3e8643ee78833f0bf.tar.gz | server | 14 | +0 |
-| v0.5.60 | CoWork-OS-0.5.60-arm64-mac.zip | macos | 33 | +0 |
-| v0.5.60 | CoWork-OS-0.5.60-arm64.dmg | macos | 36 | +0 |
-| v0.5.60 | cowork-os-server-linux-x64-v0.5.60.tar.gz | server | 4 | +0 |
-| v0.5.60 | CoWork-OS-Setup-0.5.60.exe | windows | 75 | +0 |
-| v0.5.60 | registry-packages-0.5.60-3691bae3604ac0781a1f3f9ff0a5ad0120c0b0eb.tar.gz | server | 11 | +0 |
-| v0.5.54 | CoWork-OS-0.5.54-arm64-mac.zip | macos | 30 | +0 |
-| v0.5.54 | CoWork-OS-0.5.54-arm64.dmg | macos | 66 | +0 |
-| v0.5.54 | cowork-os-server-linux-x64-v0.5.54.tar.gz | server | 9 | +0 |
-| v0.5.54 | CoWork-OS-Setup-0.5.54.exe | windows | 138 | +0 |
-| v0.5.54 | registry-packages-0.5.54-2e9ee97cf27035aa37189f8ff52a46aac8307e79.tar.gz | server | 15 | +0 |
-| v0.5.52 | CoWork-OS-0.5.52-arm64-mac.zip | macos | 30 | +0 |
-| v0.5.52 | CoWork-OS-0.5.52-arm64.dmg | macos | 67 | +0 |
-| v0.5.52 | cowork-os-server-linux-x64-v0.5.52.tar.gz | server | 9 | +0 |
-| v0.5.52 | CoWork-OS-Setup-0.5.52.exe | windows | 119 | +0 |
-| v0.5.51 | CoWork-OS-0.5.51-arm64-mac.zip | macos | 23 | +0 |
+| v0.5.62 | CoWork-OS-0.5.62-arm64-mac.zip | macos | 30 | n/a |
+| v0.5.62 | CoWork-OS-0.5.62-arm64.dmg | macos | 12 | n/a |
+| v0.5.62 | cowork-os-server-linux-x64-v0.5.62.tar.gz | server | 2 | n/a |
+| v0.5.62 | CoWork-OS-Setup-0.5.62.exe | windows | 26 | n/a |
+| v0.5.62 | registry-packages-0.5.62-6f5d21dd5b8bbc20c625d31463ac289fec8692bb.tar.gz | server | 2 | n/a |
+| v0.5.61 | CoWork-OS-0.5.61-arm64-mac.zip | macos | 98 | +1 |
+| v0.5.61 | CoWork-OS-0.5.61-arm64.dmg | macos | 84 | +2 |
+| v0.5.61 | cowork-os-server-linux-x64-v0.5.61.tar.gz | server | 9 | +1 |
+| v0.5.61 | CoWork-OS-Setup-0.5.61.exe | windows | 227 | +1 |
+| v0.5.61 | registry-packages-0.5.61-b753cb10d1c74a755d2efed3e8643ee78833f0bf.tar.gz | server | 15 | +1 |
+| v0.5.60 | CoWork-OS-0.5.60-arm64-mac.zip | macos | 34 | +1 |
+| v0.5.60 | CoWork-OS-0.5.60-arm64.dmg | macos | 37 | +1 |
+| v0.5.60 | cowork-os-server-linux-x64-v0.5.60.tar.gz | server | 5 | +1 |
+| v0.5.60 | CoWork-OS-Setup-0.5.60.exe | windows | 76 | +1 |
+| v0.5.60 | registry-packages-0.5.60-3691bae3604ac0781a1f3f9ff0a5ad0120c0b0eb.tar.gz | server | 12 | +1 |
+| v0.5.54 | CoWork-OS-0.5.54-arm64-mac.zip | macos | 31 | +1 |
+| v0.5.54 | CoWork-OS-0.5.54-arm64.dmg | macos | 67 | +1 |
+| v0.5.54 | cowork-os-server-linux-x64-v0.5.54.tar.gz | server | 10 | +1 |
+| v0.5.54 | CoWork-OS-Setup-0.5.54.exe | windows | 139 | +1 |
+| v0.5.54 | registry-packages-0.5.54-2e9ee97cf27035aa37189f8ff52a46aac8307e79.tar.gz | server | 16 | +1 |
 
 ## Top GitHub Referrers
 
